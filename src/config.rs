@@ -263,14 +263,14 @@ impl Config {
         paths
     }
 
-    /// `$XDG_CONFIG_HOME` or `~/.config`.
+    /// `$XDG_CONFIG_HOME`, else `%APPDATA%` on Windows, else `~/.config`.
     fn user_config_dir() -> Option<PathBuf> {
-        if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-            return Some(PathBuf::from(xdg));
-        }
-        std::env::var("HOME")
-            .ok()
-            .map(|home| PathBuf::from(home).join(".config"))
+        config_dir_from(
+            std::env::var("XDG_CONFIG_HOME").ok().as_deref(),
+            std::env::var("APPDATA").ok().as_deref(),
+            std::env::var("HOME").ok().as_deref(),
+            std::env::var("USERPROFILE").ok().as_deref(),
+        )
     }
 
     fn apply(&mut self, file: ConfigFile) {
@@ -338,8 +338,13 @@ impl Config {
     /// Where the identity goes, even if the file already exists.
     pub fn identity_path() -> Result<PathBuf, String> {
         Self::user_config_path().ok_or_else(|| {
-            "cannot work out the config directory: neither XDG_CONFIG_HOME nor HOME is set"
-                .to_string()
+            if cfg!(windows) {
+                "cannot work out the config directory: APPDATA and USERPROFILE are both unset"
+                    .to_string()
+            } else {
+                "cannot work out the config directory: XDG_CONFIG_HOME and HOME are both unset"
+                    .to_string()
+            }
         })
     }
 
@@ -410,9 +415,97 @@ struct ConfigFile {
     prefix: Option<String>,
 }
 
+/// Pick the directory the user config lives in.
+///
+/// Windows has neither `XDG_CONFIG_HOME` nor, outside a POSIX shell, `HOME`; the
+/// roaming app data directory is the equivalent there. An empty variable counts
+/// as unset, because that is how some shells and CI runners pass them on.
+fn config_dir_from(
+    xdg: Option<&str>,
+    appdata: Option<&str>,
+    home: Option<&str>,
+    userprofile: Option<&str>,
+) -> Option<PathBuf> {
+    config_dir_for(cfg!(windows), xdg, appdata, home, userprofile)
+}
+
+/// The rule itself, with the platform as a parameter so both branches are
+/// testable on any machine.
+fn config_dir_for(
+    windows: bool,
+    xdg: Option<&str>,
+    appdata: Option<&str>,
+    home: Option<&str>,
+    userprofile: Option<&str>,
+) -> Option<PathBuf> {
+    fn present(value: Option<&str>) -> Option<&str> {
+        value.filter(|text| !text.trim().is_empty())
+    }
+    if let Some(dir) = present(xdg) {
+        return Some(PathBuf::from(dir));
+    }
+    if windows {
+        if let Some(dir) = present(appdata) {
+            return Some(PathBuf::from(dir));
+        }
+        // Last resort on Windows: the roaming folder under the profile.
+        if let Some(dir) = present(userprofile) {
+            return Some(PathBuf::from(dir).join("AppData").join("Roaming"));
+        }
+    }
+    present(home).map(|dir| PathBuf::from(dir).join(".config"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_uses_appdata_when_there_is_no_xdg_or_home() {
+        // Exactly the input that made the first-start dialog fail on Windows:
+        // no XDG_CONFIG_HOME, no HOME, but APPDATA is there.
+        let dir = config_dir_for(
+            true,
+            None,
+            Some("C:\\Users\\marc\\AppData\\Roaming"),
+            None,
+            Some("C:\\Users\\marc"),
+        )
+        .expect("APPDATA is enough on Windows");
+        assert_eq!(dir, PathBuf::from("C:\\Users\\marc\\AppData\\Roaming"));
+    }
+
+    #[test]
+    fn windows_falls_back_to_the_profile_directory() {
+        let dir = config_dir_for(true, None, None, None, Some("C:\\Users\\marc")).unwrap();
+        // join() uses the host separator, so compare the structure, not the slash.
+        let text = dir.to_string_lossy().replace('\\', "/");
+        assert_eq!(text, "C:/Users/marc/AppData/Roaming");
+    }
+
+    #[test]
+    fn empty_variables_count_as_unset() {
+        assert!(config_dir_for(true, Some(""), Some("   "), None, None).is_none());
+        assert!(config_dir_for(false, None, None, Some(""), None).is_none());
+    }
+
+    #[test]
+    fn xdg_wins_over_everything() {
+        let dir = config_dir_for(
+            true,
+            Some("/tmp/cfg"),
+            Some("/app"),
+            Some("/home/marc"),
+            None,
+        );
+        assert_eq!(dir, Some(PathBuf::from("/tmp/cfg")));
+    }
+
+    #[test]
+    fn unix_still_uses_home_dot_config() {
+        let dir = config_dir_for(false, None, Some("/app"), Some("/home/marc"), None);
+        assert_eq!(dir, Some(PathBuf::from("/home/marc/.config")));
+    }
 
     #[test]
     fn ships_three_profiles() {
