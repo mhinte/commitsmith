@@ -1,5 +1,6 @@
 //! commit-tui — compose and lint Conventional Commits in the terminal.
 
+use std::io::Read;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -7,10 +8,14 @@ use clap::{Parser, Subcommand};
 
 mod app;
 mod commit;
+mod config;
+mod git;
+mod hooks;
 mod ui;
 mod validate;
 
-use validate::Severity;
+use config::Config;
+use validate::{Rules, Severity};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -18,11 +23,17 @@ use validate::Severity;
     version,
     about = "Compose and lint Conventional Commits in your terminal",
     long_about = "Run without arguments to open the composer. `check` validates an existing \
-                  message and is meant for commit-msg hooks and CI."
+                  message and is meant for commit-msg hooks and CI. `init` writes a starter \
+                  .commit-tui.toml, `config` shows what is loaded, `hooks` manages the \
+                  commit-msg hook."
 )]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
+
+    /// Hand the finished message to `git commit` instead of printing it
+    #[arg(short, long)]
+    commit: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -39,19 +50,49 @@ enum Command {
         #[arg(long)]
         strict: bool,
     },
-    /// List the accepted commit types
+    /// Write a starter .commit-tui.toml in the current directory
+    Init {
+        /// Overwrite an existing file
+        #[arg(long)]
+        force: bool,
+    },
+    /// Show the loaded config, its sources and the active profile
+    Config,
+    /// List the commit types of the active profile
     Types,
+    /// Install or remove the commit-msg hook of this repository
+    Hooks {
+        #[command(subcommand)]
+        action: HookAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum HookAction {
+    /// Write the commit-msg hook
+    Install {
+        /// Back up and replace a hook that is not ours
+        #[arg(long)]
+        force: bool,
+    },
+    /// Remove the hook again
+    Uninstall,
 }
 
 fn main() -> ExitCode {
-    match Cli::parse().command {
-        None => run_composer(),
+    let cli = Cli::parse();
+    match cli.command {
+        None => run_composer(cli.commit),
         Some(Command::Types) => {
-            for kind in commit::TYPES {
-                println!("{kind}");
+            let (config, _) = load_config();
+            for kind in config.types() {
+                println!("{}", kind.name);
             }
             ExitCode::SUCCESS
         }
+        Some(Command::Config) => show_config(),
+        Some(Command::Init { force }) => init_config(force),
+        Some(Command::Hooks { action }) => run_hooks(action),
         Some(Command::Check {
             file,
             message,
@@ -60,21 +101,140 @@ fn main() -> ExitCode {
     }
 }
 
-fn run_composer() -> ExitCode {
-    let mut terminal = ratatui::init();
-    let mut app = app::App::default();
-    let result = app::run(&mut terminal, &mut app);
-    ratatui::restore();
+fn cwd() -> PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
 
+fn load_config() -> (Config, Vec<String>) {
+    Config::load(&cwd())
+}
+
+fn run_hooks(action: HookAction) -> ExitCode {
+    let result = match action {
+        HookAction::Install { force } => {
+            hooks::install(force).map(|path| format!("installed {path}"))
+        }
+        HookAction::Uninstall => hooks::uninstall().map(|path| format!("removed {path}")),
+    };
     match result {
-        Ok(()) => {
-            if let Some(message) = app.output {
-                println!("{message}");
-            }
+        Ok(message) => {
+            println!("{message}");
             ExitCode::SUCCESS
         }
         Err(error) => {
             eprintln!("commit-tui: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_composer(commit: bool) -> ExitCode {
+    let (config, warnings) = load_config();
+    let mut app = app::App::with_config(config, warnings);
+
+    // Scope suggestions come from history; a missing repository is fine.
+    let root = cwd();
+    if let Some(repo) = git::open(&root) {
+        let depth = app.config.history_depth;
+        let configured = app.config.scopes.clone();
+        app.set_scopes(git::scope_info(&repo, &configured, depth));
+        let branch = repo
+            .head_name()
+            .ok()
+            .flatten()
+            .map(|name| name.shorten().to_string())
+            .unwrap_or_else(|| "detached".to_string());
+        let staged = git::staged_summary(&root).len();
+        app.set_repo_line(format!("{branch} · {staged} staged"));
+    }
+
+    let mut terminal = ratatui::init();
+    let result = app::run(&mut terminal, &mut app);
+    ratatui::restore();
+
+    match result {
+        Ok(()) => match app.output {
+            Some(message) if commit => commit_with_git(&message),
+            Some(message) => {
+                println!("{message}");
+                ExitCode::SUCCESS
+            }
+            None => ExitCode::SUCCESS,
+        },
+        Err(error) => {
+            eprintln!("commit-tui: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Run `git commit -m <message>`, letting git ask for a passphrase or print its
+/// own errors, so the output looks like a normal commit.
+fn commit_with_git(message: &str) -> ExitCode {
+    match std::process::Command::new("git")
+        .arg("commit")
+        .arg("-m")
+        .arg(message)
+        .status()
+    {
+        Ok(status) if status.success() => ExitCode::SUCCESS,
+        Ok(_) => ExitCode::FAILURE,
+        Err(error) => {
+            eprintln!("commit-tui: cannot run git: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn show_config() -> ExitCode {
+    let (config, warnings) = load_config();
+    println!("profile: {}", config.profile);
+    println!("types:   {}", config.type_names().join(", "));
+    println!("scopes:  {}", join_or_dash(&config.scopes));
+    println!(
+        "limits:  subject {}/{} chars, history depth {}",
+        config.recommended_subject, config.max_subject, config.history_depth
+    );
+    println!("emoji:   {}", if config.emoji { "on" } else { "off" });
+    println!("files:");
+    if config.sources.is_empty() {
+        println!("  (none, using built-in defaults)");
+    } else {
+        for source in &config.sources {
+            println!("  {}", source.display());
+        }
+    }
+    for warning in warnings {
+        eprintln!("warning: {warning}");
+    }
+    ExitCode::SUCCESS
+}
+
+fn join_or_dash(items: &[String]) -> String {
+    if items.is_empty() {
+        "-".to_string()
+    } else {
+        items.join(", ")
+    }
+}
+
+fn init_config(force: bool) -> ExitCode {
+    let path = cwd().join(".commit-tui.toml");
+    if path.exists() && !force {
+        eprintln!(
+            "commit-tui: {} exists, pass --force to overwrite",
+            path.display()
+        );
+        return ExitCode::FAILURE;
+    }
+    let (config, _) = load_config();
+    match std::fs::write(&path, config.to_toml()) {
+        Ok(()) => {
+            println!("wrote {}", path.display());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("commit-tui: cannot write {}: {error}", path.display());
             ExitCode::FAILURE
         }
     }
@@ -92,7 +252,7 @@ fn run_check(file: Option<PathBuf>, message: Option<String>, strict: bool) -> Ex
         (None, Some(message)) => message,
         (None, None) => {
             let mut buffer = String::new();
-            if let Err(error) = std::io::stdin().read_line(&mut buffer) {
+            if let Err(error) = std::io::stdin().read_to_string(&mut buffer) {
                 eprintln!("commit-tui: cannot read stdin: {error}");
                 return ExitCode::FAILURE;
             }
@@ -100,7 +260,12 @@ fn run_check(file: Option<PathBuf>, message: Option<String>, strict: bool) -> Ex
         }
     };
 
-    let issues = validate::lint(&text);
+    let (config, warnings) = load_config();
+    for warning in warnings {
+        eprintln!("warning: {warning}");
+    }
+    let rules = Rules::from_config(&config);
+    let issues = validate::lint_with(&text, &rules);
     let (errors, warnings) = validate::count(&issues);
 
     for issue in &issues {

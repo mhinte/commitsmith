@@ -3,7 +3,38 @@
 //! `validate` checks an in-memory commit, `lint` checks a raw message and adds
 //! the structural checks that only apply to text coming from git.
 
+use indexmap::IndexSet;
+
 use crate::commit::{self, Commit, MAX_SUBJECT, RECOMMENDED_SUBJECT, TYPES};
+
+/// Which types and limits apply. Built from the config so project files can
+/// add types without touching this module.
+#[derive(Debug, Clone)]
+pub struct Rules {
+    pub types: IndexSet<String>,
+    pub max_subject: usize,
+    pub recommended_subject: usize,
+}
+
+impl Default for Rules {
+    fn default() -> Self {
+        Self {
+            types: TYPES.iter().map(|kind| (*kind).to_string()).collect(),
+            max_subject: MAX_SUBJECT,
+            recommended_subject: RECOMMENDED_SUBJECT,
+        }
+    }
+}
+
+impl Rules {
+    pub fn from_config(config: &crate::config::Config) -> Self {
+        Self {
+            types: config.type_names().into_iter().collect(),
+            max_subject: config.max_subject,
+            recommended_subject: config.recommended_subject,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
@@ -47,30 +78,43 @@ impl Issue {
 }
 
 /// Rules that need the parsed message as a whole.
+#[cfg(test)]
 pub fn lint(input: &str) -> Vec<Issue> {
-    let parsed = commit::parse(input);
+    lint_with(input, &Rules::default())
+}
+
+pub fn lint_with(input: &str, rules: &Rules) -> Vec<Issue> {
+    let parsed = commit::parse(input).with_upstream_header(input);
     let mut issues: Vec<Issue> = parsed
         .problems
         .into_iter()
         .map(|problem| Issue::error("header", problem))
         .collect();
     if parsed.header_ok {
-        issues.extend(validate(&parsed.commit));
+        issues.extend(validate_with(&parsed.commit, rules));
     }
     issues
 }
 
 /// Rules that only look at the content of a single commit.
+#[cfg(test)]
 pub fn validate(commit: &Commit) -> Vec<Issue> {
+    validate_with(commit, &Rules::default())
+}
+
+pub fn validate_with(commit: &Commit, rules: &Rules) -> Vec<Issue> {
     let mut issues = Vec::new();
 
     let kind = commit.kind.trim();
     if kind.is_empty() {
         issues.push(Issue::error("type", "choose a commit type"));
-    } else if !TYPES.contains(&kind) {
+    } else if !rules.types.is_empty() && !rules.types.contains(kind) {
         issues.push(Issue::error(
             "type",
-            format!("`{kind}` is not a conventional type ({})", TYPES.join(", ")),
+            format!(
+                "`{kind}` is not a conventional type ({})",
+                rules.types.iter().cloned().collect::<Vec<_>>().join(", ")
+            ),
         ));
     }
 
@@ -131,6 +175,13 @@ pub fn validate(commit: &Commit) -> Vec<Issue> {
         issues.push(Issue::warning(
             "breaking",
             "explain what breaks and what to do instead",
+        ));
+    }
+
+    if !has_errors(&issues) && commit.body.trim().is_empty() && commit.footer.trim().is_empty() {
+        issues.push(Issue::info(
+            "body",
+            "optional: one body line explaining the why helps reviewers",
         ));
     }
 
@@ -276,13 +327,17 @@ mod tests {
     }
 
     #[test]
-    fn flags_bang_without_breaking_footer() {
+    fn bang_without_breaking_footer_is_accepted() {
+        // Conventional Commits allows `!` on its own; the footer is optional.
         let issues = lint("feat!: drop v1\n");
-        assert!(
-            issues
-                .iter()
-                .any(|issue| issue.message.contains("BREAKING CHANGE"))
-        );
+        assert!(!has_errors(&issues), "{issues:?}");
+    }
+
+    #[test]
+    fn upstream_parser_accepts_bang_and_footer() {
+        let issues = lint("feat(api)!: drop v1\n\nBREAKING CHANGE: use v2 instead\n");
+        assert!(!has_errors(&issues), "{issues:?}");
+        assert_eq!(count(&issues).1, 0, "{issues:?}");
     }
 
     #[test]

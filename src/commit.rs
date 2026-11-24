@@ -2,7 +2,7 @@
 //!
 //! Spec: <https://www.conventionalcommits.org/en/v1.0.0/>
 
-/// Commit types the composer offers. Linting accepts exactly these.
+/// Types the built-in profile offers. A config file can change this list.
 pub const TYPES: [&str; 11] = [
     "feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert",
 ];
@@ -72,6 +72,40 @@ pub struct Parsed {
     /// False when the header could not be split at all, so semantic rules
     /// would only produce follow-up noise.
     pub header_ok: bool,
+}
+
+impl Parsed {
+    /// Same result, but header, body and footers taken from the upstream parser
+    /// that cocogitto uses, so both front ends agree on what a valid message is.
+    pub fn with_upstream_header(mut self, text: &str) -> Self {
+        if let Ok(commit) = conventional_commit_parser::parse(text.trim()) {
+            self.commit.kind = commit.commit_type.to_string();
+            if let Some(scope) = commit.scope {
+                self.commit.scope = scope;
+            }
+            self.commit.subject = commit.summary;
+            if let Some(body) = commit.body {
+                self.commit.body = body;
+            }
+            let mut footers = Vec::new();
+            for footer in commit.footers {
+                let token = footer.token.to_ascii_uppercase();
+                if token == "BREAKING CHANGE" || token == "BREAKING-CHANGE" {
+                    self.commit.breaking = footer.content;
+                } else {
+                    footers.push(format!("{}: {}", footer.token, footer.content));
+                }
+            }
+            self.commit.footer = footers.join("\n");
+            self.header_ok = true;
+            self.problems.retain(|problem| {
+                !problem.contains("header must look like")
+                    && !problem.contains("separated from the type")
+                    && !problem.contains("BREAKING CHANGE")
+            });
+        }
+        self
+    }
 }
 
 /// Parse a commit message as produced by `git commit` or an editor.
@@ -302,6 +336,16 @@ mod tests {
     fn parses_type_scope_and_subject() {
         let parsed = parse("feat(ui): add preview pane\n");
         assert!(parsed.problems.is_empty(), "{:?}", parsed.problems);
+        assert_eq!(parsed.commit.kind, "feat");
+        assert_eq!(parsed.commit.scope, "ui");
+        assert_eq!(parsed.commit.subject, "add preview pane");
+    }
+
+    #[test]
+    fn upstream_parser_overrides_the_header() {
+        let text = "feat(ui)!: add preview pane\n\nBREAKING CHANGE: gone\n";
+        let parsed = parse(text).with_upstream_header(text);
+        assert!(parsed.header_ok);
         assert_eq!(parsed.commit.kind, "feat");
         assert_eq!(parsed.commit.scope, "ui");
         assert_eq!(parsed.commit.subject, "add preview pane");

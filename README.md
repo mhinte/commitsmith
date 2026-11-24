@@ -2,30 +2,44 @@
 
 Terminal UI for writing and linting [Conventional Commits](https://www.conventionalcommits.org/).
 
-You pick a type, type the subject, and the preview updates live. The checks pane
-tells you what a reviewer or a hook would complain about: unknown types, subjects
-that are too long, past tense instead of imperative, a `!` without a
-`BREAKING CHANGE` footer, and so on.
+Keyboard-first like [convinci](https://github.com/alexandrefelipea/convinci) and
+[koji](https://github.com/cococonscious/koji), but with a live preview and a lint
+pane instead of a step-by-step dialog.
 
 ```
-┌ commit-tui conventional commits ──────────────────────────────┐
-│ subject 19/72   0 errors  0 warnings                          │
-└───────────────────────────────────────────────────────────────┘
-┌ compose ──────────────────────────────────────────────────────┐
-│ type        [ feat ]  ←/→ switch                              │
-│ scope         optional, e.g. api                              │
-│ subject     add commit composer                               │
-│ body      ▌ because hooks need it                             │
-│ breaking      what breaks, optional                           │
-│ footer        Refs: #12, optional                             │
-└───────────────────────────────────────────────────────────────┘
-┌ preview ────────────────────┐┌ checks · 0 errors · 0 warnings ┐
-│ feat: add commit composer   ││ ✓ ready to commit             │
-│                             ││                               │
-│ because hooks need it       ││                               │
-└─────────────────────────────┘└───────────────────────────────┘
- Tab next  ←/→ type  Ctrl+S commit  Esc quit
+╭ commit-tui ⚡ perf   performance improvement ────────────────── conventional ╮
+│ subject 3/72   0 errors  0 warnings                                          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭ compose ─────────────────────────────────────────────────────────────────────╮
+│ type        [ perf ]                                                         │
+│ scope         api                                                            │
+│ subject     speed up the diff walk                                           │
+│ body        walk once instead of twice                                       │
+│                                                                              │
+│ breaking      Hooks now receive the raw list                                 │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭ preview ──────────────────────────╮╭ checks · 0 errors · 0 warnings ──────────╮
+│perf(api)!: speed up the diff walk ││✓ ready to commit                         │
+│                                   ││                                          │
+│walk once instead of twice         ││                                          │
+│                                   ││                                          │
+│BREAKING CHANGE: Hooks now receive ││                                          │
+│the raw list                       ││                                          │
+╰───────────────────────────────────╯╰──────────────────────────────────────────╯
 ```
+
+Space opens the type picker, `1`–`9` jump straight to an entry, `0` takes the last:
+
+```
+╭ commit type · filter: _ ────────────────────────────────────╮
+│▸ 1 feat         ✨ a new feature                            │
+│  2 fix          🐛 a bug fix                                │
+│  3 docs         📚 documentation only                       │
+╰─────────────────────────────────────────────────────────────╯
+```
+
+On terminals smaller than 24 rows or 62 columns the layout collapses to the
+active field only, so it stays usable over a phone-sized ssh session.
 
 ## Install
 
@@ -33,21 +47,19 @@ that are too long, past tense instead of imperative, a `!` without a
 cargo install --path .
 ```
 
-Rust 1.85 or newer.
+Rust 1.85 or newer. Needs `git` on PATH.
 
 ## Use
 
-Open the composer:
-
 ```sh
-commit-tui
-```
-
-Ctrl+S prints the finished message to stdout, so the tool composes into git:
-
-```sh
+commit-tui                  # compose, print the message to stdout
+commit-tui --commit         # compose, then run `git commit -m <message>`
 git commit -m "$(commit-tui)"
 ```
+
+`Ctrl+S` finishes. Without `--commit` the message goes to stdout, so the shell
+hands it to git; with `--commit` git runs directly and its output (hooks,
+passphrase prompts, errors) is what you see.
 
 ### Lint an existing message
 
@@ -57,62 +69,131 @@ commit-tui check --file .git/COMMIT_EDITMSG
 git log -1 --pretty=%B | commit-tui check
 ```
 
-Exit code is 1 on errors, 0 otherwise. `--strict` also fails on warnings.
+Exit code is 1 on errors, 0 otherwise. `--strict` also fails on warnings, which
+is what you want in CI.
 
-### Use it as a commit-msg hook
+### commit-msg hook
 
 ```sh
-./scripts/install-hook.sh
+commit-tui hooks install          # writes the hook
+commit-tui hooks uninstall        # removes it again
+commit-tui hooks install --force  # backs up a foreign hook and replaces it
 ```
 
-That drops a hook into the current repository; from then on git refuses messages
-the linter rejects.
+The hook calls `commit-tui check --file "$1"`, so `commit-tui` must be on PATH.
+An existing hook that is not ours is only replaced with `--force`, and then the
+original is kept as `commit-msg.bak`.
+
+### Configure it
+
+```sh
+commit-tui init     # writes .commit-tui.toml from the current defaults
+commit-tui config   # shows the effective values and which files were read
+commit-tui types    # the types of the active profile, one per line
+```
+
+Lookup order, later wins: built-in defaults, `~/.config/commit-tui/config.toml`,
+`.commit-tui.toml` in the current directory. Lists replace each other rather than
+merging, so a project file fully owns its own type list.
+
+```toml
+profile = "conventional"     # or "angular", or one you define below
+emoji = true
+history_depth = 500          # commits scanned for scope suggestions
+max_subject = 72
+recommended_subject = 50
+scopes = ["api", "ui"]       # pinned scopes, listed before history
+
+[[profiles]]
+name = "work"
+description = "House types"
+
+[[profiles.types]]
+name = "feat"
+description = "user visible change"
+emoji = "✨"
+
+[[profiles.types]]
+name = "ops"
+description = "deployments and runbooks"
+emoji = "🚀"
+```
+
+A broken file never blocks the composer: the warning shows up in the status bar
+and the defaults stay active.
 
 ## Keys
 
 | Key | Action |
 |-----|--------|
-| `Tab` / `↓` | next field |
-| `Shift+Tab` / `↑` | previous field |
-| `←` `→` | switch type (on the type field), move the cursor elsewhere |
-| `Ctrl+S` | render the message and exit |
+| `Tab` / `Shift+Tab`, `↑` `↓` | move between fields (inside multiline fields `↑`/`↓` walk lines first) |
+| `Enter` | next field or the type picker; new line in body, breaking and footer |
+| `Space`, `Ctrl+T` | type picker: type to filter, `1`–`9` jump, `0` last |
+| `Ctrl+N` | scope suggestions: config entries, then scopes from commit history |
+| `Ctrl+P` | switch the type profile |
+| `←` `→`, `h` `l` | previous/next type on the type field, cursor movement elsewhere |
+| `j` `k` | next/previous field on the type field |
+| `Ctrl+S` | finish: print the message, or commit with `--commit` |
 | `Esc`, `Ctrl+Q` | quit without output |
-| `q` | quit, but only on the type field |
+| `?` | key help overlay |
 
 ## Rules
 
 Errors block a commit:
 
-- type missing or not in `feat fix docs style refactor perf test build ci chore revert`
+- type missing, or not in the active profile
 - empty subject
-- subject longer than 72 characters
-- header without `: ` separator, or `!` without a `BREAKING CHANGE` footer
-- body without a blank line after the subject
+- subject longer than `max_subject`
+- header without the `: ` separator, or a body that starts without a blank line
+- `(` or `)` inside the scope
 
-Warnings are style advice: subject over 50 characters, trailing period, capital
-first letter, past tense (`added` instead of `add`), multi-word scope, body lines
-over 100 characters.
+Warnings are advice: subject over `recommended_subject`, trailing period,
+capitalised subject, past-tense verb (`added` instead of `add`), multi-word
+scope, body or footer lines over 100 characters, a breaking change shorter than
+ten characters.
+
+Parsing is done by [`conventional_commit_parser`](https://crates.io/crates/conventional_commit_parser),
+the crate [cocogitto](https://github.com/cocogitto/cocogitto) uses, so a message
+that passes here also passes cocogitto. A `!` on its own is valid: Conventional
+Commits makes the footer optional.
+
+The `check` subcommand reads the same config, so hooks and the composer agree.
 
 ## Layout
 
 ```
 src/
-  main.rs      CLI: composer, `check`, `types`
-  app.rs       state, field editing, key handling, event loop
-  ui.rs        ratatui rendering
-  commit.rs    the message model: render, parse, wrap
-  validate.rs  lint rules and severities
+  main.rs      CLI: composer, check, init, config, types, hooks
+  app.rs       state, field editing, pickers, key handling, event loop
+  ui.rs        rendering: full form, compact view, pickers, help
+  commit.rs    message model: render, parse, wrap
+  validate.rs  lint rules, severities, configurable type set
+  config.rs    profiles, defaults, config discovery
+  git.rs       scopes from history, staged summary
+  hooks.rs     commit-msg hook install/uninstall
 ```
 
-`commit.rs` and `validate.rs` have no terminal dependency, so they can be reused
-by other front ends or moved into a library crate later.
+`commit.rs`, `validate.rs` and `config.rs` have no terminal dependency, so other
+front ends or a future library crate can reuse them unchanged.
+
+## Credits
+
+- [convinci](https://github.com/alexandrefelipea/convinci) by Alexandre Felipe:
+  numbered quick-select in the picker, committing from the tool instead of
+  printing, hook install/uninstall with a guard against foreign hooks, and the
+  single-field view for small terminals.
+- [koji](https://github.com/cococonscious/koji) by Finley Thomalla and Danny
+  Tatom: searchable type picker, scope suggestions from history, config profiles.
+- [cocogitto](https://github.com/cocogitto/cocogitto): the parser this project
+  validates with.
+
+All three are MIT licensed.
 
 ## Roadmap
 
-- read `.commit-tui.toml` for custom types and limits
-- multiline body editor with a real cursor
-- `--from-diff` to guess type and scope from staged files
-- optional `commitlint`-style JSON output for CI
+- pre-fill scope and type from the staged diff
+- remember recently used scopes per repository
+- `--json` output from `check` for CI dashboards
 
 ## License
 
