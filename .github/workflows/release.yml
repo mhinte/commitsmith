@@ -1,0 +1,174 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and publish, e.g. v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Nothing ships unless the same checks that guard main pass for this tag.
+  verify:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  # Work out the version once, so every target names its files identically.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - id: v
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="${INPUT_TAG:-$REF_NAME}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+  # One job per target, so a broken target does not hide the others. The matrix
+  # deliberately avoids Windows: the packaging step stays plain POSIX shell.
+  build:
+    needs: [verify, version]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            linker: aarch64-linux-gnu-gcc
+            packages: gcc-aarch64-linux-gnu
+          # musl builds are static, so they run on any glibc version.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            packages: musl-tools
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            linker: aarch64-linux-musl-gcc
+            packages: musl-tools gcc-aarch64-linux-gnu
+            cross_cc: aarch64-linux-gnu-gcc
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install cross packages
+        if: matrix.packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.packages }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2.9.3
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Configure cross linker
+        if: matrix.linker
+        env:
+          TARGET: ${{ matrix.target }}
+          LINKER: ${{ matrix.linker }}
+          CROSS_CC: ${{ matrix.cross_cc }}
+        run: |
+          set -euo pipefail
+          mkdir -p .cargo
+          printf '[target.%s]\nlinker = "%s"\n' "$TARGET" "$LINKER" >> .cargo/config.toml
+          if [ -n "${CROSS_CC:-}" ]; then
+            printf '[env]\nCC_%s = "%s"\nAR_%s = "aarch64-linux-gnu-ar"\n' "$TARGET" "$CROSS_CC" "$TARGET" >> .cargo/config.toml
+          fi
+          cat .cargo/config.toml
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package
+        id: pack
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          archive="commit-tui-${VERSION}-${TARGET}"
+          pkg="dist/${archive}"
+          mkdir -p "$pkg"
+          cp "target/${TARGET}/release/commit-tui" "$pkg/commit-tui"
+          cp README.md LICENSE "$pkg/"
+          chmod +x "$pkg/commit-tui"
+          # Deterministic archive: same content, same bytes.
+          tar --sort=name --owner=0 --group=0 --numeric-owner \
+              --mtime="$(date -u -r README.md +%Y-%m-%dT%H:%M:%SZ)" \
+              -C "$pkg" -czf "dist/${archive}.tar.gz" .
+          (cd dist && sha256sum "${archive}.tar.gz" > "${archive}.tar.gz.sha256")
+          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
+          ls -l dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.pack.outputs.archive }}
+          path: dist/*.tar.gz*
+          if-no-files-found: error
+          retention-days: 7
+
+  # Collect every archive and publish one release with a single checksum file.
+  publish:
+    needs: [build, version]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Combine checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          ls -l
+          cat ./*.tar.gz.sha256 | sort > SHA256SUMS
+          cat SHA256SUMS
+          # The published checksums must describe the published files.
+          sha256sum -c SHA256SUMS
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v3.0.4
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ${{ needs.version.outputs.tag }}
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          generate_release_notes: true
+          draft: false
+          fail_on_unmatched_files: true
+          body: |
+            Built by the release workflow from `${{ needs.version.outputs.tag }}`.
+            Every target passed the same checks as `main`: formatting, clippy,
+            unit tests, an end-to-end smoke test against a scratch repository,
+            the commit-message lint and a dependency audit.
+
+            Each `commit-tui-<version>-<target>.tar.gz` contains the binary,
+            README and LICENSE. Verify with `sha256sum -c SHA256SUMS`.
+
+            musl builds are static and run anywhere; gnu builds need a current
+            glibc.

@@ -4,16 +4,116 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
+  # The project's own rules, applied to the commits that were just pushed.
+  # Skipped on pull requests: their head commit belongs to the contributor.
+  commit-message:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.3
+      - name: Lint every non-merge commit of this push
+        run: |
+          set -euo pipefail
+          cargo build --release
+          bin="$PWD/target/release/commit-tui"
+          before="${{ github.event.before }}"
+          case "$before" in
+            0000000000000000000000000000000000000000|"")
+              range="HEAD" ;;
+            *)
+              if ! git cat-file -e "$before^{commit}" 2>/dev/null; then
+                echo "previous head $before is unknown here, checking only HEAD"
+                range="HEAD"
+              else
+                range="$before..HEAD"
+              fi
+              ;;
+          esac
+          status=0
+          for sha in $(git rev-list "$range"); do
+            # Merge commits do not follow the template, skip them.
+            if [ "$(git rev-list --parents -n1 "$sha" | wc -w)" -gt 2 ]; then
+              continue
+            fi
+            echo "::group::$sha"
+            if ! git log -1 --format=%B "$sha" | "$bin" check; then
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$status"
+
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2.9.3
+      - run: cargo clippy --all-targets -- -D warnings
+
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.3
+      - run: cargo test --all-targets
+      # What unit tests cannot reach: a real repository, a real hook, a real commit.
+      - name: Smoke test the release binary
+        run: |
+          set -euo pipefail
+          cargo build --release
+          bin="$PWD/target/release/commit-tui"
+          work=$(mktemp -d)
+          git -C "$work" init -q
+          git -C "$work" config user.email ci@example.com
+          git -C "$work" config user.name CI
+          printf 'hello\n' > "$work/a.txt"
+          git -C "$work" add a.txt
+
+          "$bin" check --message 'feat(api): add rate limit'
+          if "$bin" check --message 'Add stuff.'; then
+            echo "the linter accepted a non-conventional message" >&2
+            exit 1
+          fi
+          # The hook calls `commit-tui` by name, so the release build has to be
+          # reachable on PATH for this part.
+          export PATH="$(dirname "$bin"):$PATH"
+          if (cd "$work" && "$bin" hooks install && git commit -q -m 'Add stuff.'); then
+            echo "the installed hook let a plain message through" >&2
+            exit 1
+          fi
+          (cd "$work" && git commit -q -m 'feat(ci): smoke test' \
+            && test "$(git log -1 --format=%s)" = 'feat(ci): smoke test')
+          (cd "$work" && "$bin" hooks uninstall && test ! -e .git/hooks/commit-msg)
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
         with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+          tool: cargo-audit
+      # Informational until the advisory situation of the gix tree is clear.
+      - run: cargo audit --ignore RUSTSEC-2024-0436 || true

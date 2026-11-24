@@ -49,6 +49,12 @@ cargo install --path .
 
 Rust 1.85 or newer. Needs `git` on PATH.
 
+Prebuilt binaries come from the [releases](https://github.com/mhinte/commit-tui/releases):
+`commit-tui-<version>-<target>.tar.gz` for Linux x86_64 (gnu and static musl),
+Linux aarch64 (gnu and musl) and macOS (Intel and Apple silicon). Each archive
+holds the binary, README and LICENSE, and `SHA256SUMS` in the release covers all
+of them.
+
 ## Use
 
 ```sh
@@ -175,6 +181,30 @@ that passes here also passes cocogitto. A `!` on its own is valid: Conventional
 Commits makes the footer optional.
 
 The `check` subcommand reads the same config, so hooks and the composer agree.
+
+## Development
+
+```sh
+cargo test --all-targets      # unit tests and the CLI tests in tests/cli.rs
+cargo clippy --all-targets -- -D warnings
+cargo fmt --all -- --check
+```
+
+The pipeline lives in `.github/workflows`:
+
+| Workflow | Trigger | Jobs |
+|----------|---------|------|
+| `ci.yml` | push to `main`, pull request | `fmt`, `clippy`, `test` (incl. an end-to-end run against a scratch repository), `commit-message` (this tool lints its own commits), `audit` |
+| `release.yml` | tag `v*`, or manual dispatch | `verify` (reuses `ci.yml`), `build` (matrix of six targets), `publish` (archives, `SHA256SUMS`, GitHub release) |
+
+A tag therefore cannot ship without passing the same checks as `main`.
+
+```sh
+git tag v0.2.0 && git push origin v0.2.0    # builds and publishes
+```
+
+The audit job is informational for now: `cargo audit` still flags advisory issues
+in crates that `gix` pulls in for its development setup.
 
 ## Layout
 
