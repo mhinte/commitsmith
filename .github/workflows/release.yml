@@ -57,11 +57,11 @@ jobs:
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             packages: musl-tools
+          # Ubuntu does not ship an aarch64 musl cross gcc; fetch the
+          # musl.cc toolchain instead.
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
-            linker: aarch64-linux-musl-gcc
-            packages: musl-tools gcc-aarch64-linux-gnu
-            cross_cc: aarch64-linux-gnu-gcc
+            musl_cross: aarch64-linux-musl
           - target: x86_64-apple-darwin
             os: macos-latest
           - target: aarch64-apple-darwin
@@ -84,49 +84,77 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      - name: Install musl cross toolchain
+        if: matrix.musl_cross
+        env:
+          MUSL_CROSS: ${{ matrix.musl_cross }}
+        run: |
+          set -euo pipefail
+          curl -sSfL "https://musl.cc/${MUSL_CROSS}-cross.tgz" -o /tmp/cross.tgz
+          sudo mkdir -p /opt/cross
+          sudo tar -C /opt/cross -xzf /tmp/cross.tgz
+          echo "/opt/cross/${MUSL_CROSS}-cross/bin" >> "$GITHUB_PATH"
+
       - name: Configure cross linker
         if: matrix.linker
         env:
           TARGET: ${{ matrix.target }}
           LINKER: ${{ matrix.linker }}
-          CROSS_CC: ${{ matrix.cross_cc }}
         run: |
           set -euo pipefail
           mkdir -p .cargo
           printf '[target.%s]\nlinker = "%s"\n' "$TARGET" "$LINKER" >> .cargo/config.toml
-          if [ -n "${CROSS_CC:-}" ]; then
-            printf '[env]\nCC_%s = "%s"\nAR_%s = "aarch64-linux-gnu-ar"\n' "$TARGET" "$CROSS_CC" "$TARGET" >> .cargo/config.toml
-          fi
           cat .cargo/config.toml
 
       - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        env:
+          MUSL_CROSS: ${{ matrix.musl_cross }}
+        run: |
+          if [ -n "${MUSL_CROSS:-}" ]; then
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="${MUSL_CROSS}-gcc"
+            export CC_aarch64_unknown_linux_musl="${MUSL_CROSS}-gcc"
+            export AR_aarch64_unknown_linux_musl="${MUSL_CROSS}-ar"
+          fi
+          cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package
         id: pack
         env:
           TARGET: ${{ matrix.target }}
           VERSION: ${{ needs.version.outputs.version }}
+          RUNNER_OS: ${{ runner.os }}
         run: |
           set -euo pipefail
           archive="commit-tui-${VERSION}-${TARGET}"
           pkg="dist/${archive}"
-          mkdir -p "$pkg"
+          mkdir -p "$pkg" dist/upload
           cp "target/${TARGET}/release/commit-tui" "$pkg/commit-tui"
           cp README.md LICENSE "$pkg/"
           chmod +x "$pkg/commit-tui"
-          # Deterministic archive: same content, same bytes.
-          tar --sort=name --owner=0 --group=0 --numeric-owner \
-              --mtime="$(date -u -r README.md +%Y-%m-%dT%H:%M:%SZ)" \
-              -C "$pkg" -czf "dist/${archive}.tar.gz" .
-          (cd dist && sha256sum "${archive}.tar.gz" > "${archive}.tar.gz.sha256")
+          stamp="$(date -u -r README.md +%Y%m%d%H%M.%S)"
+          touch -t "$stamp" "$pkg" "$pkg"/*
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            # BSD tar has no --sort/--owner; ditto sets the metadata explicitly.
+            ditto -c -k --sequesterRsrc --keepParent "$pkg" "dist/upload/${archive}.tar.gz"
+          else
+            # Deterministic archive: same content, same bytes. The archive holds
+            # the directory, so unpacking creates ${archive}/.
+            tar --sort=name --owner=0 --group=0 --numeric-owner \
+                --mtime="@$(date -u -r README.md +%s)" \
+                -C dist -czf "dist/upload/${archive}.tar.gz" "${archive}"
+          fi
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd dist/upload && sha256sum "${archive}.tar.gz" > "${archive}.tar.gz.sha256")
+          else
+            (cd dist/upload && shasum -a 256 "${archive}.tar.gz" > "${archive}.tar.gz.sha256")
+          fi
           echo "archive=${archive}" >> "$GITHUB_OUTPUT"
           ls -l dist
 
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.pack.outputs.archive }}
-          path: dist/*.tar.gz*
+          path: dist/upload/*.tar.gz*
           if-no-files-found: error
           retention-days: 7
 
