@@ -6,17 +6,22 @@ name into the first-start dialog, fills the subject and submits with Ctrl+S,
 then reports what the terminal actually showed.
 """
 
+import fcntl
 import os
 import pty
 import re
 import select
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
+import termios
 import time
 
 BIN = sys.argv[1] if len(sys.argv) > 1 else "target/release/commitsmith"
+# A normal Windows console and a normal terminal both fit this.
+COLS, ROWS = 100, 30
 ANSI = re.compile(rb"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07")
 
 
@@ -33,6 +38,10 @@ def run_session(script, commit=False):
     env = dict(os.environ, XDG_CONFIG_HOME=config_home, TERM="xterm-256color")
 
     primary, secondary = pty.openpty()
+    # Without a size the terminal is 0x0, the composer falls back to its compact
+    # layout and the full form is never drawn. That gap let a startup panic slip
+    # into 0.3.1, so the size is part of the test.
+    fcntl.ioctl(secondary, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, COLS, 0, 0))
     argv = [os.path.abspath(BIN)]
     if commit:
         argv.append("--commit")
@@ -102,9 +111,15 @@ def main():
     stored = subprocess.run(["git", "log", "-1", "--format=%B"], cwd=repo, capture_output=True, text=True).stdout
     if "Co-authored-by: himar" not in stored:
         failures.append(f"the handle did not reach the commit message: {stored!r}")
-    # The dialog must be gone from the final screen, i.e. the composer rendered.
-    if "first start" in screen:
-        failures.append("the setup dialog is still on screen")
+    # Ratatui redraws in place, so the dialog text stays in the byte stream of
+    # earlier frames. Only the tail matters: if the dialog were still showing, it
+    # would be in the last frame.
+    tail = screen[-2000:]
+    if "What is your full name" in tail:
+        failures.append("the setup dialog is still on the final screen")
+    if "panicked at" in screen:
+        panic = [line for line in screen.splitlines() if "panicked at" in line]
+        failures.append("the program panicked: " + " / ".join(panic))
     print("commit:", head or "<none>")
     print("config:", config.strip().splitlines()[-2:] or "<none>")
     shutil.rmtree(repo, ignore_errors=True)

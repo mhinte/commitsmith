@@ -302,13 +302,17 @@ fn window(value: &str, cursor: usize, active: bool, width: usize) -> (String, Op
         .take(cursor.min(chars.len()))
         .map(|c| cells(*c))
         .sum();
+    // Scroll just far enough that the cursor stays inside the field. The bounds
+    // check has to come first: an empty field has no character to look at, and
+    // indexing it panicked the whole program on startup.
+    let keep_visible = width.saturating_sub(1);
     let mut start_char = 0;
     let mut skipped = 0;
-    while skipped + cells(chars[start_char]) <= before.saturating_sub(width.saturating_sub(1))
-        && start_char < chars.len()
-        && before > width
-    {
-        skipped += cells(chars[start_char]);
+    while before.saturating_sub(skipped) > keep_visible && start_char < cursor {
+        let Some(c) = chars.get(start_char) else {
+            break;
+        };
+        skipped += cells(*c);
         start_char += 1;
     }
 
@@ -699,6 +703,55 @@ mod tests {
         let (display, col) = window("abcdefghij", 9, true, 5);
         assert_eq!(display, "fghij");
         assert_eq!(col, Some(4));
+    }
+
+    #[test]
+    fn an_empty_field_has_a_cursor_but_nothing_to_scroll() {
+        // 0.3.1 panicked here on startup: every empty field indexed chars[0].
+        assert_eq!(window("", 0, true, 40), (String::new(), Some(0)));
+        assert_eq!(window("", 0, false, 40), (String::new(), None));
+        // A field narrower than one cell must not divide by zero either.
+        assert_eq!(window("", 0, true, 0), (String::new(), Some(0)));
+    }
+
+    #[test]
+    fn the_longest_field_still_shows_the_cursor() {
+        let text = "x".repeat(200);
+        let (display, col) = window(&text, 200, true, 20);
+        // The cursor needs a cell of its own, so 19 characters plus the cursor
+        // fill the 20 columns; nothing may overflow the field.
+        let col = col.expect("cursor column");
+        assert_eq!(col, text_cells(&display));
+        assert!(text_cells(&display) < 20);
+        assert!(display.ends_with("xxx"));
+    }
+
+    #[test]
+    fn the_composer_draws_at_any_terminal_size() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        // Empty fields, then a filled one with the cursor at the end.
+        for size in [(100, 30), (80, 24), (62, 24), (61, 23), (40, 12), (20, 6)] {
+            let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).unwrap();
+            terminal
+                .draw(|frame| draw(frame, &app))
+                .expect("empty composer");
+        }
+
+        let mut filled = App::with_config(crate::config::Config::conventional(), Vec::new());
+        filled.handle_paste("scope with a rather long value that needs scrolling");
+        filled.handle_key(ratatui::crossterm::event::KeyEvent::new(
+            ratatui::crossterm::event::KeyCode::Tab,
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        ));
+        for size in [(100, 30), (80, 24), (40, 12)] {
+            let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).unwrap();
+            terminal
+                .draw(|frame| draw(frame, &filled))
+                .expect("filled composer");
+        }
     }
 
     #[test]
