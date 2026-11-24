@@ -61,7 +61,7 @@ jobs:
           # musl.cc toolchain instead.
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
-            musl_cross: aarch64-linux-musl
+            musl_cross: true
           - target: x86_64-apple-darwin
             os: macos-latest
           - target: aarch64-apple-darwin
@@ -84,17 +84,6 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Install musl cross toolchain
-        if: matrix.musl_cross
-        env:
-          MUSL_CROSS: ${{ matrix.musl_cross }}
-        run: |
-          set -euo pipefail
-          curl -sSfL "https://musl.cc/${MUSL_CROSS}-cross.tgz" -o /tmp/cross.tgz
-          sudo mkdir -p /opt/cross
-          sudo tar -C /opt/cross -xzf /tmp/cross.tgz
-          echo "/opt/cross/${MUSL_CROSS}-cross/bin" >> "$GITHUB_PATH"
-
       - name: Configure cross linker
         if: matrix.linker
         env:
@@ -106,16 +95,19 @@ jobs:
           printf '[target.%s]\nlinker = "%s"\n' "$TARGET" "$LINKER" >> .cargo/config.toml
           cat .cargo/config.toml
 
+      # aarch64 musl has no distro cross gcc and musl.cc is not reliable from
+      # hosted runners; this action ships a prebuilt musl toolchain.
+      - name: Build (musl aarch64 via cross action)
+        if: matrix.musl_cross
+        uses: houseabsolute/actions-rust-cross@v1
+        with:
+          command: build
+          target: ${{ matrix.target }}
+          args: "--release --locked"
+
       - name: Build
-        env:
-          MUSL_CROSS: ${{ matrix.musl_cross }}
-        run: |
-          if [ -n "${MUSL_CROSS:-}" ]; then
-            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="${MUSL_CROSS}-gcc"
-            export CC_aarch64_unknown_linux_musl="${MUSL_CROSS}-gcc"
-            export AR_aarch64_unknown_linux_musl="${MUSL_CROSS}-ar"
-          fi
-          cargo build --release --locked --target ${{ matrix.target }}
+        if: ${{ !matrix.musl_cross }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package
         id: pack
