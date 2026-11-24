@@ -108,6 +108,17 @@ jobs:
             && test "$(git log -1 --format=%s)" = 'feat(ci): smoke test')
           (cd "$work" && "$bin" hooks uninstall && test ! -e .git/hooks/commit-msg)
 
+  installers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Fakes the release host and the binary, so the installer logic runs
+      # without a token and without PowerShell.
+      - run: python3 scripts/check-installers.py
+      # Drives the real binary through a pty: first-start dialog, composer,
+      # --commit. Covers the wiring that unit tests cannot see.
+      - run: cargo build --release && python3 scripts/smoke.py target/release/commitsmith
+
   audit:
     runs-on: ubuntu-latest
     steps:

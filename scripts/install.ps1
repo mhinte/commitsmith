@@ -1,109 +1,63 @@
-#!/usr/bin/env pwsh
-# Install commitsmith for the current user and make it reachable everywhere.
+# Install commitsmith for the current user, with as little PowerShell as possible.
 #
-#   iwr https://raw.githubusercontent.com/mhinte/commitsmith/main/scripts/install.ps1 | iex
+#   iwr https://raw.githubusercontent.com/mhinte/commitsmith/main/scripts/install.ps1 -OutFile install.ps1
+#   .\install.ps1                       # latest release
 #   .\install.ps1 -Binary .\commitsmith.exe -Alias smith
 #
-# Installs to %LOCALAPPDATA%\Programs\commitsmith, adds that directory to the
-# user PATH (no admin rights needed) and points a PowerShell alias at it.
+# The binary does the real work via `commitsmith --install`: it copies itself to
+# %LOCALAPPDATA%\Programs\commitsmith, adds that directory to the *user* PATH and
+# creates the optional short command. No admin rights, no profile edits.
 [CmdletBinding()]
 param(
     # Existing binary to install. Without it the latest release is downloaded.
     [string]$Binary,
-    # Extra command name, e.g. "smith" for a short alias. Optional.
+    # Optional second command name, e.g. "smith".
     [string]$Alias,
-    # Release tag to download, e.g. v0.2.0. Defaults to the latest release.
+    # Release tag, e.g. v0.3.0. Defaults to the latest release.
     [string]$Tag
 )
 
 $ErrorActionPreference = 'Stop'
-$repo = "mhinte/commitsmith"
-$installDir = Join-Path $env:LOCALAPPDATA 'Programs\commitsmith'
-$target = Join-Path $installDir 'commitsmith.exe'
+$owner = 'mhinte'
+$repo = 'commitsmith'
 
-function Write-Step($message) { Write-Host "  $message" -ForegroundColor Cyan }
-function Write-Ok($message) { Write-Host "  $message" -ForegroundColor Green }
+$tempDir = $null
+try {
+    # --- 1. find a binary ----------------------------------------------------
+    if ($Binary) {
+        if (-not (Test-Path $Binary)) { throw "binary not found: $Binary" }
+        $exe = (Resolve-Path $Binary).Path
+    }
+    else {
+        $api = if ($Tag) { "https://api.github.com/repos/$owner/$repo/releases/tags/$Tag" }
+               else { "https://api.github.com/repos/$owner/$repo/releases/latest" }
+        Write-Host "  asking $api" -ForegroundColor Cyan
+        $release = Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent' = 'commitsmith-installer' }
 
-# --- 1. get the binary -------------------------------------------------------
-if ($Binary) {
-    if (-not (Test-Path $Binary)) { throw "binary not found: $Binary" }
-    Write-Step "using $Binary"
-    $source = (Resolve-Path $Binary).Path
-} else {
-    $api = if ($Tag) { "https://api.github.com/repos/$repo/releases/tags/$Tag" }
-           else { "https://api.github.com/repos/$repo/releases/latest" }
-    Write-Step "asking $api"
-    $release = Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent' = 'commitsmith-installer' }
+        $asset = $release.assets | Where-Object { $_.name -like '*windows*' -and $_.name -like '*.zip' } | Select-Object -First 1
+        if (-not $asset) { throw "release $($release.tag_name) has no Windows archive" }
 
-    # Windows builds are zip archives in the release; fall back to nothing so a
-    # missing asset fails with a clear message instead of a 404 later.
-    $asset = $release.assets | Where-Object { $_.name -like '*windows*' -and $_.name -like '*.zip' } | Select-Object -First 1
-    if (-not $asset) {
-        throw "release $($release.tag_name) has no Windows archive yet; build it with 'cargo build --release' and pass -Binary"
+        $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString())
+        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+        $zip = Join-Path $tempDir $asset.name
+        Write-Host "  downloading $($asset.name)" -ForegroundColor Cyan
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing
+        Expand-Archive -Path $zip -DestinationPath $tempDir -Force
+
+        $found = Get-ChildItem -Path $tempDir -Recurse -Filter 'commitsmith.exe' | Select-Object -First 1
+        if (-not $found) { throw "the archive did not contain commitsmith.exe" }
+        $exe = $found.FullName
     }
 
-    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("commitsmith-" + [guid]::NewGuid())
-    New-Item -ItemType Directory -Path $tmp | Out-Null
-    $zip = Join-Path $tmp $asset.name
-    Write-Step "downloading $($asset.name)"
-    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing
-    Expand-Archive -Path $zip -DestinationPath $tmp -Force
-
-    $found = Get-ChildItem -Path $tmp -Recurse -Filter 'commitsmith.exe' | Select-Object -First 1
-    if (-not $found) { throw "the archive did not contain commitsmith.exe" }
-    $source = $found.FullName
+    # --- 2. let the binary install itself ------------------------------------
+    $installArgs = @('--install')
+    if ($Alias) { $installArgs += @('--alias', $Alias) }
+    & $exe @installArgs
+    if ($LASTEXITCODE -ne 0) { throw "commitsmith --install failed with exit code $LASTEXITCODE" }
+}
+finally {
+    if ($tempDir -and (Test-Path $tempDir)) { Remove-Item -Recurse -Force $tempDir }
 }
 
-# --- 2. copy it into place ---------------------------------------------------
-New-Item -ItemType Directory -Path $installDir -Force | Out-Null
-Copy-Item -Path $source -Destination $target -Force
-Write-Ok "installed $target"
-
-# Short alias as a copy, so cmd, PowerShell and Windows Terminal all find it.
-if ($Alias) {
-    $aliasPath = Join-Path $installDir "$Alias.exe"
-    Copy-Item -Path $target -Destination $aliasPath -Force
-    Write-Ok "alias $aliasPath"
-}
-
-# --- 3. put the directory on the user PATH -----------------------------------
-$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-if (-not $userPath) { $userPath = '' }
-$entries = $userPath -split ';' | Where-Object { $_ }
-if ($entries -notcontains $installDir) {
-    $newPath = (@($entries) + $installDir) -join ';'
-    [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
-    Write-Ok "added $installDir to your user PATH"
-    Write-Host "  open a new terminal so the change takes effect" -ForegroundColor Yellow
-} else {
-    Write-Ok "$installDir is already on your user PATH"
-}
-
-# --- 4. PowerShell alias, only when a real alias name was given --------------
-# `iwr ... | iex` sets $PSCommandPath to nothing, so writing to $PROFILE there
-# would be surprising; that path is opt-in via -Alias.
-if (-not $Alias) {
-    & $target --version
-    Write-Host ""
-    Write-Host "Done. commitsmith is on your user PATH; open a new terminal." -ForegroundColor Green
-    return
-}
-
-$profileDir = Split-Path -Parent $PROFILE.CurrentUserAllHosts
-if (-not (Test-Path $profileDir)) { New-Item -ItemType Directory -Path $profileDir -Force | Out-Null }
-$marker = '# >>> commitsmith >>>'
-if (-not (Test-Path $PROFILE.CurrentUserAllHosts) -or
-    -not (Select-String -Path $PROFILE.CurrentUserAllHosts -SimpleMatch $marker -Quiet)) {
-    $lines = @(
-        '',
-        $marker,
-        "Set-Alias -Name $Alias -Value '$target' -Scope Global -Force -ErrorAction SilentlyContinue",
-        '# <<< commitsmith <<<'
-    )
-    Add-Content -Path $PROFILE.CurrentUserAllHosts -Value $lines
-    Write-Ok "added the $Alias alias to $PROFILE.CurrentUserAllHosts"
-}
-
-& $target --version
-Write-Host ""
-Write-Host "Done. Try: $Alias --version" -ForegroundColor Green
+Write-Host ''
+Write-Host 'Done. Open a new terminal, then run: commitsmith --version' -ForegroundColor Green

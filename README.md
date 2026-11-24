@@ -58,22 +58,32 @@ Legt `commitsmith` in `~/.local/bin` ab, optional zusätzlich einen Alias:
 ./scripts/install.sh --alias smith   # ~/.local/bin/smith zeigt auf commitsmith
 ```
 
-Steht `~/.local/bin` nicht im PATH, sagt das Skript, was in die Shell-Config gehört.
+Auch hier macht die Exe die Arbeit (`commitsmith --install`): `~/.local/bin`,
+PATH-Zeile in `.profile`/`.bashrc`/`.zshrc` falls nötig, Alias optional.
 
 ### Windows
 
 ```powershell
-iwr https://raw.githubusercontent.com/mhinte/commitsmith/main/scripts/install.ps1 | iex
+iwr https://raw.githubusercontent.com/mhinte/commitsmith/main/scripts/install.ps1 -OutFile install.ps1; .\install.ps1
 ```
 
-Das Skript legt `%LOCALAPPDATA%\Programs\commitsmith\commitsmith.exe` ab, hängt das
-Verzeichnis an den **Benutzer**-PATH (keine Adminrechte nötig) und trägt die
-Alias `smith` in dein PowerShell-Profil ein. Ein neues Terminal
-übernehmen die Änderung. Optional mit Alias-Datei statt Alias:
+Das Skript lädt das Release-Archiv und ruft `commitsmith --install` auf. Die Exe
+macht die eigentliche Arbeit: sie kopiert sich nach
+`%LOCALAPPDATA%\Programs\commitsmith\commitsmith.exe` und hängt das Verzeichnis an
+den **Benutzer**-PATH (Registry, keine Adminrechte). Ein neues Terminal übernimmt
+die Änderung. Optional mit kurzem Zweitnamen:
 
 ```powershell
-.\scripts\install.ps1 -Alias smith # zusätzlich smith.exe neben commitsmith.exe
+.\install.ps1 -Alias smith        # zusätzlich smith.exe neben commitsmith.exe
 ```
+
+Wer das Archiv schon entpackt hat, braucht gar kein Skript:
+
+```powershell
+.\commitsmith.exe --install --alias smith
+```
+
+`commitsmith --uninstall` entfernt die Kopien wieder; der PATH-Eintrag bleibt.
 
 ### Aus dem Quellcode
 

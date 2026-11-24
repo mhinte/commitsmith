@@ -6,6 +6,7 @@ use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Row, Table, Wrap};
+use unicode_width::UnicodeWidthChar;
 
 use crate::app::{App, FIELDS, Field, Picker, PickerKind};
 use crate::validate::{self, Severity};
@@ -233,48 +234,90 @@ fn wrap_field(value: &str, width: usize) -> Vec<String> {
             count = 0;
             continue;
         }
-        if count == width {
+        let w = cells(c);
+        if count + w > width {
             rows.push(std::mem::take(&mut row));
             count = 0;
         }
         row.push(c);
-        count += 1;
+        count += w;
     }
     rows.push(row);
     rows
 }
 
 /// Map a char index to (row, column) inside wrapped rows.
+/// Row and column (in screen cells) of a character offset inside wrapped rows.
 fn cursor_in_wrapped(rows: &[String], cursor: usize) -> Option<(usize, usize)> {
     let mut remaining = cursor;
     for (row_idx, row) in rows.iter().enumerate() {
         let len = row.chars().count();
         if remaining <= len {
-            return Some((row_idx, remaining.min(len.saturating_sub(1))));
+            let col = text_cells(&row.chars().take(remaining).collect::<String>());
+            return Some((row_idx, col));
         }
         remaining -= len;
     }
-    rows.len().checked_sub(1).map(|row| (row, 0))
+    rows.len()
+        .checked_sub(1)
+        .map(|row| (row, text_cells(&rows[row])))
 }
 
 /// Cut a single-line value down to `width` characters around the cursor.
+/// Columns a character occupies on screen. Terminals draw wide characters
+/// (CJK, emoji) in two cells, so counting characters is not enough for the
+/// cursor position.
+fn cells(c: char) -> usize {
+    c.width().unwrap_or(0)
+}
+
+fn text_cells(text: &str) -> usize {
+    text.chars().map(cells).sum()
+}
+
+/// Cut a string to at most `width` columns, keeping whole characters.
+fn take_cells(text: &str, width: usize) -> (String, usize) {
+    let mut out = String::new();
+    let mut used = 0;
+    for c in text.chars() {
+        let w = cells(c);
+        if used + w > width {
+            break;
+        }
+        out.push(c);
+        used += w;
+    }
+    (out, used)
+}
+
+/// Visible part of a single-line field plus the cursor column inside it.
 fn window(value: &str, cursor: usize, active: bool, width: usize) -> (String, Option<usize>) {
     let normalized: String = value.replace('\n', " ");
     let chars: Vec<char> = normalized.chars().collect();
     let width = width.max(1);
-    let start = if cursor >= width {
-        cursor + 1 - width
-    } else {
-        0
+
+    // Columns left of the cursor decide the scroll offset.
+    let before: usize = chars
+        .iter()
+        .take(cursor.min(chars.len()))
+        .map(|c| cells(*c))
+        .sum();
+    let mut start_char = 0;
+    let mut skipped = 0;
+    while skipped + cells(chars[start_char]) <= before.saturating_sub(width.saturating_sub(1))
+        && start_char < chars.len()
+        && before > width
+    {
+        skipped += cells(chars[start_char]);
+        start_char += 1;
     }
-    .min(chars.len());
-    let end = (start + width).min(chars.len());
-    let display: String = chars[start..end].iter().collect();
+
+    let rest: String = chars[start_char..].iter().collect();
+    let (display, _) = take_cells(&rest, width);
+
     if active {
-        (
-            display,
-            Some(cursor.saturating_sub(start).min(width.saturating_sub(1))),
-        )
+        let col = (before.saturating_sub(skipped)).min(width.saturating_sub(1));
+        (display, Some(col))
     } else {
         (display, None)
     }
@@ -656,6 +699,33 @@ mod tests {
         let (display, col) = window("abcdefghij", 9, true, 5);
         assert_eq!(display, "fghij");
         assert_eq!(col, Some(4));
+    }
+
+    #[test]
+    fn wide_characters_occupy_two_columns() {
+        assert_eq!(cells('a'), 1);
+        assert_eq!(cells('我'), 2);
+        assert_eq!(text_cells("我我a"), 5);
+        let (kept, used) = take_cells("我我我", 4);
+        assert_eq!(kept, "我我");
+        assert_eq!(used, 4);
+    }
+
+    #[test]
+    fn cursor_column_counts_cells_not_characters() {
+        // Cursor after two CJK characters sits at column 4, not 2.
+        let (display, col) = window("我我ab", 2, true, 20);
+        assert_eq!(display, "我我ab");
+        assert_eq!(col, Some(4));
+    }
+
+    #[test]
+    fn scrolling_uses_cells() {
+        // Ten wide characters in an eight column field: the visible window
+        // starts at a character boundary and the cursor stays inside.
+        let (display, col) = window("我我我我我我我我我我", 10, true, 8);
+        assert!(text_cells(&display) <= 8, "{display:?}");
+        assert!(col.unwrap() < 8);
     }
 
     #[test]

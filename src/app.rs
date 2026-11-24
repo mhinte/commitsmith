@@ -562,6 +562,27 @@ impl App {
         }
     }
 
+    /// Insert typed or pasted text at the cursor. Control characters are
+    /// dropped, except the line breaks that belong in multiline fields.
+    pub fn handle_paste(&mut self, text: &str) {
+        if self.active_field() == Field::Type {
+            return;
+        }
+        for c in text.chars() {
+            if c == '\r' {
+                continue;
+            }
+            if c == '\n' && !self.active_field().multiline() {
+                self.insert(' ');
+                continue;
+            }
+            if c.is_control() && c != '\n' {
+                continue;
+            }
+            self.insert(c);
+        }
+    }
+
     fn insert(&mut self, c: char) {
         let field = self.active_field();
         if field == Field::Type {
@@ -767,6 +788,9 @@ pub fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
         if event::poll(Duration::from_millis(200))? {
             match event::read()? {
                 Event::Key(key) => app.handle_key(key),
+                // A pasted block of text goes into the active field, line
+                // breaks included, instead of being replayed as key presses.
+                Event::Paste(text) => app.handle_paste(&text),
                 Event::Resize(_, _) => {}
                 _ => {}
             }

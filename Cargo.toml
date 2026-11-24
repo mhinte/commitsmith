@@ -1,6 +1,6 @@
 [package]
 name = "commitsmith"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Terminal UI for writing and linting Conventional Commits"
@@ -17,6 +17,11 @@ indexmap = "2"
 ratatui = "0.30"
 serde = { version = "1", features = ["derive"] }
 toml = "1"
+unicode-width = "0.2"
+
+# Registry access for the Windows PATH entry, only there.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [profile.release]
 lto = "thin"

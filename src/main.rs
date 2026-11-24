@@ -1,6 +1,6 @@
 //! commitsmith — compose and lint Conventional Commits in the terminal.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -11,6 +11,7 @@ mod commit;
 mod config;
 mod git;
 mod hooks;
+mod install;
 mod setup;
 mod ui;
 mod validate;
@@ -39,6 +40,18 @@ struct Cli {
     /// Set the full name used for the author handle and exit
     #[arg(long, value_name = "FULL NAME")]
     user: Option<String>,
+
+    /// Put this binary on PATH for the current user and exit
+    #[arg(long, conflicts_with = "uninstall")]
+    install: bool,
+
+    /// Remove the installed copies again
+    #[arg(long)]
+    uninstall: bool,
+
+    /// Command name to install next to the binary, e.g. "smith"
+    #[arg(long, value_name = "NAME", requires = "install")]
+    alias: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -91,6 +104,13 @@ enum HookAction {
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
+    if cli.install {
+        return run_install(cli.alias.as_deref());
+    }
+    if cli.uninstall {
+        return run_uninstall();
+    }
+
     if let Some(name) = cli.user.as_deref() {
         return set_user(name);
     }
@@ -142,7 +162,23 @@ fn run_hooks(action: HookAction) -> ExitCode {
     }
 }
 
+/// Keep the terminal usable when the program panics inside the alternate screen.
+///
+/// Without this a panic on Windows leaves the console in raw mode with a blank
+/// screen and a hidden cursor, so the message that explains the problem is never
+/// read. The hook restores the terminal first, then reports as usual.
+fn install_panic_hook() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        ratatui::restore();
+        let _ = std::io::stdout().flush();
+        default(info);
+    }));
+}
+
 fn run_composer(commit: bool) -> ExitCode {
+    install_panic_hook();
+
     // First start: ask once for the name, then never again.
     if Config::needs_setup() {
         let mut terminal = ratatui::init();
@@ -206,16 +242,80 @@ fn run_composer(commit: bool) -> ExitCode {
 /// Run `git commit -m <message>`, letting git ask for a passphrase or print its
 /// own errors, so the output looks like a normal commit.
 fn commit_with_git(message: &str) -> ExitCode {
-    match std::process::Command::new("git")
+    let output = std::process::Command::new("git")
         .arg("commit")
         .arg("-m")
         .arg(message)
-        .status()
-    {
-        Ok(status) if status.success() => ExitCode::SUCCESS,
-        Ok(_) => ExitCode::FAILURE,
+        .output();
+
+    match output {
+        Ok(output) => {
+            // git already wrote its own output, but stdout/stderr were captured so
+            // the message survives on terminals that clear the screen on exit.
+            let _ = std::io::stdout().write_all(&output.stdout);
+            let _ = std::io::stdout().flush();
+            let _ = std::io::stderr().write_all(&output.stderr);
+            if output.status.success() {
+                return ExitCode::SUCCESS;
+            }
+            eprintln!();
+            eprintln!("commitsmith: git did not commit; the message is kept below.");
+            eprintln!("--- 8< ---");
+            for line in message.lines() {
+                eprintln!("{line}");
+            }
+            eprintln!("--- 8< ---");
+            eprintln!("retry with: git commit -F .git/COMMIT_EDITMSG");
+            ExitCode::FAILURE
+        }
         Err(error) => {
             eprintln!("commitsmith: cannot run git: {error}");
+            eprintln!("is git installed and on PATH?");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_install(alias: Option<&str>) -> ExitCode {
+    match install::install(alias) {
+        Ok(report) => {
+            println!("installed {}", report.binary.display());
+            if let Some(alias) = &report.alias {
+                println!("alias     {}", alias.display());
+            }
+            println!("directory {}", report.directory.display());
+            if report.added_to_path {
+                println!("added the directory to your PATH");
+                if report.restart_shell {
+                    println!("open a new terminal so it takes effect");
+                }
+            } else {
+                println!("the directory was already on your PATH");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("commitsmith: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_uninstall() -> ExitCode {
+    match install::uninstall() {
+        Ok(report) => {
+            println!("removed {}", report.binary.display());
+            if let Some(alias) = &report.alias {
+                println!("removed {}", alias.display());
+            }
+            println!(
+                "the PATH entry stays; remove {} by hand if you want it gone",
+                report.directory.display()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("commitsmith: {error}");
             ExitCode::FAILURE
         }
     }

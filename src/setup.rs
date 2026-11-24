@@ -1,14 +1,18 @@
 //! First-start dialog: ask for the name, show the handle, write the config.
+//!
+//! The dialog is drawn in the whole terminal instead of in a centred box: on
+//! some terminals (notably Windows) a box placed in the middle left the hardware
+//! cursor a character or two off, and it also avoids the layout work.
 
 use std::io;
 use std::time::Duration;
 
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::layout::{Constraint, Layout, Position, Rect};
+use ratatui::layout::{Constraint, Layout, Position};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Paragraph, Wrap};
 
 use crate::config::{Config, prefix_from_name};
 
@@ -43,6 +47,10 @@ impl Setup {
     }
 
     fn insert(&mut self, c: char) {
+        // Pasting on Windows sends a CR as well; it must not submit.
+        if c == '\r' || c == '\n' || c == '\t' {
+            return;
+        }
         let mut chars: Vec<char> = self.name.chars().collect();
         chars.insert(self.cursor.min(chars.len()), c);
         self.name = chars.into_iter().collect();
@@ -87,7 +95,9 @@ impl Setup {
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
-        if key.kind != KeyEventKind::Press || self.done.is_some() {
+        // Windows terminals send both presses and releases for modifier keys on
+        // some hosts; only real presses must be handled.
+        if key.kind == KeyEventKind::Release || self.done.is_some() {
             return;
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -95,6 +105,7 @@ impl Setup {
             KeyCode::Enter => self.submit(),
             KeyCode::Esc => self.done = Some(Outcome::Skipped),
             KeyCode::Char('c') if ctrl => self.done = Some(Outcome::Skipped),
+            KeyCode::Char('s') if ctrl => self.submit(),
             KeyCode::Backspace => self.backspace(),
             KeyCode::Delete => {
                 let len = self.name.chars().count();
@@ -118,31 +129,48 @@ impl Setup {
 /// Show the dialog. Returns what happened; the caller decides whether a failure
 /// is fatal.
 pub fn run(terminal: &mut DefaultTerminal) -> io::Result<Outcome> {
+    // Bracketed paste keeps a pasted name from being read as separate keys,
+    // and it is what makes Ctrl+V behave in Windows terminals.
+    let _ = ratatui::crossterm::execute!(
+        io::stdout(),
+        ratatui::crossterm::event::EnableBracketedPaste
+    );
+
     let mut setup = Setup::new();
-    loop {
+    let outcome = loop {
         terminal.draw(|frame| draw(frame, &setup))?;
         if event::poll(Duration::from_millis(200))? {
-            if let Event::Key(key) = event::read()? {
-                setup.handle_key(key);
+            match event::read()? {
+                Event::Key(key) => setup.handle_key(key),
+                Event::Paste(text) => {
+                    // A pasted line break would otherwise submit the dialog.
+                    for c in text.chars().filter(|c| !c.is_control()) {
+                        setup.insert(c);
+                    }
+                }
+                _ => {}
             }
         }
         if let Some(outcome) = setup.done.take() {
-            return Ok(outcome);
+            break outcome;
         }
-    }
+    };
+
+    let _ = ratatui::crossterm::execute!(
+        io::stdout(),
+        ratatui::crossterm::event::DisableBracketedPaste
+    );
+    Ok(outcome)
 }
 
 fn draw(frame: &mut ratatui::Frame, setup: &Setup) {
     let area = frame.area();
-    let width = area.width.saturating_sub(4).clamp(28, 64);
-    let height = area.height.saturating_sub(2).clamp(9, 14);
-    let popup = Rect {
-        x: area.x + (area.width.saturating_sub(width)) / 2,
-        y: area.y + (area.height.saturating_sub(height)) / 2,
-        width,
-        height,
-    };
-    frame.render_widget(Clear, popup);
+    let [_, body, _] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(6),
+        Constraint::Length(1),
+    ])
+    .areas(area);
 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
@@ -153,18 +181,21 @@ fn draw(frame: &mut ratatui::Frame, setup: &Setup) {
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ));
-    let inner = block.inner(popup);
-    frame.render_widget(block, popup);
+    frame.render_widget(ratatui::widgets::Clear, body);
+    let inner = block.inner(body);
+    frame.render_widget(block, body);
 
     let [form_area, hint_area] =
         Layout::vertical([Constraint::Min(4), Constraint::Length(3)]).areas(inner);
 
-    let prefix = setup.prefix();
-    let prefix_line = match &prefix {
+    // Field text starts two columns in; the same constant positions the cursor.
+    const PAD: u16 = 2;
+
+    let prefix_line = match setup.prefix() {
         Some(prefix) => Line::from(vec![
             Span::styled("  handle   ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                prefix.clone(),
+                prefix,
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
@@ -207,24 +238,24 @@ fn draw(frame: &mut ratatui::Frame, setup: &Setup) {
 
     frame.render_widget(
         Paragraph::new(Text::from(vec![
-            Line::styled("  Enter save · Esc skip", Style::default().fg(Color::Gray)),
             Line::styled(
-                "  written to the user config, not to this repository",
-                Style::default().fg(Color::DarkGray),
+                "  Enter save · Esc skip · name and handle stay editable in the file",
+                Style::default().fg(Color::Gray),
             ),
             Line::styled(
-                "  used as the default footer: Co-authored-by",
+                "  written to the user config, not to this repository",
                 Style::default().fg(Color::DarkGray),
             ),
         ])),
         hint_area,
     );
 
-    // Cursor inside the name field: third line of the form area.
-    let field_x = form_area.x + 2 + setup.cursor as u16;
-    let field_y = form_area.y + 2;
-    if field_y < form_area.y + form_area.height {
-        frame.set_cursor_position(Position::new(field_x, field_y));
+    // Cursor sits after the typed name: same column maths for padding and text.
+    let typed = setup.name.chars().take(setup.cursor).count() as u16;
+    let x = form_area.x + PAD + typed;
+    let y = form_area.y + 2;
+    if y < form_area.y + form_area.height.saturating_sub(1) {
+        frame.set_cursor_position(Position::new(x, y));
     }
 }
 
@@ -285,5 +316,38 @@ mod tests {
         press(&mut setup, KeyCode::Delete);
         assert_eq!(setup.name, "bc");
         assert_eq!(setup.cursor, 0);
+    }
+
+    #[test]
+    fn a_carriage_return_never_lands_in_the_name() {
+        // Pasting a line on Windows sends CRLF with the text.
+        let mut setup = Setup::new();
+        type_text(&mut setup, "Marc\r\nHinte");
+        assert_eq!(setup.name, "MarcHinte");
+        assert!(setup.done.is_none(), "CR must not submit");
+    }
+
+    #[test]
+    fn key_releases_are_ignored() {
+        let mut setup = Setup::new();
+        setup.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        let release = KeyEvent {
+            code: KeyCode::Char('a'),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Release,
+            state: ratatui::crossterm::event::KeyEventState::NONE,
+        };
+        setup.handle_key(release);
+        assert_eq!(setup.name, "a", "a released key must not type twice");
+    }
+
+    #[test]
+    fn ctrl_s_also_submits() {
+        let mut setup = Setup::new();
+        type_text(&mut setup, "Marc Hinte");
+        setup.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        // Without a writable config dir in the test environment this reports an
+        // error instead of finishing, but it must have tried to save.
+        assert!(setup.done.is_some() || setup.error.is_some());
     }
 }
