@@ -1,0 +1,17 @@
+//! The domain layer.
+//!
+//! Rules live here, not in the UI and not in an adapter: a ticket id knows how it
+//! is spelled, an author slug knows which characters it may contain. Nothing in
+//! this module touches the terminal, the file system or a repository.
+
+pub mod author;
+pub mod ticket;
+
+pub use author::{AuthorSlug, AuthorSlugError};
+pub use ticket::{TicketId, TicketIdError};
+
+/// Everything that can go wrong when a user typed a value object.
+///
+/// Kept as one type per object rather than a string so callers can render the
+/// message in the language of their surface and still test for the case.
+pub trait DomainError: std::error::Error + Send + Sync + 'static {}
