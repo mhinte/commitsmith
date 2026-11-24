@@ -185,13 +185,6 @@ pub fn validate_with(commit: &Commit, rules: &Rules) -> Vec<Issue> {
         ));
     }
 
-    if !has_errors(&issues) && commit.body.trim().is_empty() && commit.footer.trim().is_empty() {
-        issues.push(Issue::info(
-            "body",
-            "optional: one body line explaining the why helps reviewers",
-        ));
-    }
-
     for (field, text) in [("body", &commit.body), ("footer", &commit.footer)] {
         for (idx, line) in text.lines().enumerate() {
             let len = line.chars().count();
@@ -289,6 +282,17 @@ mod tests {
     fn rejects_empty_subject() {
         let issues = validate(&commit("feat", "  "));
         assert!(has_errors(&issues));
+    }
+
+    #[test]
+    fn hints_once_about_a_missing_body() {
+        let issues = validate_with(&commit("feat", "add commit composer"), &Rules::default());
+        let hints: Vec<&Issue> = issues
+            .iter()
+            .filter(|issue| issue.severity == Severity::Info)
+            .collect();
+        assert_eq!(hints.len(), 1, "{issues:?}");
+        assert_eq!(hints[0].field, "body");
     }
 
     #[test]
