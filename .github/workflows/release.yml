@@ -123,7 +123,10 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           $archive = "commitsmith-${env:VERSION}-${env:TARGET}"
+          # Both directories are needed: GitHub-hosted Windows runners start
+          # without dist/upload, unlike the shell step on Linux/macOS.
           New-Item -ItemType Directory -Path "dist/$archive" -Force | Out-Null
+          New-Item -ItemType Directory -Path "dist/upload" -Force | Out-Null
           Copy-Item "target/$($env:TARGET)/release/commitsmith.exe" "dist/$archive/commitsmith.exe"
           Copy-Item README.md, LICENSE "dist/$archive/"
           Compress-Archive -Path "dist/$archive/*" -DestinationPath "dist/upload/$archive.zip" -Force
