@@ -78,6 +78,39 @@ git log -1 --pretty=%B | commit-tui check
 Exit code is 1 on errors, 0 otherwise. `--strict` also fails on warnings, which
 is what you want in CI.
 
+### First start
+
+On the very first start the composer asks for your full name and derives a short
+handle from it: first two letters of the surname, then the first three of the
+given name. `Marc Hinte` becomes `himar`.
+
+```
+╭ commit-tui · first start ────────────────────────────╮
+│  What is your full name?                             │
+│                                                      │
+│  Marc Hinte                                          │
+│                                                      │
+│  handle   himar                                      │
+╰──────────────────────────────────────────────────────╯
+  Enter save · Esc skip
+```
+
+Enter writes `~/.config/commit-tui/config.toml` (or `$XDG_CONFIG_HOME/commit-tui/`):
+
+```toml
+user = "Marc Hinte"
+prefix = "himar"
+```
+
+Nothing else is written, so the rest keeps following defaults and project files.
+The handle arrives as a suggested footer line, `Co-authored-by: himar`, which you
+can edit or delete like any other text. Umlauts are spelled out (`Müller` -> `mu`,
+`Jörg` -> `joe`), so the handle stays ASCII and usable in commit trailers.
+
+Esc skips the dialog; `commit-tui --user "Firstname Lastname"` does the same job
+non-interactively and takes precedence over any project file. `commit-tui config
+--identity` prints which name and handle are active.
+
 ### Reuse an old commit as a template
 
 `Ctrl+R` opens the last commits. The one you highlight is shown in full in the
@@ -217,6 +250,7 @@ src/
   validate.rs  lint rules, severities, configurable type set
   config.rs    profiles, defaults, config discovery
   git.rs       scopes from history, staged summary
+  setup.rs     first-start dialog for the name and handle
   hooks.rs     commit-msg hook install/uninstall
 ```
 

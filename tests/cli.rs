@@ -166,6 +166,35 @@ fn foreign_hooks_are_not_overwritten_without_force() {
 }
 
 #[test]
+fn user_flag_writes_the_identity_file() {
+    let dir = repo("identity");
+    let config_home = dir.join("xdg");
+
+    let output = bin()
+        .args(["--user", "Marc Hinte"])
+        .current_dir(&dir)
+        .env("XDG_CONFIG_HOME", &config_home)
+        .output()
+        .expect("run --user");
+    assert!(output.status.success(), "{output:?}");
+
+    let text = std::fs::read_to_string(config_home.join("commit-tui/config.toml"))
+        .expect("identity file written");
+    assert!(text.contains("user = \"Marc Hinte\""), "{text}");
+    assert!(text.contains("prefix = \"himar\""), "{text}");
+
+    let shown = bin()
+        .args(["config", "--identity"])
+        .current_dir(&dir)
+        .env("XDG_CONFIG_HOME", &config_home)
+        .output()
+        .expect("run config --identity");
+    let stdout = String::from_utf8_lossy(&shown.stdout);
+    assert!(stdout.contains("Marc Hinte"), "{stdout}");
+    assert!(stdout.contains("himar"), "{stdout}");
+}
+
+#[test]
 fn unknown_command_fails_with_usage() {
     let output = bin().arg("nonsense").output().expect("run binary");
     assert!(!output.status.success());

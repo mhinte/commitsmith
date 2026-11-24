@@ -11,6 +11,7 @@ mod commit;
 mod config;
 mod git;
 mod hooks;
+mod setup;
 mod ui;
 mod validate;
 
@@ -34,6 +35,10 @@ struct Cli {
     /// Hand the finished message to `git commit` instead of printing it
     #[arg(short, long)]
     commit: bool,
+
+    /// Set the full name used for the author handle and exit
+    #[arg(long, value_name = "FULL NAME")]
+    user: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -57,7 +62,11 @@ enum Command {
         force: bool,
     },
     /// Show the loaded config, its sources and the active profile
-    Config,
+    Config {
+        /// Print the name and the handle from the user config, if present
+        #[arg(long)]
+        identity: bool,
+    },
     /// List the commit types of the active profile
     Types,
     /// Install or remove the commit-msg hook of this repository
@@ -81,6 +90,11 @@ enum HookAction {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+
+    if let Some(name) = cli.user.as_deref() {
+        return set_user(name);
+    }
+
     match cli.command {
         None => run_composer(cli.commit),
         Some(Command::Types) => {
@@ -90,7 +104,7 @@ fn main() -> ExitCode {
             }
             ExitCode::SUCCESS
         }
-        Some(Command::Config) => show_config(),
+        Some(Command::Config { identity }) => show_config(identity),
         Some(Command::Init { force }) => init_config(force),
         Some(Command::Hooks { action }) => run_hooks(action),
         Some(Command::Check {
@@ -129,6 +143,23 @@ fn run_hooks(action: HookAction) -> ExitCode {
 }
 
 fn run_composer(commit: bool) -> ExitCode {
+    // First start: ask once for the name, then never again.
+    if Config::needs_setup() {
+        let mut terminal = ratatui::init();
+        let first_run = setup::run(&mut terminal);
+        ratatui::restore();
+        match first_run {
+            Ok(setup::Outcome::Saved(path)) => eprintln!("commit-tui: wrote {}", path.display()),
+            Ok(setup::Outcome::Skipped) => eprintln!(
+                "commit-tui: no name set, run `commit-tui --user \"Firstname Lastname\"` later"
+            ),
+            Err(error) => {
+                eprintln!("commit-tui: {error}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
     let (config, warnings) = load_config();
     let mut app = app::App::with_config(config, warnings);
 
@@ -188,9 +219,37 @@ fn commit_with_git(message: &str) -> ExitCode {
     }
 }
 
-fn show_config() -> ExitCode {
+/// `--user "Full Name"`: write the identity, print the derived handle.
+fn set_user(name: &str) -> ExitCode {
+    match Config::save_identity(name) {
+        Ok(path) => {
+            let prefix = config::prefix_from_name(name).unwrap_or_default();
+            println!("wrote {}", path.display());
+            println!("user:   {}", name.trim());
+            println!("handle: {prefix}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("commit-tui: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn show_config(identity: bool) -> ExitCode {
     let (config, warnings) = load_config();
+    if identity {
+        println!("user:   {}", config.user.as_deref().unwrap_or("-"));
+        println!("handle: {}", config.prefix.as_deref().unwrap_or("-"));
+        if config.user.is_none() {
+            println!(
+                "       set one with `commit-tui --user \"Firstname Lastname\"` or on first start"
+            );
+        }
+        return ExitCode::SUCCESS;
+    }
     println!("profile: {}", config.profile);
+    println!("user:    {}", config.user.as_deref().unwrap_or("-"));
     println!("types:   {}", config.type_names().join(", "));
     println!("scopes:  {}", join_or_dash(&config.scopes));
     println!(

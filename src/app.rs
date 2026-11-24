@@ -192,7 +192,31 @@ impl App {
             show_help: false,
         };
         app.revalidate();
+        app.seed_footer();
         app
+    }
+
+    /// Suggested footer for a new, empty message: the prefix identifies the
+    /// author in shared repositories.
+    pub fn suggested_footer(&self) -> Option<String> {
+        self.config
+            .prefix
+            .as_deref()
+            .map(|prefix| format!("Co-authored-by: {prefix}"))
+    }
+
+    /// Fill the footer with the suggestion while it is still untouched, so the
+    /// user can delete it like any other text.
+    pub fn seed_footer(&mut self) {
+        if !self.commit.footer.trim().is_empty() {
+            return;
+        }
+        if let Some(footer) = self.suggested_footer() {
+            self.commit.footer = footer;
+            self.cursors[FIELDS.iter().position(|f| *f == Field::Footer).unwrap_or(0)] =
+                self.commit.footer.chars().count();
+            self.revalidate();
+        }
     }
 
     /// What the header shows about the repository on the right.
@@ -1041,6 +1065,22 @@ mod tests {
                 .iter()
                 .any(|issue| issue.message.contains("imperative"))
         );
+    }
+
+    #[test]
+    fn footer_is_seeded_with_the_author_handle() {
+        let mut config = Config::conventional();
+        config.user = Some("Marc Hinte".into());
+        config.prefix = Some("hima".into());
+        let app = App::with_config(config, Vec::new());
+        assert_eq!(app.commit.footer, "Co-authored-by: hima");
+    }
+
+    #[test]
+    fn no_handle_means_no_footer_noise() {
+        let app = App::default();
+        assert_eq!(app.commit.footer, "");
+        assert_eq!(app.suggested_footer(), None);
     }
 
     #[test]
