@@ -5,9 +5,13 @@
 //! this module touches the terminal, the file system or a repository.
 
 pub mod author;
+pub mod branch;
+pub mod slug;
 pub mod ticket;
 
 pub use author::{AuthorSlug, AuthorSlugError};
+pub use branch::{BranchError, BranchKind, BranchTemplate, ConventionalBranchName};
+pub use slug::{BranchSlug, MAX_SLUG_LEN, SlugError};
 pub use ticket::{TicketId, TicketIdError};
 
 /// Everything that can go wrong when a user typed a value object.
