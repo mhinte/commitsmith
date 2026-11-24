@@ -64,7 +64,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         .border_style(MUTED)
         .title(Line::from(vec![
             Span::styled(
-                " commit-tui ",
+                " coggit ",
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
@@ -370,7 +370,7 @@ fn draw_compact(frame: &mut Frame, app: &App, area: Rect) {
         .border_type(BorderType::Rounded)
         .border_style(MUTED)
         .title(Line::from(vec![
-            Span::styled(" commit-tui ", Style::default().fg(Color::Cyan)),
+            Span::styled(" coggit ", Style::default().fg(Color::Cyan)),
             Span::styled(format!("{step} "), MUTED),
         ]))
         .title_top(

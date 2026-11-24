@@ -1,13 +1,13 @@
-//! `commit-tui hooks` — install and remove the commit-msg hook.
+//! `coggit hooks` — install and remove the commit-msg hook.
 
 use std::path::PathBuf;
 use std::process::Command;
 
-const MARKER: &str = "commit-tui";
+const MARKER: &str = "coggit";
 
 const SCRIPT: &str = "#!/bin/sh
-# commit-tui commit-msg hook - checks the message before git records it.
-exec commit-tui check --file \"$1\"
+# coggit commit-msg hook - checks the message before git records it.
+exec coggit check --file \"$1\"
 ";
 
 /// Where git puts hooks for the current repository (works for worktrees and
@@ -41,7 +41,7 @@ pub fn install(force: bool) -> Result<String, String> {
                 .map_err(|error| format!("cannot back up {}: {error}", path.display()))?;
         } else {
             return Err(format!(
-                "{} already exists and is not a commit-tui hook; pass --force to back it up and replace it",
+                "{} already exists and is not a coggit hook; pass --force to back it up and replace it",
                 path.display()
             ));
         }
@@ -60,7 +60,7 @@ pub fn uninstall() -> Result<String, String> {
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
     if !existing.contains(MARKER) {
         return Err(format!(
-            "{} does not belong to commit-tui, leaving it alone",
+            "{} does not belong to coggit, leaving it alone",
             path.display()
         ));
     }

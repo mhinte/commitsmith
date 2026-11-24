@@ -1,13 +1,16 @@
-# commit-tui
+# coggit
 
 Terminal UI for writing and linting [Conventional Commits](https://www.conventionalcommits.org/).
+
+`coggit` = *cog* (as in cocogitto, the Conventional Commits toolbox) + *git*.
+Short alias: `cog`.
 
 Keyboard-first like [convinci](https://github.com/alexandrefelipea/convinci) and
 [koji](https://github.com/cococonscious/koji), but with a live preview and a lint
 pane instead of a step-by-step dialog.
 
 ```
-╭ commit-tui ⚡ perf   performance improvement ────────────────── conventional ╮
+╭ coggit ⚡ perf   performance improvement ────────────────── conventional ╮
 │ subject 3/72   0 errors  0 warnings                                          │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 ╭ compose ─────────────────────────────────────────────────────────────────────╮
@@ -43,14 +46,45 @@ active field only, so it stays usable over a phone-sized ssh session.
 
 ## Install
 
+### Linux und macOS
+
+```sh
+curl -sSL https://raw.githubusercontent.com/mhinte/coggit/main/scripts/install.sh | sh
+```
+
+Legt `coggit` in `~/.local/bin` ab, optional zusätzlich einen Alias:
+
+```sh
+./scripts/install.sh --alias cog     # ~/.local/bin/cog zeigt auf coggit
+```
+
+Steht `~/.local/bin` nicht im PATH, sagt das Skript, was in die Shell-Config gehört.
+
+### Windows
+
+```powershell
+iwr https://raw.githubusercontent.com/mhinte/coggit/main/scripts/install.ps1 | iex
+```
+
+Das Skript legt `%LOCALAPPDATA%\Programs\coggit\coggit.exe` ab, hängt das
+Verzeichnis an den **Benutzer**-PATH (keine Adminrechte nötig) und trägt die
+Aliase `cog` und `ct` in dein PowerShell-Profil ein. Ein neues Terminal
+übernehmen die Änderung. Optional mit Alias-Datei statt Alias:
+
+```powershell
+.\scripts\install.ps1 -Alias cog   # zusätzlich cog.exe neben coggit.exe
+```
+
+### Aus dem Quellcode
+
 ```sh
 cargo install --path .
 ```
 
 Rust 1.85 or newer. Needs `git` on PATH.
 
-Prebuilt binaries come from the [releases](https://github.com/mhinte/commit-tui/releases):
-`commit-tui-<version>-<target>.tar.gz` for Linux x86_64 (gnu and static musl),
+Prebuilt binaries come from the [releases](https://github.com/mhinte/coggit/releases):
+`coggit-<version>-<target>.tar.gz` for Linux x86_64 (gnu and static musl),
 Linux aarch64 (gnu and musl) and macOS (Intel and Apple silicon). Each archive
 holds the binary, README and LICENSE, and `SHA256SUMS` in the release covers all
 of them.
@@ -58,9 +92,9 @@ of them.
 ## Use
 
 ```sh
-commit-tui                  # compose, print the message to stdout
-commit-tui --commit         # compose, then run `git commit -m <message>`
-git commit -m "$(commit-tui)"
+coggit                  # compose, print the message to stdout
+coggit --commit         # compose, then run `git commit -m <message>`
+git commit -m "$(coggit)"
 ```
 
 `Ctrl+S` finishes. Without `--commit` the message goes to stdout, so the shell
@@ -70,9 +104,9 @@ passphrase prompts, errors) is what you see.
 ### Lint an existing message
 
 ```sh
-commit-tui check --message "feat(api): add rate limit"
-commit-tui check --file .git/COMMIT_EDITMSG
-git log -1 --pretty=%B | commit-tui check
+coggit check --message "feat(api): add rate limit"
+coggit check --file .git/COMMIT_EDITMSG
+git log -1 --pretty=%B | coggit check
 ```
 
 Exit code is 1 on errors, 0 otherwise. `--strict` also fails on warnings, which
@@ -85,7 +119,7 @@ handle from it: first two letters of the surname, then the first three of the
 given name. `Marc Hinte` becomes `himar`.
 
 ```
-╭ commit-tui · first start ────────────────────────────╮
+╭ coggit · first start ────────────────────────────╮
 │  What is your full name?                             │
 │                                                      │
 │  Marc Hinte                                          │
@@ -95,7 +129,7 @@ given name. `Marc Hinte` becomes `himar`.
   Enter save · Esc skip
 ```
 
-Enter writes `~/.config/commit-tui/config.toml` (or `$XDG_CONFIG_HOME/commit-tui/`):
+Enter writes `~/.config/coggit/config.toml` (or `$XDG_CONFIG_HOME/coggit/`):
 
 ```toml
 user = "Marc Hinte"
@@ -107,8 +141,8 @@ The handle arrives as a suggested footer line, `Co-authored-by: himar`, which yo
 can edit or delete like any other text. Umlauts are spelled out (`Müller` -> `mu`,
 `Jörg` -> `joe`), so the handle stays ASCII and usable in commit trailers.
 
-Esc skips the dialog; `commit-tui --user "Firstname Lastname"` does the same job
-non-interactively and takes precedence over any project file. `commit-tui config
+Esc skips the dialog; `coggit --user "Firstname Lastname"` does the same job
+non-interactively and takes precedence over any project file. `coggit config
 --identity` prints which name and handle are active.
 
 ### Reuse an old commit as a template
@@ -130,25 +164,25 @@ Typing filters the list, `Ctrl+R` is also available while another picker is open
 ### commit-msg hook
 
 ```sh
-commit-tui hooks install          # writes the hook
-commit-tui hooks uninstall        # removes it again
-commit-tui hooks install --force  # backs up a foreign hook and replaces it
+coggit hooks install          # writes the hook
+coggit hooks uninstall        # removes it again
+coggit hooks install --force  # backs up a foreign hook and replaces it
 ```
 
-The hook calls `commit-tui check --file "$1"`, so `commit-tui` must be on PATH.
+The hook calls `coggit check --file "$1"`, so `coggit` must be on PATH.
 An existing hook that is not ours is only replaced with `--force`, and then the
 original is kept as `commit-msg.bak`.
 
 ### Configure it
 
 ```sh
-commit-tui init     # writes .commit-tui.toml from the current defaults
-commit-tui config   # shows the effective values and which files were read
-commit-tui types    # the types of the active profile, one per line
+coggit init     # writes .coggit.toml from the current defaults
+coggit config   # shows the effective values and which files were read
+coggit types    # the types of the active profile, one per line
 ```
 
-Lookup order, later wins: built-in defaults, `~/.config/commit-tui/config.toml`,
-`.commit-tui.toml` in the current directory. Lists replace each other rather than
+Lookup order, later wins: built-in defaults, `~/.config/coggit/config.toml`,
+`.coggit.toml` in the current directory. Lists replace each other rather than
 merging, so a project file fully owns its own type list.
 
 ```toml

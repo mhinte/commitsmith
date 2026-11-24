@@ -1,7 +1,7 @@
 //! Default types and scopes, profiles, and config discovery.
 //!
 //! Precedence, lowest to highest: built-in defaults, then
-//! `$XDG_CONFIG_HOME/commit-tui/config.toml`, then `.commit-tui.toml` in the
+//! `$XDG_CONFIG_HOME/coggit/config.toml`, then `.coggit.toml` in the
 //! current directory. Lists replace the previous value, they do not merge, so a
 //! project file has full control over its own types once it sets them.
 
@@ -60,7 +60,7 @@ pub struct Config {
     pub user: Option<String>,
     /// Short handle derived from the name, e.g. `hima`.
     pub prefix: Option<String>,
-    /// Where the values came from, for `commit-tui config`.
+    /// Where the values came from, for `coggit config`.
     pub sources: Vec<PathBuf>,
 }
 
@@ -247,15 +247,28 @@ impl Config {
     }
 
     /// User config first, then the project file, so the project wins.
+    ///
+    /// The pre-rename names (`commit-tui/config.toml`, `.commit-tui.toml`) are
+    /// read as well, so an existing setup keeps working; the new file wins.
     fn candidate_paths(cwd: &Path) -> Vec<PathBuf> {
         let mut paths = Vec::new();
-        if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-            paths.push(PathBuf::from(xdg).join("commit-tui/config.toml"));
-        } else if let Ok(home) = std::env::var("HOME") {
-            paths.push(PathBuf::from(home).join(".config/commit-tui/config.toml"));
+        if let Some(config_dir) = Self::user_config_dir() {
+            paths.push(config_dir.join("commit-tui/config.toml"));
+            paths.push(config_dir.join("coggit/config.toml"));
         }
         paths.push(cwd.join(".commit-tui.toml"));
+        paths.push(cwd.join(".coggit.toml"));
         paths
+    }
+
+    /// `$XDG_CONFIG_HOME` or `~/.config`.
+    fn user_config_dir() -> Option<PathBuf> {
+        if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+            return Some(PathBuf::from(xdg));
+        }
+        std::env::var("HOME")
+            .ok()
+            .map(|home| PathBuf::from(home).join(".config"))
     }
 
     fn apply(&mut self, file: ConfigFile) {
@@ -298,9 +311,7 @@ impl Config {
 
     /// Path of the user-wide config file, creating nothing.
     pub fn user_config_path() -> Option<PathBuf> {
-        Self::candidate_paths(Path::new("."))
-            .into_iter()
-            .find(|path| path.ends_with("commit-tui/config.toml"))
+        Self::user_config_dir().map(|dir| dir.join("coggit/config.toml"))
     }
 
     /// True when no user config exists yet, i.e. this is a first start.
@@ -338,7 +349,7 @@ impl Config {
         let text = toml::to_string_pretty(&identity)
             .map_err(|error| format!("cannot serialize the config: {error}"))?;
         let header = concat!(
-            "# Written on first start by commit-tui.\n",
+            "# Written on first start by coggit.\n",
             "# `prefix` is derived from `user`: first two letters of the surname,\n",
             "# then the first three of the given name. Edit both freely.\n",
         );
@@ -447,7 +458,7 @@ mod tests {
 
     #[test]
     fn identity_file_round_trips_through_load() {
-        let dir = std::env::temp_dir().join(format!("commit-tui-identity-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("coggit-identity-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
         Config::save_identity_at("Marc Hinte", &path).unwrap();
@@ -471,10 +482,10 @@ mod tests {
 
     #[test]
     fn project_file_overrides_user_file() {
-        let dir = std::env::temp_dir().join("commit-tui-config-test");
+        let dir = std::env::temp_dir().join("coggit-config-test");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
-            dir.join(".commit-tui.toml"),
+            dir.join(".coggit.toml"),
             "profile = \"angular\"\nemoji = false\nmax_subject = 60\n",
         )
         .unwrap();

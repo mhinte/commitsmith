@@ -1,4 +1,4 @@
-//! commit-tui — compose and lint Conventional Commits in the terminal.
+//! coggit — compose and lint Conventional Commits in the terminal.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -20,12 +20,12 @@ use validate::{Rules, Severity};
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "commit-tui",
+    name = "coggit",
     version,
     about = "Compose and lint Conventional Commits in your terminal",
     long_about = "Run without arguments to open the composer. `check` validates an existing \
                   message and is meant for commit-msg hooks and CI. `init` writes a starter \
-                  .commit-tui.toml, `config` shows what is loaded, `hooks` manages the \
+                  .coggit.toml, `config` shows what is loaded, `hooks` manages the \
                   commit-msg hook."
 )]
 struct Cli {
@@ -55,7 +55,7 @@ enum Command {
         #[arg(long)]
         strict: bool,
     },
-    /// Write a starter .commit-tui.toml in the current directory
+    /// Write a starter .coggit.toml in the current directory
     Init {
         /// Overwrite an existing file
         #[arg(long)]
@@ -136,7 +136,7 @@ fn run_hooks(action: HookAction) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("commit-tui: {error}");
+            eprintln!("coggit: {error}");
             ExitCode::FAILURE
         }
     }
@@ -149,12 +149,12 @@ fn run_composer(commit: bool) -> ExitCode {
         let first_run = setup::run(&mut terminal);
         ratatui::restore();
         match first_run {
-            Ok(setup::Outcome::Saved(path)) => eprintln!("commit-tui: wrote {}", path.display()),
-            Ok(setup::Outcome::Skipped) => eprintln!(
-                "commit-tui: no name set, run `commit-tui --user \"Firstname Lastname\"` later"
-            ),
+            Ok(setup::Outcome::Saved(path)) => eprintln!("coggit: wrote {}", path.display()),
+            Ok(setup::Outcome::Skipped) => {
+                eprintln!("coggit: no name set, run `coggit --user \"Firstname Lastname\"` later")
+            }
             Err(error) => {
-                eprintln!("commit-tui: {error}");
+                eprintln!("coggit: {error}");
                 return ExitCode::FAILURE;
             }
         }
@@ -195,7 +195,7 @@ fn run_composer(commit: bool) -> ExitCode {
             None => ExitCode::SUCCESS,
         },
         Err(error) => {
-            eprintln!("commit-tui: {error}");
+            eprintln!("coggit: {error}");
             ExitCode::FAILURE
         }
     }
@@ -213,7 +213,7 @@ fn commit_with_git(message: &str) -> ExitCode {
         Ok(status) if status.success() => ExitCode::SUCCESS,
         Ok(_) => ExitCode::FAILURE,
         Err(error) => {
-            eprintln!("commit-tui: cannot run git: {error}");
+            eprintln!("coggit: cannot run git: {error}");
             ExitCode::FAILURE
         }
     }
@@ -230,7 +230,7 @@ fn set_user(name: &str) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("commit-tui: {error}");
+            eprintln!("coggit: {error}");
             ExitCode::FAILURE
         }
     }
@@ -243,7 +243,7 @@ fn show_config(identity: bool) -> ExitCode {
         println!("handle: {}", config.prefix.as_deref().unwrap_or("-"));
         if config.user.is_none() {
             println!(
-                "       set one with `commit-tui --user \"Firstname Lastname\"` or on first start"
+                "       set one with `coggit --user \"Firstname Lastname\"` or on first start"
             );
         }
         return ExitCode::SUCCESS;
@@ -280,10 +280,10 @@ fn join_or_dash(items: &[String]) -> String {
 }
 
 fn init_config(force: bool) -> ExitCode {
-    let path = cwd().join(".commit-tui.toml");
+    let path = cwd().join(".coggit.toml");
     if path.exists() && !force {
         eprintln!(
-            "commit-tui: {} exists, pass --force to overwrite",
+            "coggit: {} exists, pass --force to overwrite",
             path.display()
         );
         return ExitCode::FAILURE;
@@ -295,7 +295,7 @@ fn init_config(force: bool) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("commit-tui: cannot write {}: {error}", path.display());
+            eprintln!("coggit: cannot write {}: {error}", path.display());
             ExitCode::FAILURE
         }
     }
@@ -306,7 +306,7 @@ fn run_check(file: Option<PathBuf>, message: Option<String>, strict: bool) -> Ex
         (Some(path), _) => match std::fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) => {
-                eprintln!("commit-tui: cannot read {}: {error}", path.display());
+                eprintln!("coggit: cannot read {}: {error}", path.display());
                 return ExitCode::FAILURE;
             }
         },
@@ -314,7 +314,7 @@ fn run_check(file: Option<PathBuf>, message: Option<String>, strict: bool) -> Ex
         (None, None) => {
             let mut buffer = String::new();
             if let Err(error) = std::io::stdin().read_to_string(&mut buffer) {
-                eprintln!("commit-tui: cannot read stdin: {error}");
+                eprintln!("coggit: cannot read stdin: {error}");
                 return ExitCode::FAILURE;
             }
             buffer

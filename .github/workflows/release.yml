@@ -66,13 +66,17 @@ jobs:
             os: macos-latest
           - target: aarch64-apple-darwin
             os: macos-latest
+          # Windows 11 runs x86_64 and arm64 binaries either way; one build
+          # keeps the installer's asset lookup simple.
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
 
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
 
       - name: Install cross packages
-        if: matrix.packages
+        if: matrix.packages && runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y ${{ matrix.packages }}
@@ -109,20 +113,39 @@ jobs:
         if: ${{ !matrix.musl_cross }}
         run: cargo build --release --locked --target ${{ matrix.target }}
 
+      # Windows gets a zip (Expand-Archive in the installer) instead of tar.gz.
+      - name: Package (Windows)
+        id: pack_win
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          $archive = "coggit-${env:VERSION}-${env:TARGET}"
+          New-Item -ItemType Directory -Path "dist/$archive" -Force | Out-Null
+          Copy-Item "target/$($env:TARGET)/release/coggit.exe" "dist/$archive/coggit.exe"
+          Copy-Item README.md, LICENSE "dist/$archive/"
+          Compress-Archive -Path "dist/$archive/*" -DestinationPath "dist/upload/$archive.zip" -Force
+          (Get-FileHash "dist/upload/$archive.zip" -Algorithm SHA256).Hash.ToLower() +
+            "  $archive.zip" | Set-Content "dist/upload/$archive.zip.sha256" -Encoding ascii
+          "archive=$archive" >> $env:GITHUB_OUTPUT
+
       - name: Package
         id: pack
+        if: runner.os != 'Windows'
         env:
           TARGET: ${{ matrix.target }}
           VERSION: ${{ needs.version.outputs.version }}
           RUNNER_OS: ${{ runner.os }}
         run: |
           set -euo pipefail
-          archive="commit-tui-${VERSION}-${TARGET}"
+          archive="coggit-${VERSION}-${TARGET}"
           pkg="dist/${archive}"
           mkdir -p "$pkg" dist/upload
-          cp "target/${TARGET}/release/commit-tui" "$pkg/commit-tui"
+          cp "target/${TARGET}/release/coggit" "$pkg/coggit"
           cp README.md LICENSE "$pkg/"
-          chmod +x "$pkg/commit-tui"
+          chmod +x "$pkg/coggit"
           stamp="$(date -u -r README.md +%Y%m%d%H%M.%S)"
           touch -t "$stamp" "$pkg" "$pkg"/*
           if [ "$RUNNER_OS" = "macOS" ]; then
@@ -145,8 +168,10 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ steps.pack.outputs.archive }}
-          path: dist/upload/*.tar.gz*
+          name: ${{ steps.pack.outputs.archive || steps.pack_win.outputs.archive }}
+          path: |
+            dist/upload/*.tar.gz*
+            dist/upload/*.zip*
           if-no-files-found: error
           retention-days: 7
 
@@ -165,7 +190,7 @@ jobs:
           set -euo pipefail
           cd dist
           ls -l
-          cat ./*.tar.gz.sha256 | sort > SHA256SUMS
+          cat ./*.tar.gz.sha256 ./*.zip.sha256 | sort > SHA256SUMS
           cat SHA256SUMS
           # The published checksums must describe the published files.
           sha256sum -c SHA256SUMS
@@ -177,6 +202,7 @@ jobs:
           name: ${{ needs.version.outputs.tag }}
           files: |
             dist/*.tar.gz
+            dist/*.zip
             dist/SHA256SUMS
           generate_release_notes: true
           draft: false
@@ -187,7 +213,7 @@ jobs:
             unit tests, an end-to-end smoke test against a scratch repository,
             the commit-message lint and a dependency audit.
 
-            Each `commit-tui-<version>-<target>.tar.gz` contains the binary,
+            Each `coggit-<version>-<target>.tar.gz` contains the binary,
             README and LICENSE. Verify with `sha256sum -c SHA256SUMS`.
 
             musl builds are static and run anywhere; gnu builds need a current

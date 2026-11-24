@@ -1,4 +1,4 @@
 #!/bin/sh
-# Thin wrapper: prefer `commit-tui hooks install`.
+# Thin wrapper: prefer `coggit hooks install`.
 set -eu
-exec commit-tui hooks install "$@"
+exec coggit hooks install "$@"
