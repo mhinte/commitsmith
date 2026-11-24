@@ -146,6 +146,8 @@ fn run_composer(commit: bool) -> ExitCode {
             .unwrap_or_else(|| "detached".to_string());
         let staged = git::staged_summary(&root).len();
         app.set_repo_line(format!("{branch} · {staged} staged"));
+        let depth = app.config.history_depth.min(200);
+        app.set_history(git::recent_commits(&repo, depth));
     }
 
     let mut terminal = ratatui::init();

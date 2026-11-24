@@ -72,6 +72,22 @@ git log -1 --pretty=%B | commit-tui check
 Exit code is 1 on errors, 0 otherwise. `--strict` also fails on warnings, which
 is what you want in CI.
 
+### Reuse an old commit as a template
+
+`Ctrl+R` opens the last commits. The one you highlight is shown in full in the
+pane on its right: message, author, date and the files it touched. `Enter` takes
+over its **type, scope and body** and leaves the subject and footer alone, so the
+pattern of an earlier message carries into the new one without retyping it.
+
+```
+╭ recent commits · filter: _ · Enter reuses type, scope and body ╮╭ commit ─────╮
+│▸ 1 56589fb feat(composer) add pickers, profiles, hooks a…      ││feat(composer│
+│  2 339e4ea feat           add conventional commit composer     ││): add picker│
+╰────────────────────────────────────────────────────────────────╯╰─────────────╯
+```
+
+Typing filters the list, `Ctrl+R` is also available while another picker is open.
+
 ### commit-msg hook
 
 ```sh
@@ -131,6 +147,7 @@ and the defaults stay active.
 | `Space`, `Ctrl+T` | type picker: type to filter, `1`–`9` jump, `0` last |
 | `Ctrl+N` | scope suggestions: config entries, then scopes from commit history |
 | `Ctrl+P` | switch the type profile |
+| `Ctrl+R` | reuse type, scope and body of a recent commit, with preview |
 | `←` `→`, `h` `l` | previous/next type on the type field, cursor movement elsewhere |
 | `j` `k` | next/previous field on the type field |
 | `Ctrl+S` | finish: print the message, or commit with `--commit` |

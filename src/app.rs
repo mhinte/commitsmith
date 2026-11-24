@@ -8,7 +8,7 @@ use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, Ke
 
 use crate::commit::Commit;
 use crate::config::Config;
-use crate::git::ScopeInfo;
+use crate::git::{PastCommit, ScopeInfo};
 use crate::ui;
 use crate::validate::{self, Issue, Rules};
 
@@ -70,6 +70,8 @@ pub struct Picker {
     pub values: Vec<String>,
     pub selected: usize,
     pub filter: String,
+    /// Text shown next to the list while an entry is highlighted.
+    pub previews: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,15 +79,17 @@ pub enum PickerKind {
     Type,
     Scope,
     Profile,
+    /// Recent commits, reuseable as a template.
+    History,
 }
 
 impl Picker {
     pub fn filtered(&self) -> Vec<usize> {
         let needle = self.filter.to_lowercase();
-        self.values
+        self.items
             .iter()
             .enumerate()
-            .filter(|(_, value)| needle.is_empty() || value.to_lowercase().contains(&needle))
+            .filter(|(_, item)| needle.is_empty() || item.to_lowercase().contains(&needle))
             .map(|(idx, _)| idx)
             .collect()
     }
@@ -95,6 +99,13 @@ impl Picker {
         visible
             .get(self.selected.min(visible.len().saturating_sub(1)))
             .and_then(|idx| self.values.get(*idx))
+    }
+
+    /// Preview text of the highlighted entry, if the picker has any.
+    pub fn preview(&self) -> Option<&str> {
+        let visible = self.filtered();
+        let idx = *visible.get(self.selected.min(visible.len().saturating_sub(1)))?;
+        self.previews.get(idx).map(|text| text.as_str())
     }
 
     /// `1`..`9` jump straight to that entry, `0` to the last one. Only while the
@@ -137,6 +148,8 @@ pub struct App {
     cursors: [usize; FIELDS.len()],
     pub issues: Vec<Issue>,
     pub picker: Option<Picker>,
+    /// Recent commits, offered by the history picker.
+    pub history: Vec<PastCommit>,
     pub status: String,
     /// Set when the user asks to hand the message to git.
     pub output: Option<String>,
@@ -172,6 +185,7 @@ impl App {
             cursors: [0; FIELDS.len()],
             issues: Vec::new(),
             picker: None,
+            history: Vec::new(),
             status: warnings.join(" · "),
             output: None,
             should_quit: false,
@@ -189,6 +203,11 @@ impl App {
     /// Replace the available scopes, usually after reading git history.
     pub fn set_scopes(&mut self, scopes: ScopeInfo) {
         self.scopes = scopes;
+    }
+
+    /// Replace the list of recent commits offered as templates.
+    pub fn set_history(&mut self, history: Vec<PastCommit>) {
+        self.history = history;
     }
 
     /// True while the active field takes typed characters.
@@ -314,6 +333,77 @@ impl App {
         self.open_picker(PickerKind::Profile, items, values);
     }
 
+    /// Recent commits, with their message shown in the pane next to the list.
+    fn open_history_picker(&mut self) {
+        if self.history.is_empty() {
+            self.status = "no commits yet: this repository has no history to reuse".into();
+            return;
+        }
+        let items: Vec<String> = self.history.iter().map(|commit| commit.label(60)).collect();
+        let values: Vec<String> = self
+            .history
+            .iter()
+            .map(|commit| commit.id.clone())
+            .collect();
+        let previews: Vec<String> = self.history.iter().map(|commit| commit.preview()).collect();
+        // Start on the newest conventional commit: a plain message has no
+        // type or scope to reuse.
+        let selected = self
+            .history
+            .iter()
+            .position(|commit| commit.conventional())
+            .unwrap_or(0);
+        self.picker = Some(Picker {
+            kind: PickerKind::History,
+            items,
+            values,
+            selected,
+            filter: String::new(),
+            previews,
+        });
+    }
+
+    /// Take type, scope and body from a past commit, keeping what is already
+    /// typed in the subject and in the footer.
+    fn apply_template(&mut self, id: &str) {
+        let Some(past) = self.history.iter().find(|commit| commit.id == id) else {
+            self.status = format!("commit {id} is not in the cached history");
+            return;
+        };
+        let template = past.template();
+        let mut applied = Vec::new();
+
+        if let Some(kind) = template.kind {
+            if self.rules.types.is_empty() || self.rules.types.contains(&kind) {
+                applied.push("type");
+                self.commit.kind = kind;
+            }
+        }
+        if let Some(scope) = template.scope {
+            if !scope.is_empty() {
+                applied.push("scope");
+                self.commit.scope = scope;
+            }
+        }
+        if !template.body.is_empty() {
+            applied.push("body");
+            self.commit.body = template.body;
+        }
+
+        if applied.is_empty() {
+            self.status = format!("{} reused: nothing to copy", past.short_id);
+        } else {
+            self.status = format!("{} reused: {}", past.short_id, applied.join(", "));
+        }
+        self.focus(
+            FIELDS
+                .iter()
+                .position(|f| *f == Field::Subject)
+                .unwrap_or(0),
+        );
+        self.revalidate();
+    }
+
     fn open_picker(&mut self, kind: PickerKind, items: Vec<String>, values: Vec<String>) {
         let current = match kind {
             PickerKind::Profile => self.config.profile.clone(),
@@ -323,12 +413,14 @@ impl App {
             .iter()
             .position(|value| *value == current)
             .unwrap_or(0);
+        let previews = vec![String::new(); values.len()];
         self.picker = Some(Picker {
             kind,
             items,
             values,
             selected,
             filter: String::new(),
+            previews,
         });
     }
 
@@ -337,6 +429,7 @@ impl App {
             return;
         };
         let Some(choice) = picker.current().cloned() else {
+            self.status = "nothing selected".to_string();
             return;
         };
         self.apply_picker_choice(picker.kind, choice);
@@ -360,9 +453,10 @@ impl App {
                         .cloned()
                         .unwrap_or_default();
                 }
+                self.revalidate();
             }
+            PickerKind::History => self.apply_template(&choice),
         }
-        self.revalidate();
     }
 
     fn picker_key(&mut self, key: KeyEvent) -> bool {
@@ -378,6 +472,7 @@ impl App {
                 KeyCode::Up => Some(PickerAction::Move(-1)),
                 KeyCode::Down | KeyCode::Tab => Some(PickerAction::Move(1)),
                 KeyCode::Backspace => Some(PickerAction::Backspace),
+                KeyCode::Char('r') if ctrl => Some(PickerAction::History),
                 KeyCode::Char(c) if !ctrl => match picker.by_digit(c) {
                     Some(value_idx) => Some(PickerAction::Pick(value_idx)),
                     None => Some(PickerAction::Filter(c)),
@@ -388,6 +483,7 @@ impl App {
 
         match action {
             Some(PickerAction::Cancel) => self.picker = None,
+            Some(PickerAction::History) => self.open_history_picker(),
             Some(PickerAction::Confirm) => self.confirm_picker(),
             Some(PickerAction::Move(delta)) => {
                 if let Some(picker) = self.picker.as_mut() {
@@ -602,6 +698,7 @@ impl App {
             KeyCode::Char('n') if ctrl => self.open_scope_picker(),
             KeyCode::Char('t') if ctrl => self.open_type_picker(),
             KeyCode::Char('p') if ctrl => self.open_profile_picker(),
+            KeyCode::Char('r') if ctrl => self.open_history_picker(),
             KeyCode::Char('q') if self.active_field() == Field::Type => self.should_quit = true,
             KeyCode::Tab => self.next_field(),
             KeyCode::BackTab => self.previous_field(),
@@ -631,6 +728,7 @@ impl App {
 
 enum PickerAction {
     Cancel,
+    History,
     Confirm,
     Move(isize),
     Backspace,
@@ -756,6 +854,97 @@ mod tests {
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.commit.scope, "ui");
+    }
+
+    fn past(id: &str, kind: &str, scope: Option<&str>, summary: &str, body: &str) -> PastCommit {
+        PastCommit {
+            short_id: id[..7].to_string(),
+            id: id.to_string(),
+            author: "Marc".into(),
+            date: "2026-11-24".into(),
+            summary: summary.into(),
+            body: body.into(),
+            kind: Some(kind.into()),
+            scope: scope.map(str::to_string),
+            files: vec!["M src/app.rs".into()],
+        }
+    }
+
+    fn app_with_history() -> App {
+        let mut app = App::default();
+        app.set_history(vec![
+            past(
+                "aaaaaaa1111111",
+                "feat",
+                Some("composer"),
+                "add picker preview",
+                "The picker previews the highlighted commit.",
+            ),
+            past("bbbbbbb2222222", "fix", None, "stop the crash", ""),
+        ]);
+        app
+    }
+
+    #[test]
+    fn history_picker_carries_previews() {
+        let mut app = app_with_history();
+        ctrl(&mut app, 'r');
+        let picker = app.picker.as_ref().expect("history picker open");
+        assert_eq!(picker.kind, PickerKind::History);
+        assert_eq!(picker.items.len(), 2);
+        assert!(picker.items[0].contains("feat(composer)"));
+        assert!(
+            picker
+                .preview()
+                .unwrap()
+                .contains("previews the highlighted")
+        );
+        press(&mut app, KeyCode::Down);
+        let picker = app.picker.as_ref().unwrap();
+        assert!(picker.preview().unwrap().starts_with("fix: stop the crash"));
+    }
+
+    #[test]
+    fn history_without_commits_reports_instead_of_opening() {
+        let mut app = App::default();
+        ctrl(&mut app, 'r');
+        assert!(app.picker.is_none());
+        assert!(app.status.contains("no commits yet"));
+    }
+
+    #[test]
+    fn confirming_history_reuses_type_scope_and_body() {
+        let mut app = app_with_history();
+        app.commit.subject = "already typed".into();
+        ctrl(&mut app, 'r');
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.commit.kind, "feat");
+        assert_eq!(app.commit.scope, "composer");
+        assert!(app.commit.body.contains("previews the highlighted"));
+        assert_eq!(app.commit.subject, "already typed", "subject stays");
+        assert_eq!(app.active_field(), Field::Subject);
+        assert!(app.status.contains("reused: type, scope, body"));
+    }
+
+    #[test]
+    fn history_filter_finds_a_commit_by_text() {
+        let mut app = app_with_history();
+        ctrl(&mut app, 'r');
+        type_text(&mut app, "crash");
+        assert_eq!(app.picker.as_ref().unwrap().filtered().len(), 1);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.commit.kind, "fix");
+        assert_eq!(app.commit.scope, "", "plain commit keeps the scope empty");
+    }
+
+    #[test]
+    fn unknown_types_from_history_are_not_applied() {
+        let mut app = App::default();
+        app.set_history(vec![past("ccccccc3333333", "wip", None, "scratch", "")]);
+        ctrl(&mut app, 'r');
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.commit.kind, "feat", "wip is not in the profile");
+        assert!(app.status.contains("nothing to copy"));
     }
 
     #[test]
