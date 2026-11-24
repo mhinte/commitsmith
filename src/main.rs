@@ -200,6 +200,7 @@ fn run_composer(commit: bool) -> ExitCode {
 
     let (config, warnings) = load_config();
     let mut app = app::App::with_config(config, warnings);
+    app.set_commit_mode(commit);
 
     // Scope suggestions come from history; a missing repository is fine.
     let root = cwd();
@@ -228,6 +229,11 @@ fn run_composer(commit: bool) -> ExitCode {
             Some(message) if commit => commit_with_git(&message),
             Some(message) => {
                 println!("{message}");
+                // stderr stays out of the way of a pipe, but a person running
+                // the composer should know why nothing was committed.
+                eprintln!(
+                    "commitsmith: message written to stdout, nothing committed · use -c/--commit"
+                );
                 ExitCode::SUCCESS
             }
             None => ExitCode::SUCCESS,

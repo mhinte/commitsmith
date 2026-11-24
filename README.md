@@ -107,9 +107,15 @@ commitsmith --commit         # compose, then run `git commit -m <message>`
 git commit -m "$(commitsmith)"
 ```
 
-`Ctrl+S` finishes. Without `--commit` the message goes to stdout, so the shell
-hands it to git; with `--commit` git runs directly and its output (hooks,
-passphrase prompts, errors) is what you see.
+`Ctrl+S` finishes, but only when the message has no errors: the composer stays
+open and names the first problem otherwise. Without `--commit` the message goes
+to stdout and the footer says `C-s message`; with `--commit` git runs directly,
+the footer says `C-s commit`, and git's output (hooks, passphrase prompts,
+errors) is what you see. If git refuses, the message is printed again so it can
+be retried.
+
+`Ctrl+K` clears the field under the cursor — one field, nothing else. The type is
+a choice from the picker rather than text, so it stays.
 
 ### Lint an existing message
 
@@ -230,6 +236,7 @@ and the defaults stay active.
 | `Space`, `Ctrl+T` | type picker: type to filter, `1`–`9` jump, `0` last |
 | `Ctrl+N` | scope suggestions: config entries, then scopes from commit history |
 | `Ctrl+P` | switch the type profile |
+| `Ctrl+K` | clear the field under the cursor (the type stays) |
 | `Ctrl+R` | reuse type, scope and body of a recent commit, with preview |
 | `←` `→`, `h` `l` | previous/next type on the type field, cursor movement elsewhere |
 | `j` `k` | next/previous field on the type field |

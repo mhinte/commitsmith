@@ -99,13 +99,26 @@ def run_session(script, commit=False):
 
 def main():
     # --commit: the same path a user takes when the message goes straight to git.
+    # The scope is typed, cleared with Ctrl+K and typed again, so the clear key
+    # is exercised on the way to the commit.
     screen, head, config, repo = run_session(
-        ["Marc Hinte", "\r", "\t", "\t", "add greeting file", "\x13"], commit=True
+        [
+            "Marc Hinte",
+            "\r",
+            "\t",
+            "wrongscope",
+            "\x0b",          # Ctrl+K clears the scope
+            "api",
+            "\t",
+            "add greeting file",
+            "\x13",
+        ],
+        commit=True,
     )
     failures = []
     if 'user = "Marc Hinte"' not in config:
         failures.append("the first-start dialog did not write the name")
-    if not head.startswith("feat: add greeting file"):
+    if not head.startswith("feat(api): add greeting file"):
         failures.append(f"commit message wrong: {head!r}")
     # git echoes the message it stored; the handle has to be part of it.
     stored = subprocess.run(["git", "log", "-1", "--format=%B"], cwd=repo, capture_output=True, text=True).stdout

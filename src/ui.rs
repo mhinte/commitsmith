@@ -19,6 +19,15 @@ const COMPACT_HEIGHT: u16 = 24;
 const COMPACT_WIDTH: u16 = 62;
 
 const KEY: Style = Style::new().fg(Color::Black).bg(Color::DarkGray);
+
+/// "1 error", "2 errors" — the counts sit in titles the user reads constantly.
+fn plural(count: usize, word: &str) -> String {
+    if count == 1 {
+        format!("1 {word}")
+    } else {
+        format!("{count} {word}s")
+    }
+}
 const HINT: Style = Style::new().fg(Color::Gray);
 const MUTED: Style = Style::new().fg(Color::DarkGray);
 
@@ -103,7 +112,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         ),
         Span::raw("   "),
         Span::styled(
-            format!("{errors} errors"),
+            plural(errors, "error"),
             Style::default().fg(if errors > 0 { Color::Red } else { Color::Green }),
         ),
         Span::raw("  "),
@@ -349,7 +358,14 @@ fn draw_preview(frame: &mut Frame, app: &App, area: Rect) {
         text = Text::from(vec![
             Line::raw(""),
             Line::styled("  start with a subject on the left", MUTED),
-            Line::styled("  Ctrl+S hands the message to git", MUTED),
+            Line::styled(
+                if app.commit_mode {
+                    "  Ctrl+S runs git commit with this message"
+                } else {
+                    "  Ctrl+S prints the message and exits (start with -c to commit)"
+                },
+                MUTED,
+            ),
         ]);
     }
 
@@ -366,7 +382,11 @@ fn draw_preview(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_checks(frame: &mut Frame, app: &App, area: Rect) {
     let (errors, warnings) = validate::count(&app.issues);
-    let title = format!(" checks · {errors} errors · {warnings} warnings ");
+    let title = format!(
+        " checks · {} · {} ",
+        plural(errors, "error"),
+        plural(warnings, "warning")
+    );
 
     let mut lines = Vec::new();
     if app.issues.is_empty() {
@@ -485,8 +505,17 @@ fn draw_compact(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled("next ", HINT),
             Span::styled(" Enter ", KEY),
             Span::styled("ok ", HINT),
+            Span::styled(" C-k ", KEY),
+            Span::styled("clear ", HINT),
             Span::styled(" C-s ", KEY),
-            Span::styled("commit ", HINT),
+            Span::styled(
+                if app.commit_mode {
+                    "commit "
+                } else {
+                    "message "
+                },
+                HINT,
+            ),
             Span::styled(" ? ", KEY),
             Span::styled("help", HINT),
         ])),
@@ -632,7 +661,8 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         ("Ctrl+P", "switch type profile"),
         ("Ctrl+R", "reuse a recent commit's type, scope and body"),
         ("← →", "previous/next type"),
-        ("Ctrl+S", "render the message and exit"),
+        ("Ctrl+K", "clear this field (the type stays)"),
+        ("Ctrl+S", "render the message and exit, or commit"),
         ("Esc, Ctrl+Q", "quit without output"),
         ("?", "this help"),
     ];
@@ -666,22 +696,57 @@ fn draw_help(frame: &mut Frame, area: Rect) {
 }
 
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
-    let keys = Line::from(vec![
-        Span::styled(" Tab ", KEY),
-        Span::styled(" next  ", HINT),
-        Span::styled(" Space ", KEY),
-        Span::styled(" type  ", HINT),
-        Span::styled(" C-n ", KEY),
-        Span::styled(" scope  ", HINT),
-        Span::styled(" C-p ", KEY),
-        Span::styled(" profile  ", HINT),
-        Span::styled(" C-r ", KEY),
-        Span::styled(" reuse  ", HINT),
-        Span::styled(" C-s ", KEY),
-        Span::styled(" commit  ", HINT),
-        Span::styled(" ? ", KEY),
-        Span::styled(" help", HINT),
-    ]);
+    let commit_label = if app.commit_mode { "commit" } else { "message" };
+    // Essentials stay, the rest is dropped from the right until the line fits;
+    // everything dropped here is still listed in the help overlay.
+    let essentials: [(&str, &str); 4] = [
+        ("Tab", "next"),
+        ("C-k", "clear"),
+        ("C-s", commit_label),
+        ("?", "help"),
+    ];
+    let optional: [(&str, &str); 4] = [
+        ("Space", "type"),
+        ("C-n", "scope"),
+        ("C-p", "profile"),
+        ("C-r", "reuse"),
+    ];
+
+    let width = area.width as usize;
+    let measure = |entries: &[(&str, &str)]| -> usize {
+        entries
+            .iter()
+            .enumerate()
+            .map(|(index, (key, label))| {
+                let own = key.chars().count() + label.chars().count() + 3;
+                if index == 0 { own } else { own + 1 }
+            })
+            .sum()
+    };
+
+    // Insert the optional hints after "Tab" while they fit, most useful first.
+    let mut entries: Vec<(&str, &str)> = essentials.to_vec();
+    for take in 1..=optional.len() {
+        let mut candidate = essentials.to_vec();
+        for (index, extra) in optional.iter().take(take).enumerate() {
+            candidate.insert(1 + index, *extra);
+        }
+        if measure(&candidate) <= width {
+            entries = candidate;
+        } else {
+            break;
+        }
+    }
+
+    let mut spans = Vec::new();
+    for (index, (key, label)) in entries.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::styled(format!(" {key} "), KEY));
+        spans.push(Span::styled(format!(" {label}"), HINT));
+    }
+    let keys = Line::from(spans);
 
     let mut lines = vec![keys];
     if !app.status.is_empty() {
@@ -724,6 +789,45 @@ mod tests {
         assert_eq!(col, text_cells(&display));
         assert!(text_cells(&display) < 20);
         assert!(display.ends_with("xxx"));
+    }
+
+    #[test]
+    fn the_footer_fits_eighty_columns() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        for width in [80u16, 100, 120] {
+            let app = App::with_config(crate::config::Config::conventional(), Vec::new());
+            let mut terminal = Terminal::new(TestBackend::new(width, 30)).unwrap();
+            terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+            let buffer = terminal.backend().buffer();
+            let rows: Vec<String> = (0..buffer.area.height)
+                .map(|y| {
+                    (0..buffer.area.width)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>()
+                })
+                .collect();
+            let footer = rows
+                .iter()
+                .find(|row| row.contains("C-k"))
+                .unwrap_or_else(|| panic!("no footer at width {width}: {rows:?}"));
+            // The essentials have to be readable at every width, including the
+            // last entry, which used to be cut off at 80 columns.
+            for needed in ["Tab", "next", "C-k", "clear", "C-s", "?", "help"] {
+                assert!(
+                    footer.contains(needed),
+                    "{needed:?} missing at {width}: {footer:?}"
+                );
+            }
+            if width >= 100 {
+                assert!(
+                    footer.contains("profile"),
+                    "the wide footer dropped hints: {footer:?}"
+                );
+            }
+        }
     }
 
     #[test]

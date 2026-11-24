@@ -10,7 +10,7 @@ use crate::commit::Commit;
 use crate::config::Config;
 use crate::git::{PastCommit, ScopeInfo};
 use crate::ui;
-use crate::validate::{self, Issue, Rules};
+use crate::validate::{self, Issue, Rules, Severity};
 
 /// Order of the form fields, top to bottom.
 pub const FIELDS: [Field; 6] = [
@@ -153,6 +153,9 @@ pub struct App {
     pub status: String,
     /// Set when the user asks to hand the message to git.
     pub output: Option<String>,
+    /// True when the program was started with `--commit`, so Ctrl+S really
+    /// commits. The footer says which of the two happens.
+    pub commit_mode: bool,
     pub should_quit: bool,
     pub show_help: bool,
 }
@@ -188,6 +191,7 @@ impl App {
             history: Vec::new(),
             status: warnings.join(" · "),
             output: None,
+            commit_mode: false,
             should_quit: false,
             show_help: false,
         };
@@ -232,6 +236,11 @@ impl App {
     /// Replace the list of recent commits offered as templates.
     pub fn set_history(&mut self, history: Vec<PastCommit>) {
         self.history = history;
+    }
+
+    /// Tell the UI whether Ctrl+S commits or only prints.
+    pub fn set_commit_mode(&mut self, commit: bool) {
+        self.commit_mode = commit;
     }
 
     /// True while the active field takes typed characters.
@@ -551,6 +560,53 @@ impl App {
         self.focus((self.field + FIELDS.len() - 1) % FIELDS.len());
     }
 
+    /// Ctrl+S. Errors keep the composer open: committing `feat:` because the
+    /// subject was forgotten is a mistake the linter exists to prevent.
+    fn finish(&mut self) {
+        if let Some(issue) = self
+            .issues
+            .iter()
+            .find(|issue| issue.severity == Severity::Error)
+        {
+            let more = self
+                .issues
+                .iter()
+                .filter(|issue| issue.severity == Severity::Error)
+                .count()
+                .saturating_sub(1);
+            self.status = if more > 0 {
+                format!(
+                    "not yet: {} · {} more error(s) on the right",
+                    issue.message, more
+                )
+            } else {
+                format!("not yet: {}", issue.message)
+            };
+            return;
+        }
+        self.output = Some(self.commit.render());
+        self.should_quit = true;
+        self.status = "handing the message over".to_string();
+    }
+
+    /// Ctrl+K: empty the field under the cursor. The type is a choice from the
+    /// picker, not text, so it stays.
+    fn clear_field(&mut self) {
+        let field = self.active_field();
+        if field == Field::Type {
+            self.status = "the type stays · Space picks another one".to_string();
+            return;
+        }
+        if self.value(field).trim().is_empty() {
+            self.status = format!("{} is already empty", field.label());
+            return;
+        }
+        *self.value_mut(field) = String::new();
+        self.cursors[self.field] = 0;
+        self.revalidate();
+        self.status = format!("cleared {}", field.label());
+    }
+
     /// Enter inside a multiline field starts a new line, elsewhere it advances.
     fn enter(&mut self) {
         if self.active_field().multiline() {
@@ -735,11 +791,8 @@ impl App {
             KeyCode::Esc => self.should_quit = true,
             KeyCode::Char('?') => self.show_help = true,
             KeyCode::Char('c') | KeyCode::Char('q') if ctrl => self.should_quit = true,
-            KeyCode::Char('s') if ctrl => {
-                self.output = Some(self.commit.render());
-                self.should_quit = true;
-                self.status = "message written to stdout".to_string();
-            }
+            KeyCode::Char('s') if ctrl => self.finish(),
+            KeyCode::Char('k') if ctrl => self.clear_field(),
             KeyCode::Char('n') if ctrl => self.open_scope_picker(),
             KeyCode::Char('t') if ctrl => self.open_type_picker(),
             KeyCode::Char('p') if ctrl => self.open_profile_picker(),
@@ -1047,6 +1100,66 @@ mod tests {
     #[test]
     fn ctrl_s_renders_the_message() {
         let mut app = App::default();
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        type_text(&mut app, "add composer");
+        ctrl(&mut app, 's');
+        assert_eq!(app.output.as_deref(), Some("feat: add composer"));
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn ctrl_k_clears_only_the_field_under_the_cursor() {
+        let mut app = App::default();
+        press(&mut app, KeyCode::Tab);
+        type_text(&mut app, "api");
+        press(&mut app, KeyCode::Tab);
+        type_text(&mut app, "a subject");
+        // Back to the scope, then clear it.
+        press(&mut app, KeyCode::BackTab);
+        ctrl(&mut app, 'k');
+        assert_eq!(app.value(Field::Scope), "");
+        assert_eq!(app.cursor(), 0);
+        assert_eq!(app.value(Field::Subject), "a subject", "other fields stay");
+        assert!(app.status.contains("cleared"));
+    }
+
+    #[test]
+    fn ctrl_k_leaves_the_type_alone() {
+        let mut app = App::default();
+        let before = app.value(Field::Type).to_string();
+        ctrl(&mut app, 'k');
+        assert_eq!(app.value(Field::Type), before);
+        assert!(app.status.contains("type stays"));
+    }
+
+    #[test]
+    fn ctrl_k_on_an_empty_field_says_so() {
+        let mut app = App::default();
+        press(&mut app, KeyCode::Tab);
+        ctrl(&mut app, 'k');
+        assert!(app.status.contains("already empty"), "{}", app.status);
+    }
+
+    #[test]
+    fn ctrl_s_refuses_to_finish_with_errors() {
+        let mut app = App::default();
+        // 0.3.2 rendered "feat:" for an empty subject and committed it.
+        ctrl(&mut app, 's');
+        assert!(
+            app.output.is_none(),
+            "an invalid message must not leave the app"
+        );
+        assert!(!app.should_quit);
+        assert!(app.status.starts_with("not yet:"), "{}", app.status);
+        assert!(app.status.contains("subject"), "{}", app.status);
+    }
+
+    #[test]
+    fn ctrl_s_finishes_after_clearing_the_error() {
+        let mut app = App::default();
+        ctrl(&mut app, 's');
+        assert!(app.output.is_none());
         press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Tab);
         type_text(&mut app, "add composer");
