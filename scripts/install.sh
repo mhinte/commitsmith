@@ -1,14 +1,14 @@
 #!/bin/sh
-# Install coggit for the current user and make it reachable everywhere.
+# Install commitsmith for the current user and make it reachable everywhere.
 #
-#   curl -sSL https://raw.githubusercontent.com/mhinte/coggit/main/scripts/install.sh | sh
-#   ./scripts/install.sh --binary ./target/release/coggit --alias cog
+#   curl -sSL https://raw.githubusercontent.com/mhinte/commitsmith/main/scripts/install.sh | sh
+#   ./scripts/install.sh --binary ./target/release/commitsmith --alias smith
 #
 # Installs to ~/.local/bin (or $COGGIT_INSTALL_DIR), writes an alias as a small
 # wrapper script and tells you if the directory is missing from PATH.
 set -eu
 
-repo="mhinte/coggit"
+repo="mhinte/commitsmith"
 install_dir="${COGGIT_INSTALL_DIR:-$HOME/.local/bin}"
 binary=""
 alias_name=""
@@ -59,7 +59,7 @@ else
     version=$(printf '%s' "$release_json" \
         | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
     [ -n "$version" ] || { echo "cannot read the release tag" >&2; exit 1; }
-    file="coggit-${version#v}-${target}.tar.gz"
+    file="commitsmith-${version#v}-${target}.tar.gz"
     step "downloading $file"
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT INT TERM
@@ -67,20 +67,20 @@ else
         "https://github.com/$repo/releases/download/$version/$file" || {
             echo "no archive named $file in $version" >&2; exit 1; }
     tar -xzf "$tmp/$file" -C "$tmp"
-    source_bin=$(find "$tmp" -type f -name coggit | head -1)
-    [ -n "$source_bin" ] || { echo "the archive did not contain coggit" >&2; exit 1; }
+    source_bin=$(find "$tmp" -type f -name commitsmith | head -1)
+    [ -n "$source_bin" ] || { echo "the archive did not contain commitsmith" >&2; exit 1; }
 fi
 
 mkdir -p "$install_dir"
-cp "$source_bin" "$install_dir/coggit"
-chmod 755 "$install_dir/coggit"
-step "installed $install_dir/coggit"
+cp "$source_bin" "$install_dir/commitsmith"
+chmod 755 "$install_dir/commitsmith"
+step "installed $install_dir/commitsmith"
 
 if [ -n "$alias_name" ]; then
     # A tiny wrapper, so the alias keeps following upgrades of the real binary.
     cat > "$install_dir/$alias_name" <<EOF
 #!/bin/sh
-exec "$install_dir/coggit" "\$@"
+exec "$install_dir/commitsmith" "\$@"
 EOF
     chmod 755 "$install_dir/$alias_name"
     step "alias $install_dir/$alias_name"
@@ -94,4 +94,4 @@ case ":$PATH:" in
         ;;
 esac
 
-"$install_dir/coggit" --version
+"$install_dir/commitsmith" --version

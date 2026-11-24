@@ -1,25 +1,25 @@
 #!/usr/bin/env pwsh
-# Install coggit for the current user and make it reachable everywhere.
+# Install commitsmith for the current user and make it reachable everywhere.
 #
-#   iwr https://raw.githubusercontent.com/mhinte/coggit/main/scripts/install.ps1 | iex
-#   .\install.ps1 -Binary .\coggit.exe -Alias cog
+#   iwr https://raw.githubusercontent.com/mhinte/commitsmith/main/scripts/install.ps1 | iex
+#   .\install.ps1 -Binary .\commitsmith.exe -Alias smith
 #
-# Installs to %LOCALAPPDATA%\Programs\coggit, adds that directory to the
+# Installs to %LOCALAPPDATA%\Programs\commitsmith, adds that directory to the
 # user PATH (no admin rights needed) and points a PowerShell alias at it.
 [CmdletBinding()]
 param(
     # Existing binary to install. Without it the latest release is downloaded.
     [string]$Binary,
-    # Extra command name, e.g. "cog" for a short alias. Optional.
+    # Extra command name, e.g. "smith" for a short alias. Optional.
     [string]$Alias,
     # Release tag to download, e.g. v0.2.0. Defaults to the latest release.
     [string]$Tag
 )
 
 $ErrorActionPreference = 'Stop'
-$repo = "mhinte/coggit"
-$installDir = Join-Path $env:LOCALAPPDATA 'Programs\coggit'
-$target = Join-Path $installDir 'coggit.exe'
+$repo = "mhinte/commitsmith"
+$installDir = Join-Path $env:LOCALAPPDATA 'Programs\commitsmith'
+$target = Join-Path $installDir 'commitsmith.exe'
 
 function Write-Step($message) { Write-Host "  $message" -ForegroundColor Cyan }
 function Write-Ok($message) { Write-Host "  $message" -ForegroundColor Green }
@@ -33,7 +33,7 @@ if ($Binary) {
     $api = if ($Tag) { "https://api.github.com/repos/$repo/releases/tags/$Tag" }
            else { "https://api.github.com/repos/$repo/releases/latest" }
     Write-Step "asking $api"
-    $release = Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent' = 'coggit-installer' }
+    $release = Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent' = 'commitsmith-installer' }
 
     # Windows builds are zip archives in the release; fall back to nothing so a
     # missing asset fails with a clear message instead of a 404 later.
@@ -42,15 +42,15 @@ if ($Binary) {
         throw "release $($release.tag_name) has no Windows archive yet; build it with 'cargo build --release' and pass -Binary"
     }
 
-    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("coggit-" + [guid]::NewGuid())
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("commitsmith-" + [guid]::NewGuid())
     New-Item -ItemType Directory -Path $tmp | Out-Null
     $zip = Join-Path $tmp $asset.name
     Write-Step "downloading $($asset.name)"
     Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing
     Expand-Archive -Path $zip -DestinationPath $tmp -Force
 
-    $found = Get-ChildItem -Path $tmp -Recurse -Filter 'coggit.exe' | Select-Object -First 1
-    if (-not $found) { throw "the archive did not contain coggit.exe" }
+    $found = Get-ChildItem -Path $tmp -Recurse -Filter 'commitsmith.exe' | Select-Object -First 1
+    if (-not $found) { throw "the archive did not contain commitsmith.exe" }
     $source = $found.FullName
 }
 
@@ -85,20 +85,20 @@ if ($entries -notcontains $installDir) {
 if (-not $Alias) {
     & $target --version
     Write-Host ""
-    Write-Host "Done. coggit is on your user PATH; open a new terminal." -ForegroundColor Green
+    Write-Host "Done. commitsmith is on your user PATH; open a new terminal." -ForegroundColor Green
     return
 }
 
 $profileDir = Split-Path -Parent $PROFILE.CurrentUserAllHosts
 if (-not (Test-Path $profileDir)) { New-Item -ItemType Directory -Path $profileDir -Force | Out-Null }
-$marker = '# >>> coggit >>>'
+$marker = '# >>> commitsmith >>>'
 if (-not (Test-Path $PROFILE.CurrentUserAllHosts) -or
     -not (Select-String -Path $PROFILE.CurrentUserAllHosts -SimpleMatch $marker -Quiet)) {
     $lines = @(
         '',
         $marker,
         "Set-Alias -Name $Alias -Value '$target' -Scope Global -Force -ErrorAction SilentlyContinue",
-        '# <<< coggit <<<'
+        '# <<< commitsmith <<<'
     )
     Add-Content -Path $PROFILE.CurrentUserAllHosts -Value $lines
     Write-Ok "added the $Alias alias to $PROFILE.CurrentUserAllHosts"

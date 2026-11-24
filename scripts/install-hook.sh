@@ -1,4 +1,4 @@
 #!/bin/sh
-# Thin wrapper: prefer `coggit hooks install`.
+# Thin wrapper: prefer `commitsmith hooks install`.
 set -eu
-exec coggit hooks install "$@"
+exec commitsmith hooks install "$@"

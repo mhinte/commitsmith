@@ -1,7 +1,7 @@
 //! Default types and scopes, profiles, and config discovery.
 //!
 //! Precedence, lowest to highest: built-in defaults, then
-//! `$XDG_CONFIG_HOME/coggit/config.toml`, then `.coggit.toml` in the
+//! `$XDG_CONFIG_HOME/commitsmith/config.toml`, then `.commitsmith.toml` in the
 //! current directory. Lists replace the previous value, they do not merge, so a
 //! project file has full control over its own types once it sets them.
 
@@ -60,7 +60,7 @@ pub struct Config {
     pub user: Option<String>,
     /// Short handle derived from the name, e.g. `hima`.
     pub prefix: Option<String>,
-    /// Where the values came from, for `coggit config`.
+    /// Where the values came from, for `commitsmith config`.
     pub sources: Vec<PathBuf>,
 }
 
@@ -248,16 +248,18 @@ impl Config {
 
     /// User config first, then the project file, so the project wins.
     ///
-    /// The pre-rename names (`commit-tui/config.toml`, `.commit-tui.toml`) are
-    /// read as well, so an existing setup keeps working; the new file wins.
+    /// The two earlier names (`commit-tui`, `coggit`) are still read, so an
+    /// existing setup keeps working; `.commitsmith.toml` wins when both exist.
     fn candidate_paths(cwd: &Path) -> Vec<PathBuf> {
         let mut paths = Vec::new();
         if let Some(config_dir) = Self::user_config_dir() {
             paths.push(config_dir.join("commit-tui/config.toml"));
             paths.push(config_dir.join("coggit/config.toml"));
+            paths.push(config_dir.join("commitsmith/config.toml"));
         }
         paths.push(cwd.join(".commit-tui.toml"));
         paths.push(cwd.join(".coggit.toml"));
+        paths.push(cwd.join(".commitsmith.toml"));
         paths
     }
 
@@ -296,22 +298,28 @@ impl Config {
         if let Some(limit) = file.recommended_subject {
             self.recommended_subject = limit;
         }
-        if let Some(user) = file.user.filter(|name| !name.trim().is_empty()) {
+        // A file that names a user but no prefix means "derive it": a
+        // hand-written file looks like that, and so does one from an older
+        // version that stored the handle under a different name.
+        let explicit_prefix = file
+            .prefix
+            .filter(|prefix| !prefix.trim().is_empty())
+            .map(|prefix| prefix.trim().to_lowercase());
+        let named_user = file.user.filter(|name| !name.trim().is_empty());
+
+        if let Some(user) = named_user.clone() {
             self.user = Some(user);
         }
-        if let Some(prefix) = file.prefix.filter(|prefix| !prefix.trim().is_empty()) {
-            self.prefix = Some(prefix.trim().to_lowercase());
-        }
-        // A name without a prefix is what a hand-written file tends to look
-        // like; derive one instead of leaving the placeholder empty.
-        if self.prefix.is_none() {
+        if let Some(prefix) = explicit_prefix {
+            self.prefix = Some(prefix);
+        } else if named_user.is_some() {
             self.prefix = self.user.as_deref().and_then(prefix_from_name);
         }
     }
 
     /// Path of the user-wide config file, creating nothing.
     pub fn user_config_path() -> Option<PathBuf> {
-        Self::user_config_dir().map(|dir| dir.join("coggit/config.toml"))
+        Self::user_config_dir().map(|dir| dir.join("commitsmith/config.toml"))
     }
 
     /// True when no user config exists yet, i.e. this is a first start.
@@ -349,7 +357,7 @@ impl Config {
         let text = toml::to_string_pretty(&identity)
             .map_err(|error| format!("cannot serialize the config: {error}"))?;
         let header = concat!(
-            "# Written on first start by coggit.\n",
+            "# Written on first start by commitsmith.\n",
             "# `prefix` is derived from `user`: first two letters of the surname,\n",
             "# then the first three of the given name. Edit both freely.\n",
         );
@@ -458,7 +466,7 @@ mod tests {
 
     #[test]
     fn identity_file_round_trips_through_load() {
-        let dir = std::env::temp_dir().join(format!("coggit-identity-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("commitsmith-identity-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
         Config::save_identity_at("Marc Hinte", &path).unwrap();
@@ -474,6 +482,20 @@ mod tests {
     }
 
     #[test]
+    fn a_newer_file_overrides_an_older_handle() {
+        // Reproduces the upgrade path: an old config with a handle, then a new
+        // file that only names the user.
+        let mut config = Config::conventional();
+        config.apply(
+            toml::from_str::<ConfigFile>("user = \"Alt Besitzer\"\nprefix = \"bealt\"\n")
+                .expect("valid toml"),
+        );
+        assert_eq!(config.prefix.as_deref(), Some("bealt"));
+        config.apply(toml::from_str::<ConfigFile>("user = \"Marc Hinte\"\n").expect("valid toml"));
+        assert_eq!(config.prefix.as_deref(), Some("himar"));
+    }
+
+    #[test]
     fn a_name_without_prefix_gets_one_derived() {
         let mut config = Config::conventional();
         config.apply(toml::from_str::<ConfigFile>("user = \"Marc Hinte\"\n").expect("valid toml"));
@@ -482,10 +504,10 @@ mod tests {
 
     #[test]
     fn project_file_overrides_user_file() {
-        let dir = std::env::temp_dir().join("coggit-config-test");
+        let dir = std::env::temp_dir().join("commitsmith-config-test");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
-            dir.join(".coggit.toml"),
+            dir.join(".commitsmith.toml"),
             "profile = \"angular\"\nemoji = false\nmax_subject = 60\n",
         )
         .unwrap();

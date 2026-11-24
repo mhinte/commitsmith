@@ -25,7 +25,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --release
-          bin="$PWD/target/release/coggit"
+          bin="$PWD/target/release/commitsmith"
           before="${{ github.event.before }}"
           case "$before" in
             0000000000000000000000000000000000000000|"")
@@ -84,7 +84,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --release
-          bin="$PWD/target/release/coggit"
+          bin="$PWD/target/release/commitsmith"
           work=$(mktemp -d)
           git -C "$work" init -q
           git -C "$work" config user.email ci@example.com
@@ -97,7 +97,7 @@ jobs:
             echo "the linter accepted a non-conventional message" >&2
             exit 1
           fi
-          # The hook calls `coggit` by name, so the release build has to be
+          # The hook calls `commitsmith` by name, so the release build has to be
           # reachable on PATH for this part.
           export PATH="$(dirname "$bin"):$PATH"
           if (cd "$work" && "$bin" hooks install && git commit -q -m 'Add stuff.'); then

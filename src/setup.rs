@@ -148,7 +148,7 @@ fn draw(frame: &mut ratatui::Frame, setup: &Setup) {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::Cyan))
         .title(Span::styled(
-            " coggit · first start ",
+            " commitsmith · first start ",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),

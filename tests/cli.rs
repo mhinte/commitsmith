@@ -28,7 +28,7 @@ fn run(dir: &Path, program: &str, args: &[&str]) -> std::process::Output {
 
 /// The binary under test.
 fn bin() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_coggit"))
+    Command::new(env!("CARGO_BIN_EXE_commitsmith"))
 }
 
 fn check(dir: &Path, message: &str) -> std::process::Output {
@@ -85,7 +85,7 @@ fn hook_blocks_a_bad_message_and_then_lets_a_good_one_through() {
     assert!(dir.join(".git/hooks/commit-msg").exists());
 
     // The hook calls `commit-tui` by name, so put the binary under test on PATH.
-    let bin_dir = std::path::Path::new(env!("CARGO_BIN_EXE_coggit"))
+    let bin_dir = std::path::Path::new(env!("CARGO_BIN_EXE_commitsmith"))
         .parent()
         .expect("binary has a parent dir");
     let path = format!(
@@ -158,7 +158,11 @@ fn foreign_hooks_are_not_overwritten_without_force() {
         dir.join(".git/hooks/commit-msg.bak").exists(),
         "backup written"
     );
-    assert!(std::fs::read_to_string(&hook).unwrap().contains("coggit"));
+    assert!(
+        std::fs::read_to_string(&hook)
+            .unwrap()
+            .contains("commitsmith")
+    );
 }
 
 #[test]
@@ -174,7 +178,7 @@ fn user_flag_writes_the_identity_file() {
         .expect("run --user");
     assert!(output.status.success(), "{output:?}");
 
-    let text = std::fs::read_to_string(config_home.join("coggit/config.toml"))
+    let text = std::fs::read_to_string(config_home.join("commitsmith/config.toml"))
         .expect("identity file written");
     assert!(text.contains("user = \"Marc Hinte\""), "{text}");
     assert!(text.contains("prefix = \"himar\""), "{text}");

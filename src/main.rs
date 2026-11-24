@@ -1,4 +1,4 @@
-//! coggit — compose and lint Conventional Commits in the terminal.
+//! commitsmith — compose and lint Conventional Commits in the terminal.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -20,12 +20,12 @@ use validate::{Rules, Severity};
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "coggit",
+    name = "commitsmith",
     version,
     about = "Compose and lint Conventional Commits in your terminal",
     long_about = "Run without arguments to open the composer. `check` validates an existing \
                   message and is meant for commit-msg hooks and CI. `init` writes a starter \
-                  .coggit.toml, `config` shows what is loaded, `hooks` manages the \
+                  .commitsmith.toml, `config` shows what is loaded, `hooks` manages the \
                   commit-msg hook."
 )]
 struct Cli {
@@ -55,7 +55,7 @@ enum Command {
         #[arg(long)]
         strict: bool,
     },
-    /// Write a starter .coggit.toml in the current directory
+    /// Write a starter .commitsmith.toml in the current directory
     Init {
         /// Overwrite an existing file
         #[arg(long)]
@@ -136,7 +136,7 @@ fn run_hooks(action: HookAction) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("coggit: {error}");
+            eprintln!("commitsmith: {error}");
             ExitCode::FAILURE
         }
     }
@@ -149,12 +149,14 @@ fn run_composer(commit: bool) -> ExitCode {
         let first_run = setup::run(&mut terminal);
         ratatui::restore();
         match first_run {
-            Ok(setup::Outcome::Saved(path)) => eprintln!("coggit: wrote {}", path.display()),
+            Ok(setup::Outcome::Saved(path)) => eprintln!("commitsmith: wrote {}", path.display()),
             Ok(setup::Outcome::Skipped) => {
-                eprintln!("coggit: no name set, run `coggit --user \"Firstname Lastname\"` later")
+                eprintln!(
+                    "commitsmith: no name set, run `commitsmith --user \"Firstname Lastname\"` later"
+                )
             }
             Err(error) => {
-                eprintln!("coggit: {error}");
+                eprintln!("commitsmith: {error}");
                 return ExitCode::FAILURE;
             }
         }
@@ -195,7 +197,7 @@ fn run_composer(commit: bool) -> ExitCode {
             None => ExitCode::SUCCESS,
         },
         Err(error) => {
-            eprintln!("coggit: {error}");
+            eprintln!("commitsmith: {error}");
             ExitCode::FAILURE
         }
     }
@@ -213,7 +215,7 @@ fn commit_with_git(message: &str) -> ExitCode {
         Ok(status) if status.success() => ExitCode::SUCCESS,
         Ok(_) => ExitCode::FAILURE,
         Err(error) => {
-            eprintln!("coggit: cannot run git: {error}");
+            eprintln!("commitsmith: cannot run git: {error}");
             ExitCode::FAILURE
         }
     }
@@ -230,7 +232,7 @@ fn set_user(name: &str) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("coggit: {error}");
+            eprintln!("commitsmith: {error}");
             ExitCode::FAILURE
         }
     }
@@ -243,7 +245,7 @@ fn show_config(identity: bool) -> ExitCode {
         println!("handle: {}", config.prefix.as_deref().unwrap_or("-"));
         if config.user.is_none() {
             println!(
-                "       set one with `coggit --user \"Firstname Lastname\"` or on first start"
+                "       set one with `commitsmith --user \"Firstname Lastname\"` or on first start"
             );
         }
         return ExitCode::SUCCESS;
@@ -280,10 +282,10 @@ fn join_or_dash(items: &[String]) -> String {
 }
 
 fn init_config(force: bool) -> ExitCode {
-    let path = cwd().join(".coggit.toml");
+    let path = cwd().join(".commitsmith.toml");
     if path.exists() && !force {
         eprintln!(
-            "coggit: {} exists, pass --force to overwrite",
+            "commitsmith: {} exists, pass --force to overwrite",
             path.display()
         );
         return ExitCode::FAILURE;
@@ -295,7 +297,7 @@ fn init_config(force: bool) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("coggit: cannot write {}: {error}", path.display());
+            eprintln!("commitsmith: cannot write {}: {error}", path.display());
             ExitCode::FAILURE
         }
     }
@@ -306,7 +308,7 @@ fn run_check(file: Option<PathBuf>, message: Option<String>, strict: bool) -> Ex
         (Some(path), _) => match std::fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) => {
-                eprintln!("coggit: cannot read {}: {error}", path.display());
+                eprintln!("commitsmith: cannot read {}: {error}", path.display());
                 return ExitCode::FAILURE;
             }
         },
@@ -314,7 +316,7 @@ fn run_check(file: Option<PathBuf>, message: Option<String>, strict: bool) -> Ex
         (None, None) => {
             let mut buffer = String::new();
             if let Err(error) = std::io::stdin().read_to_string(&mut buffer) {
-                eprintln!("coggit: cannot read stdin: {error}");
+                eprintln!("commitsmith: cannot read stdin: {error}");
                 return ExitCode::FAILURE;
             }
             buffer

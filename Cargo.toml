@@ -1,11 +1,11 @@
 [package]
-name = "coggit"
+name = "commitsmith"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Terminal UI for writing and linting Conventional Commits"
 license = "MIT"
-repository = "https://github.com/mhinte/coggit"
+repository = "https://github.com/mhinte/commitsmith"
 keywords = ["git", "conventional-commits", "tui", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 

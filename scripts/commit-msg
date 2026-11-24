@@ -1,3 +1,3 @@
 #!/bin/sh
-# coggit commit-msg hook - checks the message before git records it.
-exec coggit check --file "$1"
+# commitsmith commit-msg hook - checks the message before git records it.
+exec commitsmith check --file "$1"
