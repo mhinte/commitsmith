@@ -71,6 +71,10 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2.9.3
       - run: cargo clippy --all-targets -- -D warnings
+      # The Windows code (registry PATH entry) only compiles on that target, so
+      # check it here instead of finding out during a release.
+      - run: rustup target add x86_64-pc-windows-msvc
+      - run: cargo check --target x86_64-pc-windows-msvc
 
   test:
     runs-on: ubuntu-latest

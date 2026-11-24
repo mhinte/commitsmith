@@ -148,7 +148,7 @@ fn target_dir() -> Result<PathBuf, String> {
 #[cfg(windows)]
 fn add_to_path(directory: &Path) -> Result<bool, String> {
     use windows_sys::Win32::Foundation::ERROR_SUCCESS;
-    use windows_sys::Win32::UI::Shell::{
+    use windows_sys::Win32::System::Registry::{
         HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_SET_VALUE, REG_EXPAND_SZ, REG_SZ,
         RegCloseKey, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
     };
@@ -230,6 +230,7 @@ fn add_to_path(directory: &Path) -> Result<bool, String> {
     path.push_str(&wanted);
 
     let data: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+    // Keep an expandable PATH expandable (%USERPROFILE% and friends survive).
     let stored_kind = if kind == REG_EXPAND_SZ {
         REG_EXPAND_SZ
     } else {
@@ -253,7 +254,7 @@ fn add_to_path(directory: &Path) -> Result<bool, String> {
     // Tell running programs that the environment changed.
     unsafe {
         use windows_sys::Win32::UI::WindowsAndMessaging::{
-            HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_SETTINGCHANGE,
+            HWND_BROADCAST, SendMessageTimeoutW, WM_SETTINGCHANGE,
         };
         let setting = wide("Environment");
         let mut result = 0usize;
@@ -262,7 +263,7 @@ fn add_to_path(directory: &Path) -> Result<bool, String> {
             WM_SETTINGCHANGE,
             0,
             setting.as_ptr() as isize,
-            SMTO_ABORTIFHUNG,
+            0x0002, /* SMTO_ABORTIFHUNG */
             5000,
             &mut result,
         );
