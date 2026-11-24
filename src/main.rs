@@ -17,7 +17,7 @@ mod ui;
 mod validate;
 
 use config::Config;
-use validate::{Rules, Severity};
+use validate::Severity;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -433,7 +433,7 @@ fn run_check(file: Option<PathBuf>, message: Option<String>, strict: bool) -> Ex
     for warning in warnings {
         eprintln!("warning: {warning}");
     }
-    let rules = Rules::from_config(&config);
+    let rules = validate::rules_from_config(&config);
     let issues = validate::lint_with(&text, &rules);
     let (errors, warnings) = validate::count(&issues);
 

@@ -6,13 +6,16 @@
 
 pub mod author;
 pub mod branch;
+pub mod commit;
 pub mod slug;
 pub mod ticket;
+pub mod validate;
 
 pub use author::{AuthorSlug, AuthorSlugError};
 pub use branch::{BranchError, BranchKind, BranchTemplate, ConventionalBranchName};
 pub use slug::{BranchSlug, MAX_SLUG_LEN, SlugError};
 pub use ticket::{TicketId, TicketIdError};
+pub use validate::{Issue, Rules, Severity};
 
 /// Everything that can go wrong when a user typed a value object.
 ///

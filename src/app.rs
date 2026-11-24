@@ -168,7 +168,7 @@ impl Default for App {
 
 impl App {
     pub fn with_config(config: Config, warnings: Vec<String>) -> Self {
-        let rules = Rules::from_config(&config);
+        let rules = crate::validate::rules_from_config(&config);
         let scopes = crate::git::empty_scope_info(&config.scopes);
         let kind = config
             .types()
@@ -477,7 +477,7 @@ impl App {
             PickerKind::Scope => self.commit.scope = choice,
             PickerKind::Profile => {
                 self.config.profile = choice;
-                self.rules = Rules::from_config(&self.config);
+                self.rules = crate::validate::rules_from_config(&self.config);
                 if !self.config.type_names().contains(&self.commit.kind) {
                     self.commit.kind = self
                         .config
