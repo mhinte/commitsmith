@@ -20,6 +20,7 @@ use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Row, Table, Wrap};
 use unicode_width::UnicodeWidthChar;
 
 use crate::app::{App, FIELDS, Field, Picker, PickerKind};
+use crate::application::tabs::Tab;
 use crate::validate::{self, Severity};
 
 const LABEL_WIDTH: usize = 10;
@@ -60,23 +61,108 @@ pub fn draw(frame: &mut Frame, app: &App) {
 }
 
 fn draw_full(frame: &mut Frame, app: &App, area: Rect) {
-    let multiline = 2 * (MULTILINE_ROWS - 1);
-    let [header, form, content, footer] = Layout::vertical([
+    let [header, tab_bar, body, footer] = Layout::vertical([
         Constraint::Length(3),
-        Constraint::Length(FIELDS.len() as u16 + 2 + multiline),
+        Constraint::Length(1),
         Constraint::Min(6),
         Constraint::Length(2),
     ])
     .areas(area);
 
     draw_header(frame, app, header);
-    let cursor = draw_form(frame, app, form);
-    draw_content(frame, app, content);
+    draw_tab_bar(frame, app, tab_bar);
+
+    let cursor = match app.tab {
+        Tab::Commit => draw_commit_body(frame, app, body),
+        Tab::Branches => {
+            draw_placeholder(
+                frame,
+                body,
+                "Branches",
+                "Explorer und Conventional-Branch-Wizard folgen mit E3-2 und E3-3.",
+            );
+            None
+        }
+        Tab::History => {
+            draw_placeholder(
+                frame,
+                body,
+                "Historie & Release",
+                "Conventional Log, SemVer und Changelog folgen mit Epico 5.",
+            );
+            None
+        }
+    };
     draw_footer(frame, app, footer);
 
     if let Some((x, y)) = cursor {
         frame.set_cursor_position(Position::new(x, y));
     }
+}
+
+/// Staging, composer, preview and checks: the first tab.
+fn draw_commit_body(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
+    let multiline = 2 * (MULTILINE_ROWS - 1);
+    let [form, content] = Layout::vertical([
+        Constraint::Length(FIELDS.len() as u16 + 2 + multiline),
+        Constraint::Min(6),
+    ])
+    .areas(area);
+
+    let cursor = draw_form(frame, app, form);
+    draw_content(frame, app, content);
+    cursor
+}
+
+/// One line of tabs; the active one is highlighted, the others are muted.
+fn draw_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
+    let mut spans = Vec::new();
+    for (index, tab) in Tab::ALL.into_iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::styled(" │ ", MUTED));
+        }
+        let active = tab == app.tab;
+        let style = if active {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            HINT
+        };
+        spans.push(Span::styled(
+            format!(" {} {} ", tab.number(), tab.label()),
+            style,
+        ));
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// Something to look at on a tab that is not built yet.
+fn draw_placeholder(frame: &mut Frame, area: Rect, title: &str, text: &str) {
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title(Span::styled(
+            format!(" {title} "),
+            Style::default().fg(Color::Gray),
+        ));
+    let mut lines = vec![Line::raw("")];
+    lines.push(Line::styled(
+        format!("  {text}"),
+        Style::default().fg(Color::DarkGray),
+    ));
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        "  1 back to the composer",
+        Style::default().fg(Color::Gray),
+    ));
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
@@ -708,22 +794,22 @@ fn draw_help(frame: &mut Frame, area: Rect) {
 }
 
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
-    let commit_label = if app.commit_mode { "commit" } else { "message" };
-    // Essentials stay, the rest is dropped from the right until the line fits;
-    // everything dropped here is still listed in the help overlay.
-    let essentials: [(&str, &str); 5] = [
-        ("Tab", "next"),
-        ("C-k", "clear"),
-        ("C-s", commit_label),
-        ("S", "setup"),
-        ("?", "help"),
-    ];
-    let optional: [(&str, &str); 4] = [
-        ("Space", "type"),
-        ("C-n", "scope"),
-        ("C-p", "profile"),
-        ("C-r", "reuse"),
-    ];
+    // The active tab decides which keys are advertised: a shortcut that does
+    // nothing here would be a lie in the footer. The last two entries are the
+    // global ones (`1-3`, `?`) and stay, the middle ones are dropped when the
+    // line gets too narrow.
+    let keys = app.tab.keys(app.commit_mode);
+    let globals = keys.len().saturating_sub(2);
+    let primary = &keys[..4.min(globals)];
+    let secondary = &keys[4.min(globals)..globals];
+    let essential_count = primary.len() + (keys.len() - globals);
+    let essentials: Vec<(&str, &str)> = primary
+        .iter()
+        .copied()
+        .chain(keys[globals..].iter().copied())
+        .collect();
+    let optional: Vec<(&str, &str)> = secondary.to_vec();
+    let _ = essential_count;
 
     let width = area.width as usize;
     let measure = |entries: &[(&str, &str)]| -> usize {
@@ -854,10 +940,17 @@ mod tests {
                     "{needed:?} missing at {width}: {footer:?}"
                 );
             }
+            // More room means more hints, in order of usefulness.
             if width >= 100 {
                 assert!(
+                    footer.contains("scope"),
+                    "a 100 column footer should reach the scope hint: {footer:?}"
+                );
+            }
+            if width >= 120 {
+                assert!(
                     footer.contains("profile"),
-                    "the wide footer dropped hints: {footer:?}"
+                    "a 120 column footer should reach the profile hint: {footer:?}"
                 );
             }
         }

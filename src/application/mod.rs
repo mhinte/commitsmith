@@ -1,11 +1,11 @@
-//! Application state and the event loop.
-
-//! Application layer: state and the use cases the surface triggers.
+//! Application layer: state, tabs and the use cases the surface triggers.
 //!
 //! Key events come in as `crossterm` key codes — that is input, not rendering —
 //! but no widget, frame or terminal type appears here.
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+
+pub mod tabs;
 
 use crate::commit::Commit;
 use crate::config::Config;
@@ -159,6 +159,8 @@ pub struct App {
     /// Set by `S`: the caller runs the setup dialog and starts over with the
     /// new config, which is what makes the change take effect immediately.
     pub setup_request: bool,
+    /// Which of the three surfaces is showing.
+    pub tab: tabs::Tab,
     pub should_quit: bool,
     pub show_help: bool,
 }
@@ -196,6 +198,7 @@ impl App {
             output: None,
             commit_mode: false,
             setup_request: false,
+            tab: tabs::Tab::Commit,
             should_quit: false,
             show_help: false,
         };
@@ -564,6 +567,34 @@ impl App {
         self.focus((self.field + FIELDS.len() - 1) % FIELDS.len());
     }
 
+    /// Digits switch tabs, but not while a text field is taking characters:
+    /// `1` belongs in a subject like "1st try" more than it belongs to the tab bar.
+    fn tab_key(&mut self, key: KeyEvent) -> bool {
+        if self.show_help || self.picker.is_some() {
+            return false;
+        }
+        let typing = self.tab == tabs::Tab::Commit && self.is_editing();
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Char(digit @ '1'..='3') if !ctrl && !typing => {
+                if let Some(tab) = tabs::Tab::from_digit(digit) {
+                    self.tab = tab;
+                    return true;
+                }
+            }
+            KeyCode::PageUp if ctrl => {
+                self.tab = self.tab.previous();
+                return true;
+            }
+            KeyCode::PageDown if ctrl => {
+                self.tab = self.tab.next();
+                return true;
+            }
+            _ => {}
+        }
+        false
+    }
+
     /// Ctrl+S. Errors keep the composer open: committing `feat:` because the
     /// subject was forgotten is a mistake the linter exists to prevent.
     fn finish(&mut self) {
@@ -781,6 +812,9 @@ impl App {
             return;
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if self.tab_key(key) {
+            return;
+        }
 
         if self.show_help {
             match key.code {
@@ -1154,6 +1188,71 @@ mod tests {
         ctrl(&mut app, 's');
         assert_eq!(app.output.as_deref(), Some("feat: add composer"));
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn digits_switch_tabs_when_no_field_is_typing() {
+        let mut app = App::default();
+        press(&mut app, KeyCode::Char('2'));
+        assert_eq!(app.tab, tabs::Tab::Branches);
+        press(&mut app, KeyCode::Char('3'));
+        assert_eq!(app.tab, tabs::Tab::History);
+        press(&mut app, KeyCode::Char('1'));
+        assert_eq!(app.tab, tabs::Tab::Commit);
+    }
+
+    #[test]
+    fn a_digit_inside_a_field_stays_text() {
+        let mut app = App::default();
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        type_text(&mut app, "1st try");
+        assert_eq!(app.commit.subject, "1st try");
+        assert_eq!(app.tab, tabs::Tab::Commit, "typing must not change the tab");
+    }
+
+    #[test]
+    fn the_tab_keeps_what_was_typed_in_it() {
+        let mut app = App::default();
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        type_text(&mut app, "add composer");
+        // While a field is focused the digits are text, so the page keys are the
+        // way out; the round trip must not lose the subject.
+        app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::CONTROL));
+        assert_eq!(app.tab, tabs::Tab::Branches);
+        app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::CONTROL));
+        assert_eq!(app.tab, tabs::Tab::Commit);
+        assert_eq!(app.commit.subject, "add composer");
+    }
+
+    #[test]
+    fn a_digit_typed_in_a_field_does_not_leak_into_the_tab_bar() {
+        let mut app = App::default();
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        type_text(&mut app, "fix 2 bugs");
+        assert_eq!(app.commit.subject, "fix 2 bugs");
+        assert_eq!(app.tab, tabs::Tab::Commit);
+    }
+
+    #[test]
+    fn ctrl_page_keys_cycle_tabs() {
+        let mut app = App::default();
+        app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::CONTROL));
+        assert_eq!(app.tab, tabs::Tab::Branches);
+        app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::CONTROL));
+        assert_eq!(app.tab, tabs::Tab::Commit);
+        app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::CONTROL));
+        assert_eq!(app.tab, tabs::Tab::History, "wraps around");
+    }
+
+    #[test]
+    fn digits_do_not_switch_tabs_while_a_picker_is_open() {
+        let mut app = App::default();
+        press(&mut app, KeyCode::Char(' ')); // type picker
+        press(&mut app, KeyCode::Char('2'));
+        assert_eq!(app.tab, tabs::Tab::Commit);
     }
 
     #[test]
