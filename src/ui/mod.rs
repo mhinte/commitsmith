@@ -950,18 +950,31 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     };
     let context_width = unicode_width::UnicodeWidthStr::width(context.as_str()) as u16;
 
+    // The staging list is narrow, so the footer names the file under the cursor in
+    // full. The status keeps its place: the path is shortened first.
+    let room = second_row.width.saturating_sub(context_width + 2) as usize;
+    let mut left = Vec::new();
+    let mut used = 0;
+    if let Some(path) = highlighted_file(app) {
+        let status_width = if app.status.is_empty() {
+            0
+        } else {
+            unicode_width::UnicodeWidthStr::width(app.status.as_str()) + 2
+        };
+        let shown = fit_left(&path, room.saturating_sub(status_width).max(12));
+        used = unicode_width::UnicodeWidthStr::width(shown.as_str()) + 2;
+        left.push(Span::styled(format!(" {shown}  "), HINT));
+    }
     if !app.status.is_empty() {
         // The status must not run under the context: it is cut, not overwritten.
-        // One cell of air between the status and the context.
-        let room = second_row.width.saturating_sub(context_width + 2);
-        let status = fit(&app.status, room as usize);
+        let status = fit(&app.status, room.saturating_sub(used));
+        left.push(Span::styled(status, Style::default().fg(Color::Cyan)));
+    }
+    if !left.is_empty() {
         frame.render_widget(
-            Paragraph::new(Line::styled(
-                format!(" {status}"),
-                Style::default().fg(Color::Cyan),
-            )),
+            Paragraph::new(Line::from(left)),
             Rect {
-                width: room.saturating_add(1),
+                width: (room as u16).saturating_add(1),
                 ..second_row
             },
         );
@@ -979,6 +992,32 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         .right_aligned(),
         second_row,
     );
+}
+
+/// The file the staging cursor sits on, if this tab shows one.
+fn highlighted_file(app: &App) -> Option<String> {
+    (app.tab == crate::application::tabs::Tab::Commit)
+        .then(|| app.staging.selected_path())
+        .flatten()
+}
+
+/// Cut `text` from the left to `width` cells: the end of a path is the useful part.
+fn fit_left(text: &str, width: usize) -> String {
+    if unicode_width::UnicodeWidthStr::width(text) <= width {
+        return text.to_string();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::new();
+    let mut used = 0;
+    for c in chars.iter().rev() {
+        let cell = unicode_width::UnicodeWidthChar::width(*c).unwrap_or(1);
+        if used + cell + 1 > width {
+            break;
+        }
+        used += cell;
+        out.insert(0, *c);
+    }
+    format!("…{out}")
 }
 
 /// Cut `text` to `width` display cells, with an ellipsis when it was longer.
@@ -1862,6 +1901,48 @@ mod tests {
         );
         // The diff title names the file in full, so nothing is lost.
         assert!(screen.contains("file_name.rs"), "{screen}");
+    }
+
+    #[test]
+    fn the_footer_names_the_highlighted_file_in_full() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let path = "src/infrastructure/very/long/directory/chain/file_name.rs";
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.staging.items = vec![staging_item(path)];
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let footer = rows(&terminal)
+            .into_iter()
+            .rev()
+            .take(2)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(footer.contains(path), "{footer}");
+    }
+
+    #[test]
+    fn the_footer_keeps_the_status_beside_the_path() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let short = "src/main.rs";
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.staging.items = vec![staging_item(short)];
+        app.status = "staged src/main.rs".to_string();
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let footer = rows(&terminal)
+            .into_iter()
+            .rev()
+            .take(2)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(footer.contains(short), "path: {footer}");
+        assert!(footer.contains("staged src/main.rs"), "status: {footer}");
     }
 
     #[test]
