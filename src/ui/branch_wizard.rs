@@ -12,6 +12,11 @@ use crate::application::branch_wizard::WizardField;
 const MUTED: Style = Style::new().fg(Color::DarkGray);
 const HINT: Style = Style::new().fg(Color::Gray);
 
+/// Columns from the panel's left edge to the first character of a value: the
+/// border, one leading space, the padded label, then the `▌ ` marker. The caret
+/// is placed with this offset so it cannot drift away from the text.
+const VALUE_OFFSET: u16 = 1 + 1 + 12 + 2;
+
 /// Draws the wizard and returns the caret, when a text field has it.
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
     let wizard = &app.wizard;
@@ -119,18 +124,14 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
         HINT,
     ));
 
-    // The caret sits in the field being typed into, as in the composer: the
-    // label (12) + marker (2) come first, then the text.
-    let caret = match wizard.field {
-        WizardField::Kind => None,
-        field => {
-            let width = unicode_width::UnicodeWidthStr::width(match field {
-                WizardField::Ticket => wizard.ticket.as_str(),
-                _ => wizard.description.as_str(),
-            }) as u16;
-            Some((area.x + 15 + width, area.y + 1 + field.index() as u16))
-        }
-    };
+    // The caret sits behind the text being typed into, as in the composer.
+    let caret = wizard.current_text().map(|text| {
+        let width = unicode_width::UnicodeWidthStr::width(text) as u16;
+        (
+            area.x + VALUE_OFFSET + width,
+            area.y + 1 + wizard.field.index() as u16,
+        )
+    });
 
     frame.render_widget(Paragraph::new(Text::from(lines)).block(block()), area);
     caret
@@ -151,4 +152,21 @@ fn shorten(name: &str, width: usize) -> String {
     let keep = width - 1;
     let tail: String = chars[chars.len() - keep..].iter().collect();
     format!("…{tail}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_value_offset_matches_the_drawn_row() {
+        // "│" + " " + label(12) + "▌ " is what the row looks like; the caret has
+        // to start exactly where the text starts.
+        let row = format!("│ {:<12}▌ ", "description");
+        assert_eq!(
+            row.chars().count() as u16,
+            VALUE_OFFSET,
+            "the constant and the layout drifted apart: {row}"
+        );
+    }
 }

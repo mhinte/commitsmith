@@ -7,6 +7,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 pub mod branch_wizard;
 pub mod branches;
+pub mod navigation;
 pub mod tabs;
 #[cfg(test)]
 pub mod test_support;
@@ -446,14 +447,30 @@ impl App {
             }
             KeyCode::Tab => self.wizard.field = self.wizard.field.next(),
             KeyCode::BackTab => self.wizard.field = self.wizard.field.previous(),
-            KeyCode::Left if self.wizard.field == branch_wizard::WizardField::Kind => {
-                self.wizard.cycle_kind(false);
+            // Same rule as in the composer: arrows stay in the text while there
+            // is text, otherwise they walk the fields.
+            KeyCode::Left | KeyCode::Right => {
+                let editable = self.wizard.current_text().is_some();
+                let len = self
+                    .wizard
+                    .current_text()
+                    .map(|text| text.chars().count())
+                    .unwrap_or(0);
+                match navigation::arrow_action(
+                    key.code,
+                    editable,
+                    len,
+                    navigation::is_shift(key.modifiers),
+                ) {
+                    navigation::ArrowAction::Cursor(_) => {
+                        // The caret is always at the end of the wizard's text:
+                        // typing appends, so there is nothing further to move.
+                    }
+                    navigation::ArrowAction::Field(delta) => self.wizard.step(delta),
+                    navigation::ArrowAction::Cycle(delta) => self.wizard.cycle_kind(delta > 0),
+                    navigation::ArrowAction::Ignore => {}
+                }
             }
-            KeyCode::Right if self.wizard.field == branch_wizard::WizardField::Kind => {
-                self.wizard.cycle_kind(true);
-            }
-            KeyCode::Left => self.wizard.field = self.wizard.field.previous(),
-            KeyCode::Right => self.wizard.field = self.wizard.field.next(),
             KeyCode::Backspace => self.wizard.backspace(),
             KeyCode::Enter => self.create_branch(),
             KeyCode::Char(c) if !ctrl => self.wizard.push_char(c),
@@ -1101,6 +1118,31 @@ impl App {
         }
     }
 
+    /// One rule for `←`/`→`, shared by the composer and the wizard.
+    fn arrow(&mut self, key: KeyEvent) {
+        let editable = self.is_editing();
+        let len = self.value(self.active_field()).chars().count();
+        match navigation::arrow_action(key.code, editable, len, navigation::is_shift(key.modifiers))
+        {
+            navigation::ArrowAction::Cursor(delta) => self.move_cursor(delta),
+            navigation::ArrowAction::Field(delta) => {
+                if delta < 0 {
+                    self.previous_field();
+                } else {
+                    self.next_field();
+                }
+            }
+            navigation::ArrowAction::Cycle(delta) => {
+                if delta < 0 {
+                    self.cycle_type(false);
+                } else {
+                    self.cycle_type(true);
+                }
+            }
+            navigation::ArrowAction::Ignore => {}
+        }
+    }
+
     fn move_cursor(&mut self, delta: isize) {
         let len = self.value(self.active_field()).chars().count();
         let cursor = self.cursors[self.field];
@@ -1233,17 +1275,14 @@ impl App {
             KeyCode::Enter => self.enter(),
             KeyCode::Up => self.line_move(-1),
             KeyCode::Down => self.line_move(1),
-            KeyCode::Left | KeyCode::Char('h') if self.active_field() == Field::Type => {
-                self.cycle_type(false);
-            }
-            KeyCode::Right | KeyCode::Char('l') if self.active_field() == Field::Type => {
-                self.cycle_type(true);
-            }
+            // `h`/`l` on the type field cycle the value, as vi users expect; the
+            // arrow keys go through the shared rule below.
+            KeyCode::Char('l') if self.active_field() == Field::Type => self.cycle_type(true),
+            KeyCode::Char('h') if self.active_field() == Field::Type => self.cycle_type(false),
             KeyCode::Char('j') if self.active_field() == Field::Type => self.next_field(),
             KeyCode::Char('k') if self.active_field() == Field::Type => self.previous_field(),
             KeyCode::Char(' ') if self.active_field() == Field::Type => self.open_type_picker(),
-            KeyCode::Left => self.move_cursor(-1),
-            KeyCode::Right => self.move_cursor(1),
+            KeyCode::Left | KeyCode::Right => self.arrow(key),
             KeyCode::Home => self.home(),
             KeyCode::End => self.end(),
             KeyCode::Backspace => self.backspace(),
@@ -1468,6 +1507,87 @@ mod tests {
         press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Char('j'));
         assert_eq!(app.wizard.description, "j");
+    }
+
+    fn wizard_on_description(git: RecordingGit) -> App {
+        let mut app = wizard_app(git);
+        press(&mut app, KeyCode::Char('n'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        app
+    }
+
+    #[test]
+    fn arrows_in_a_filled_wizard_field_stay_in_the_field() {
+        let mut app = wizard_on_description(RecordingGit::new(&["main"], "main"));
+        type_text(&mut app, "abc");
+        let before = app.wizard.field;
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Right);
+        assert_eq!(app.wizard.field, before, "arrows must not walk the fields");
+        assert_eq!(app.wizard.description, "abc");
+    }
+
+    #[test]
+    fn arrows_in_an_empty_wizard_field_walk_on() {
+        let mut app = wizard_on_description(RecordingGit::new(&["main"], "main"));
+        press(&mut app, KeyCode::Left);
+        assert_eq!(app.wizard.field, branch_wizard::WizardField::Ticket);
+        press(&mut app, KeyCode::Right);
+        assert_eq!(app.wizard.field, branch_wizard::WizardField::Description);
+    }
+
+    #[test]
+    fn shift_arrows_always_walk_the_wizard_fields() {
+        let mut app = wizard_on_description(RecordingGit::new(&["main"], "main"));
+        type_text(&mut app, "abc");
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT));
+        assert_eq!(app.wizard.field, branch_wizard::WizardField::Ticket);
+    }
+
+    #[test]
+    fn arrows_on_the_kind_field_cycle_it() {
+        let mut app = wizard_app(RecordingGit::new(&["main"], "main"));
+        press(&mut app, KeyCode::Char('n'));
+        assert_eq!(
+            app.wizard.kind,
+            commitsmith::domain::branch::BranchKind::Feat
+        );
+        press(&mut app, KeyCode::Right);
+        assert_eq!(
+            app.wizard.kind,
+            commitsmith::domain::branch::BranchKind::Fix
+        );
+        press(&mut app, KeyCode::Left);
+        assert_eq!(
+            app.wizard.kind,
+            commitsmith::domain::branch::BranchKind::Feat
+        );
+        assert_eq!(
+            app.wizard.field,
+            branch_wizard::WizardField::Kind,
+            "and stay"
+        );
+    }
+
+    #[test]
+    fn the_composer_follows_the_same_arrow_rule() {
+        let mut app = App::default();
+        // Empty scope: the arrow walks to the next field.
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.active_field(), Field::Scope);
+        press(&mut app, KeyCode::Right);
+        assert_eq!(app.active_field(), Field::Subject);
+
+        // With text, the arrow moves the caret and stays.
+        type_text(&mut app, "abc");
+        press(&mut app, KeyCode::Left);
+        assert_eq!(app.active_field(), Field::Subject, "still in the field");
+        assert_eq!(app.cursor(), 2);
+
+        // Shift+arrow leaves the field even with text.
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT));
+        assert_eq!(app.active_field(), Field::Scope);
     }
 
     #[test]

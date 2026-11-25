@@ -195,6 +195,24 @@ impl BranchWizard {
         self.error = None;
     }
 
+    /// The text of the focused field, when it is one that takes text.
+    pub fn current_text(&self) -> Option<&str> {
+        match self.field {
+            WizardField::Kind => None,
+            WizardField::Ticket => Some(&self.ticket),
+            WizardField::Description => Some(&self.description),
+        }
+    }
+
+    /// Move to the next or previous field.
+    pub fn step(&mut self, delta: isize) {
+        self.field = if delta < 0 {
+            self.field.previous()
+        } else {
+            self.field.next()
+        };
+    }
+
     pub fn backspace(&mut self) {
         match self.field {
             WizardField::Description => {
