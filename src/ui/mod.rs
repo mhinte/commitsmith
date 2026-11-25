@@ -65,15 +65,15 @@ pub fn draw(frame: &mut Frame, app: &App) {
 }
 
 fn draw_full(frame: &mut Frame, app: &App, area: Rect) {
-    let [header, tab_bar, body, footer] = Layout::vertical([
-        Constraint::Length(3),
+    // No separate header block: the tab bar is one line at the top and the state
+    // of the message lives in the title of the compose panel.
+    let [tab_bar, body, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(6),
         Constraint::Length(2),
     ])
     .areas(area);
 
-    draw_header(frame, app, header);
     draw_tab_bar(frame, app, tab_bar);
 
     let cursor = match app.tab {
@@ -135,7 +135,7 @@ fn draw_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
             HINT
         };
         spans.push(Span::styled(
-            format!(" {} {} ", tab.number(), tab.label()),
+            format!(" [{}] {} ", tab.number(), tab.label()),
             style,
         ));
     }
@@ -169,40 +169,13 @@ fn draw_placeholder(frame: &mut Frame, area: Rect, title: &str, text: &str) {
     );
 }
 
-fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(MUTED)
-        .title(Line::from(vec![
-            Span::styled(
-                " commitsmith ",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(app.type_label(), HINT),
-        ]))
-        .title_top(
-            Line::from(Span::styled(
-                if !app.in_repository {
-                    format!(" {} · no git repository ", app.config.profile)
-                } else if app.repo_line.is_empty() {
-                    format!(" {} ", app.config.profile)
-                } else {
-                    format!(" {} · {} ", app.config.profile, app.repo_line)
-                },
-                if app.in_repository {
-                    MUTED
-                } else {
-                    Style::default().fg(Color::Yellow)
-                },
-            ))
-            .right_aligned(),
-        );
-
+/// Everything the old header showed, as one title line for the compose panel.
+/// Parts are dropped from the right when the panel is narrow, so the branch and
+/// the kind stay visible instead of being cut off mid-word.
+fn status_title(app: &App, width: u16) -> Line<'static> {
+    let (errors, warnings) = validate::count(&app.issues);
     let subject_len = app.commit.subject.chars().count();
     let max = app.rules.max_subject;
-    let (errors, warnings) = validate::count(&app.issues);
     let counter_color = if subject_len > max {
         Color::Red
     } else if subject_len > app.rules.recommended_subject {
@@ -211,29 +184,66 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         Color::DarkGray
     };
 
-    let line = Line::from(vec![
-        Span::styled(" subject ", MUTED),
-        Span::styled(
-            format!("{subject_len}/{max}"),
+    let location = if app.in_repository {
+        match app.repo_line.is_empty() {
+            true => "repository".to_string(),
+            false => app.repo_line.clone(),
+        }
+    } else {
+        "no git repository".to_string()
+    };
+
+    // Priority order: what the message is and where it goes beats the counters.
+    let parts: Vec<(String, Style)> = vec![
+        (
+            " compose ".to_string(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        (
+            format!(" {} ", app.commit.kind),
+            Style::default().fg(Color::Cyan),
+        ),
+        (format!("· {} ", app.config.profile), MUTED),
+        (
+            format!("· {location} "),
+            if app.in_repository {
+                MUTED
+            } else {
+                Style::default().fg(Color::Yellow)
+            },
+        ),
+        (
+            format!("· {subject_len}/{max} "),
             Style::default().fg(counter_color),
         ),
-        Span::raw("   "),
-        Span::styled(
-            plural(errors, "error"),
+        (
+            format!("· {} ", plural(errors, "error")),
             Style::default().fg(if errors > 0 { Color::Red } else { Color::Green }),
         ),
-        Span::raw("  "),
-        Span::styled(
-            format!("{warnings} warnings"),
+        (
+            format!("· {}", plural(warnings, "warning")),
             Style::default().fg(if warnings > 0 {
                 Color::Yellow
             } else {
                 Color::Green
             }),
         ),
-    ]);
+    ];
 
-    frame.render_widget(Paragraph::new(line).block(block), area);
+    let budget = width.saturating_sub(2) as usize;
+    let mut spans = Vec::new();
+    let mut used = 0usize;
+    for (text, style) in parts {
+        let length = text.chars().count();
+        if used + length > budget {
+            break;
+        }
+        used += length;
+        spans.push(Span::styled(text, style));
+    }
+    Line::from(spans)
 }
 
 /// Draws the form and returns the terminal cursor position, if any.
@@ -329,7 +339,21 @@ fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
             Block::bordered()
                 .border_type(BorderType::Rounded)
                 .border_style(MUTED)
-                .title(Span::styled(" compose ", HINT)),
+                .title(status_title(app, area.width))
+                // The type's description moves here from the old header, but
+                // only where the line has room for both ends.
+                .title_top(
+                    if area.width >= 70
+                        && status_title(app, area.width).width()
+                            + unicode_width::UnicodeWidthStr::width(app.type_label().as_str())
+                            + 12
+                            <= area.width as usize
+                    {
+                        Line::from(Span::styled(app.type_label(), HINT)).right_aligned()
+                    } else {
+                        Line::from("")
+                    },
+                ),
         ),
         area,
     );
@@ -543,10 +567,11 @@ fn draw_compact(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(MUTED)
-        .title(Line::from(vec![
-            Span::styled(" commitsmith ", Style::default().fg(Color::Cyan)),
-            Span::styled(format!("{step} "), MUTED),
-        ]))
+        // No program name here any more: it lives in the corner.
+        .title(Line::from(Span::styled(
+            format!(" {step} "),
+            Style::default().fg(Color::Cyan),
+        )))
         .title_top(
             Line::from(Span::styled(format!(" {errors}✗ {warnings}! "), MUTED)).right_aligned(),
         );
@@ -606,6 +631,17 @@ fn draw_compact(frame: &mut Frame, app: &App, area: Rect) {
         body,
     );
 
+    // The name and version belong in the corner here too, but the narrow form
+    // has to fit beside the keys.
+    let version = format!("v{} ", env!("CARGO_PKG_VERSION"));
+    let version_width = if footer.width >= 54 {
+        version.chars().count() as u16
+    } else {
+        0
+    };
+    let [keys_area, version_area] =
+        Layout::horizontal([Constraint::Min(10), Constraint::Length(version_width)]).areas(footer);
+
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(" Tab ", KEY),
@@ -626,8 +662,14 @@ fn draw_compact(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(" ? ", KEY),
             Span::styled("help", HINT),
         ])),
-        footer,
+        keys_area,
     );
+    if version_width > 0 {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(version, MUTED))).right_aligned(),
+            version_area,
+        );
+    }
 }
 
 /// Overlay list with a filter line. Pickers that carry previews (history) get a
@@ -821,7 +863,6 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let optional: Vec<(&str, &str)> = secondary.to_vec();
     let _ = essential_count;
 
-    let width = area.width as usize;
     let measure = |entries: &[(&str, &str)]| -> usize {
         entries
             .iter()
@@ -834,18 +875,38 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     // Insert the optional hints after "Tab" while they fit, most useful first.
-    let mut entries: Vec<(&str, &str)> = essentials.to_vec();
-    for take in 1..=optional.len() {
-        let mut candidate = essentials.to_vec();
-        for (index, extra) in optional.iter().take(take).enumerate() {
-            candidate.insert(1 + index, *extra);
+    let select = |budget: usize| -> Vec<(&str, &str)> {
+        let mut entries: Vec<(&str, &str)> = essentials.to_vec();
+        for take in 1..=optional.len() {
+            let mut candidate = essentials.to_vec();
+            for (index, extra) in optional.iter().take(take).enumerate() {
+                candidate.insert(1 + index, *extra);
+            }
+            if measure(&candidate) <= budget {
+                entries = candidate;
+            } else {
+                break;
+            }
         }
-        if measure(&candidate) <= width {
-            entries = candidate;
-        } else {
-            break;
-        }
-    }
+        entries
+    };
+
+    // The corner shows the name and the version. If the essentials cannot fit
+    // beside the name, the number alone has to do — but the hints win.
+    let full_version = format!("commitsmith {} ", env!("CARGO_PKG_VERSION"));
+    let short_version = format!("v{} ", env!("CARGO_PKG_VERSION"));
+    let full_budget = area
+        .width
+        .saturating_sub(full_version.chars().count() as u16) as usize;
+    let short_budget = area
+        .width
+        .saturating_sub(short_version.chars().count() as u16) as usize;
+    let (version, entries) = if measure(&essentials) <= full_budget {
+        (full_version, select(full_budget))
+    } else {
+        (short_version, select(short_budget))
+    };
+    let version_width = version.chars().count() as u16;
 
     let mut spans = Vec::new();
     for (index, (key, label)) in entries.iter().enumerate() {
@@ -855,17 +916,32 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         spans.push(Span::styled(format!(" {key} "), KEY));
         spans.push(Span::styled(format!(" {label}"), HINT));
     }
-    let keys = Line::from(spans);
+    // The program name and version belong in the corner, not in a header that
+    // would take a whole block of the screen.
+    let [keys_area, version_area] =
+        Layout::horizontal([Constraint::Min(10), Constraint::Length(version_width)])
+            .areas(Rect { height: 1, ..area });
 
-    let mut lines = vec![keys];
+    frame.render_widget(Paragraph::new(Line::from(spans)), keys_area);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(version, MUTED))).right_aligned(),
+        version_area,
+    );
+
     if !app.status.is_empty() {
-        lines.push(Line::styled(
-            format!(" {}", app.status),
-            Style::default().fg(Color::Cyan),
-        ));
+        let status_area = Rect {
+            y: area.y + 1,
+            height: 1,
+            ..area
+        };
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                format!(" {}", app.status),
+                Style::default().fg(Color::Cyan),
+            )),
+            status_area,
+        );
     }
-
-    frame.render_widget(Paragraph::new(Text::from(lines)), area);
 }
 
 /// Run the TUI until the user quits or hands the message over.
@@ -996,8 +1072,20 @@ mod tests {
         );
     }
 
+    /// The whole screen as text, one string per row.
+    fn rows(terminal: &ratatui::Terminal<ratatui::backend::TestBackend>) -> Vec<String> {
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect()
+            })
+            .collect()
+    }
+
     #[test]
-    fn the_header_warns_outside_a_repository() {
+    fn the_compose_title_warns_outside_a_repository() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
@@ -1005,21 +1093,71 @@ mod tests {
         app.set_in_repository(false);
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
-        let buffer = terminal.backend().buffer();
-        let header: String = (0..buffer.area.width)
-            .map(|x| buffer[(x, 0)].symbol())
-            .collect();
-        assert!(header.contains("no git repository"), "{header}");
+        let screen = rows(&terminal).join("\n");
+        assert!(screen.contains("no git repository"), "{screen}");
+        assert!(
+            screen.contains("not a git repository · `check` works here"),
+            "{screen}"
+        );
 
         app.set_in_repository(true);
         app.set_repo_line("main · 0 staged".to_string());
         terminal.draw(|frame| draw(frame, &app)).unwrap();
-        let buffer = terminal.backend().buffer();
-        let header: String = (0..buffer.area.width)
-            .map(|x| buffer[(x, 0)].symbol())
-            .collect();
-        assert!(!header.contains("no git repository"), "{header}");
-        assert!(header.contains("main · 0 staged"), "{header}");
+        let screen = rows(&terminal).join("\n");
+        assert!(!screen.contains("no git repository"), "{screen}");
+        assert!(screen.contains("main · 0 staged"), "{screen}");
+    }
+
+    #[test]
+    fn the_tab_bar_uses_bracketed_numbers() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let top = rows(&terminal).remove(0);
+        assert!(top.contains("[1] Commit"), "{top}");
+        assert!(top.contains("[2] Branches"), "{top}");
+        assert!(top.contains("[3] Historie"), "{top}");
+    }
+
+    #[test]
+    fn the_version_sits_at_the_bottom_right() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal);
+        let version = format!("commitsmith {}", env!("CARGO_PKG_VERSION"));
+        let row = screen
+            .iter()
+            .position(|line| line.contains(&version))
+            .expect("version in the footer");
+        assert_eq!(row, 28, "the keys row of the footer: {screen:#?}");
+        let column = screen[row].find(&version).unwrap() as u16;
+        assert!(column > 60, "bottom right, not left: {column}");
+    }
+
+    #[test]
+    fn the_state_of_the_message_lives_in_the_compose_panel() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.set_in_repository(true);
+        app.set_repo_line("main · 1 staged".to_string());
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal);
+        let title = &screen[1];
+        assert!(title.contains("compose"), "{title}");
+        assert!(title.contains("conventional"), "{title}");
+        assert!(title.contains("main · 1 staged"), "{title}");
+        assert!(title.contains("error"), "{title}");
+        assert!(title.contains("warning"), "{title}");
     }
 
     #[test]
@@ -1052,17 +1190,24 @@ mod tests {
                     "{needed:?} missing at {width}: {footer:?}"
                 );
             }
-            // More room means more hints, in order of usefulness.
+            // More room means more hints, in order of usefulness. The name in
+            // the corner costs 17 columns, so the thresholds sit 20 further out
+            // than they did before it moved there.
             if width >= 100 {
                 assert!(
-                    footer.contains("scope"),
-                    "a 100 column footer should reach the scope hint: {footer:?}"
+                    footer.contains("commitsmith"),
+                    "the corner shows the program name: {footer:?}"
+                );
+            } else {
+                assert!(
+                    footer.contains(&format!("v{}", env!("CARGO_PKG_VERSION"))),
+                    "a narrow corner still shows the version: {footer:?}"
                 );
             }
             if width >= 120 {
                 assert!(
-                    footer.contains("profile"),
-                    "a 120 column footer should reach the profile hint: {footer:?}"
+                    footer.contains("scope"),
+                    "a 120 column footer should reach the scope hint: {footer:?}"
                 );
             }
         }
