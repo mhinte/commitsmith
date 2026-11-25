@@ -182,14 +182,6 @@ fn draw_placeholder(frame: &mut Frame, area: Rect, title: &str, text: &str) {
     );
 }
 
-/// The compose panel's title. Plain, like every other panel title: the state of
-/// the message belongs at the field it concerns, not in a second header.
-fn compose_title() -> Line<'static> {
-    // The same style as " preview " and " checks ", so the three panels of this
-    // tab read as siblings.
-    Line::from(Span::styled(" compose ", HINT))
-}
-
 /// Draws the form and returns the terminal cursor position, if any.
 fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
     let inner = area.inner(ratatui::layout::Margin::new(1, 1));
@@ -306,10 +298,15 @@ fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
         row_y += 1;
     }
 
+    // The compose panel has the keyboard, so it carries the same bright border
+    // as the wizard on tab 2; preview and checks stay quiet.
     let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(MUTED)
-        .title(compose_title());
+        .border_style(theme::focused_panel())
+        .title(Line::from(Span::styled(
+            " compose ",
+            theme::focused_panel(),
+        )));
     if area.width >= 70 {
         block = block.title_top(
             Line::from(Span::styled(format!("{}  ", app.type_label()), HINT)).right_aligned(),
@@ -1376,6 +1373,29 @@ mod tests {
             }
         }
         panic!("no row with {needle:?}");
+    }
+
+    #[test]
+    fn the_compose_panel_has_the_bright_border() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+
+        // The compose panel's top-left corner is bright; preview/checks are not.
+        assert_eq!(buffer[(0, 1)].fg, ratatui::style::Color::Cyan);
+        let screen = rows(&terminal);
+        let preview_row = screen
+            .iter()
+            .position(|row| row.contains("preview"))
+            .expect("preview panel");
+        assert_ne!(
+            buffer[(0, preview_row as u16)].fg,
+            ratatui::style::Color::Cyan
+        );
     }
 
     #[test]
