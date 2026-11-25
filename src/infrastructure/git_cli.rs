@@ -172,6 +172,28 @@ impl GitRepository for GitBackend {
     fn push(&self) -> Result<(), GitError> {
         self.git(&["push"]).map(|_| ())
     }
+
+    /// `git rev-list --left-right --count HEAD...@{upstream}` answers both numbers
+    /// in one call: left is ahead, right is behind. A missing upstream is not an
+    /// error — it is a state the caller has to explain to the user.
+    fn ahead_behind(&self) -> Result<Option<(usize, usize)>, GitError> {
+        let has_upstream = self
+            .git(&[
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{upstream}",
+            ])
+            .is_ok();
+        if !has_upstream {
+            return Ok(None);
+        }
+        let output = self.git(&["rev-list", "--left-right", "--count", "HEAD...@{upstream}"])?;
+        let mut parts = output.split_whitespace();
+        let ahead: usize = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+        let behind: usize = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+        Ok(Some((ahead, behind)))
+    }
 }
 
 /// Point a git alias at this binary: `git smith` then opens the composer.
@@ -361,6 +383,80 @@ mod tests {
             .output()
             .unwrap();
         assert_eq!(String::from_utf8_lossy(&log.stdout).trim(), "feat: first");
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ahead_behind_counts_what_is_missing_on_either_side() {
+        let (dir, repo) = temp_repo("ahead-behind");
+        let remote = dir.join("remote.git");
+        assert!(
+            Command::new("git")
+                .args(["init", "-q", "--bare"])
+                .arg(&remote)
+                .status()
+                .unwrap()
+                .success()
+        );
+        repo.stage("a.txt").unwrap();
+        repo.commit("feat: first").unwrap();
+        let remote_str = remote.to_str().unwrap().to_string();
+        repo.git(&["remote", "add", "origin", &remote_str]).unwrap();
+
+        // No upstream yet: a state, not an error.
+        assert_eq!(repo.ahead_behind().unwrap(), None);
+
+        repo.git(&["push", "-q", "-u", "origin", "main"]).unwrap();
+        assert_eq!(repo.ahead_behind().unwrap(), Some((0, 0)));
+
+        // One local commit: ahead by one.
+        fs::write(dir.join("a.txt"), "second\n").unwrap();
+        repo.stage("a.txt").unwrap();
+        repo.commit("feat: second").unwrap();
+        assert_eq!(repo.ahead_behind().unwrap(), Some((1, 0)));
+
+        // A commit from elsewhere, fetched: behind by one.
+        let clone = dir.join("clone");
+        assert!(
+            Command::new("git")
+                .args(["clone", "-q", "-b", "main"])
+                .arg(&remote)
+                .arg(&clone)
+                .status()
+                .unwrap()
+                .success()
+        );
+        for args in [
+            vec!["config", "user.email", "other@example.com"],
+            vec!["config", "user.name", "Other"],
+        ] {
+            Command::new("git")
+                .args(&args)
+                .current_dir(&clone)
+                .status()
+                .unwrap();
+        }
+        fs::write(clone.join("b.txt"), "remote\n").unwrap();
+        Command::new("git")
+            .args(["add", "b.txt"])
+            .current_dir(&clone)
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-q", "-m", "feat: remote"])
+            .current_dir(&clone)
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["push", "-q", "origin", "main"])
+            .current_dir(&clone)
+            .status()
+            .unwrap();
+        repo.git(&["fetch", "-q", "origin"]).unwrap();
+
+        let (ahead, behind) = repo.ahead_behind().unwrap().unwrap();
+        assert_eq!((ahead, behind), (1, 1), "diverged: one each way");
 
         let _ = fs::remove_dir_all(dir);
     }

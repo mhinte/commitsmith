@@ -18,6 +18,10 @@ pub struct RecordingGit {
     calls: Rc<RefCell<Vec<String>>>,
     pub merge_fails: bool,
     pub create_fails: bool,
+    /// What `ahead_behind` answers; `None` means "no upstream".
+    pub sync: Option<(usize, usize)>,
+    /// When set, pull and push fail with this message.
+    pub sync_error: Option<String>,
     /// Files the fake reports, with their real index/worktree state.
     pub files: RefCell<Vec<ChangedFile>>,
 }
@@ -34,6 +38,8 @@ impl RecordingGit {
             calls: Rc::new(RefCell::new(Vec::new())),
             merge_fails: false,
             create_fails: false,
+            sync: Some((0, 0)),
+            sync_error: None,
             files: RefCell::new(Vec::new()),
         }
     }
@@ -155,12 +161,23 @@ impl GitRepository for RecordingGit {
 
     fn pull(&self) -> Result<(), GitError> {
         self.calls.borrow_mut().push("pull".to_string());
-        Ok(())
+        match &self.sync_error {
+            Some(message) => Err(GitError::remote("pull", message.clone())),
+            None => Ok(()),
+        }
     }
 
     fn push(&self) -> Result<(), GitError> {
         self.calls.borrow_mut().push("push".to_string());
-        Ok(())
+        match &self.sync_error {
+            Some(message) => Err(GitError::remote("push", message.clone())),
+            None => Ok(()),
+        }
+    }
+
+    fn ahead_behind(&self) -> Result<Option<(usize, usize)>, GitError> {
+        // A read: it must not show up in the call log that tests compare against.
+        Ok(self.sync)
     }
 }
 

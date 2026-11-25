@@ -125,6 +125,9 @@ pub trait GitRepository {
     fn delete_branch(&self, branch: &str) -> Result<(), GitError>;
     fn pull(&self) -> Result<(), GitError>;
     fn push(&self) -> Result<(), GitError>;
+    /// `(ahead, behind)` against the upstream. `None` means the branch has no
+    /// upstream, which is a different state from being in sync.
+    fn ahead_behind(&self) -> Result<Option<(usize, usize)>, GitError>;
 }
 
 /// The user-wide and the project config file.
@@ -247,6 +250,10 @@ mod tests {
         fn push(&self) -> Result<(), GitError> {
             self.calls.borrow_mut().push("push".to_string());
             Ok(())
+        }
+
+        fn ahead_behind(&self) -> Result<Option<(usize, usize)>, GitError> {
+            Ok(Some((0, 0)))
         }
     }
 

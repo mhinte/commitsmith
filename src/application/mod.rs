@@ -158,6 +158,44 @@ impl Picker {
     }
 }
 
+fn plural(count: usize) -> &'static str {
+    if count == 1 { "" } else { "s" }
+}
+
+/// Git says what happened in its own words; the footer has room for one line that
+/// says what to do about it.
+fn explain_sync_error(
+    error: &commitsmith::domain::errors::GitError,
+    pull: bool,
+    branch: &str,
+) -> String {
+    let text = error.to_string();
+    let lower = text.to_lowercase();
+    if !pull
+        && (lower.contains("non-fast-forward")
+            || lower.contains("rejected")
+            || lower.contains("fetch first"))
+    {
+        return format!("push rejected · {branch} is behind its upstream · pull first");
+    }
+    if pull
+        && (lower.contains("not possible to fast-forward")
+            || lower.contains("diverg")
+            || lower.contains("would be overwritten")
+            || lower.contains("local changes"))
+    {
+        return format!(
+            "pull stopped · {branch} diverged or has local changes · commit, then pull --rebase"
+        );
+    }
+    if lower.contains("no such remote") || lower.contains("does not appear to be a git repository")
+    {
+        return "remote not reachable · check `git remote -v`".to_string();
+    }
+    let first = text.lines().next().unwrap_or("").trim();
+    format!("{} failed · {first}", if pull { "pull" } else { "push" })
+}
+
 pub struct App {
     pub config: Config,
     /// Branch and staged file summary of the repository, when there is one.
@@ -199,6 +237,8 @@ pub struct App {
     /// Body, breaking and footer folded away. Read from the config, written back
     /// when `Ctrl+O` toggles it.
     pub compact: bool,
+    /// `(ahead, behind)` against the upstream; `None` when there is no upstream.
+    pub sync: Option<(usize, usize)>,
     /// Where the toggle is written, once the caller supplied one.
     config_store: Option<Box<dyn ConfigStore>>,
     /// The conventional branch wizard on tab 2.
@@ -243,6 +283,7 @@ impl App {
             field: 0,
             cursors: [0; FIELDS.len()],
             compact: config_compact,
+            sync: None,
             config_store: None,
             issues: Vec::new(),
             picker: None,
@@ -356,6 +397,77 @@ impl App {
         self.git = Some(git);
         self.reload_branches();
         self.reload_staging();
+        self.refresh_sync();
+    }
+
+    /// Read `(ahead, behind)` once, for the footer and for the wording of the
+    /// pull/push replies.
+    pub fn refresh_sync(&mut self) {
+        let Some(git) = self.git.as_deref() else {
+            self.sync = None;
+            return;
+        };
+        self.sync = git.ahead_behind().unwrap_or(None);
+    }
+
+    /// Short state for the footer: `↑2 ↓1`, `in sync`, or `no upstream`.
+    pub fn sync_label(&self) -> Option<String> {
+        self.git.as_ref()?;
+        Some(match self.sync {
+            Some((0, 0)) => "in sync".to_string(),
+            Some((ahead, behind)) => format!("↑{ahead} ↓{behind}"),
+            None => "no upstream".to_string(),
+        })
+    }
+
+    /// The branch name as the user knows it, for messages.
+    fn branch_label(&self) -> String {
+        self.branch_name
+            .clone()
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "HEAD".to_string())
+    }
+
+    /// Alt+P / Alt+U: fetch and fast-forward, or send. Never merges: a divergent
+    /// branch is something to resolve in git, not behind a keypress.
+    fn sync_with_remote(&mut self, pull: bool) {
+        let Some(git) = self.git.as_deref() else {
+            self.status = "not a git repository · nothing to sync".to_string();
+            return;
+        };
+        let branch = self.branch_label();
+        if self.sync.is_none() {
+            self.status = format!("no upstream for {branch} · git push -u origin {branch}");
+            return;
+        }
+        let (ahead, behind) = self.sync.unwrap_or((0, 0));
+        let result = if pull { git.pull() } else { git.push() };
+        match result {
+            Ok(()) => {
+                self.refresh_sync();
+                let (new_ahead, new_behind) = self.sync.unwrap_or((0, 0));
+                self.status = if pull {
+                    match behind {
+                        0 => format!("{branch} was already up to date"),
+                        count => format!(
+                            "pulled {count} commit{} into {branch} · ↑{new_ahead} ↓{new_behind}",
+                            plural(count)
+                        ),
+                    }
+                } else {
+                    match ahead {
+                        0 => format!("nothing to push · {branch} is level with its upstream"),
+                        count => format!(
+                            "pushed {count} commit{} · {branch} level with upstream",
+                            plural(count)
+                        ),
+                    }
+                };
+                self.reload_branches();
+                self.reload_staging();
+            }
+            Err(error) => self.status = explain_sync_error(&error, pull, &branch),
+        }
     }
 
     /// Re-read the changed files and the diff of the highlighted one.
@@ -1356,6 +1468,25 @@ impl App {
         }
         // Ctrl+O folds the optional fields away, wherever the keyboard is — the
         // form and its visibility are a property of the tab, not of a field.
+        // Alt+P pulls (fast-forward only), Alt+U pushes. Letters alone belong to
+        // the composer, so the sync keys need a modifier.
+        if self.tab == tabs::Tab::Commit
+            && key.modifiers.contains(KeyModifiers::ALT)
+            && !self.show_help
+            && self.picker.is_none()
+        {
+            match key.code {
+                KeyCode::Char('p') | KeyCode::Char('P') => {
+                    self.sync_with_remote(true);
+                    return;
+                }
+                KeyCode::Char('u') | KeyCode::Char('U') => {
+                    self.sync_with_remote(false);
+                    return;
+                }
+                _ => {}
+            }
+        }
         if key.code == KeyCode::Char('o')
             && key.modifiers.contains(KeyModifiers::CONTROL)
             && !self.show_help
@@ -1909,6 +2040,99 @@ mod tests {
         let text = written.borrow().clone();
         assert!(text.contains("compact_form = true"), "{text}");
         assert!(app.status.contains("compact"), "{}", app.status);
+    }
+
+    fn app_with_remote(
+        sync: Option<(usize, usize)>,
+    ) -> (App, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
+        use crate::application::test_support::RecordingGit;
+        let mut git = RecordingGit::new(&["main"], "main");
+        git.sync = sync;
+        let calls = git.calls();
+        let mut app = App::with_config(Config::conventional(), Vec::new());
+        app.branch_name = Some("main".to_string());
+        app.set_git(Box::new(git));
+        (app, calls)
+    }
+
+    fn alt(app: &mut App, c: char) {
+        app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT));
+    }
+
+    #[test]
+    fn a_pull_without_upstream_names_the_command_that_creates_one() {
+        let (mut app, _) = app_with_remote(None);
+        alt(&mut app, 'p');
+        assert_eq!(app.status, "no upstream for main · git push -u origin main");
+    }
+
+    #[test]
+    fn a_pull_reports_how_many_commits_arrived() {
+        let (mut app, calls) = app_with_remote(Some((0, 3)));
+        alt(&mut app, 'p');
+        assert!(app.status.contains("pulled 3 commits"), "{}", app.status);
+        assert!(app.status.contains("into main"), "{}", app.status);
+        assert!(calls.borrow().iter().any(|call| call == "pull"));
+    }
+
+    #[test]
+    fn a_push_reports_how_many_commits_went_out() {
+        let (mut app, calls) = app_with_remote(Some((2, 0)));
+        alt(&mut app, 'u');
+        assert!(app.status.contains("pushed 2 commits"), "{}", app.status);
+        assert!(calls.borrow().iter().any(|call| call == "push"));
+    }
+
+    #[test]
+    fn a_rejected_push_says_to_pull_first() {
+        use crate::application::test_support::RecordingGit;
+        let mut git = RecordingGit::new(&["main"], "main");
+        git.sync = Some((1, 2));
+        git.sync_error =
+            Some("! [rejected] main -> main (non-fast-forward)\nerror: failed to push".to_string());
+        let mut app = App::with_config(Config::conventional(), Vec::new());
+        app.branch_name = Some("main".to_string());
+        app.set_git(Box::new(git));
+
+        alt(&mut app, 'u');
+        assert!(app.status.contains("push rejected"), "{}", app.status);
+        assert!(app.status.contains("pull first"), "{}", app.status);
+    }
+
+    #[test]
+    fn a_diverged_pull_explains_the_conflict_without_merging() {
+        use crate::application::test_support::RecordingGit;
+        let mut git = RecordingGit::new(&["main"], "main");
+        git.sync = Some((1, 1));
+        git.sync_error = Some("fatal: Not possible to fast-forward, aborting.".to_string());
+        let mut app = App::with_config(Config::conventional(), Vec::new());
+        app.branch_name = Some("main".to_string());
+        app.set_git(Box::new(git));
+
+        alt(&mut app, 'p');
+        assert!(app.status.contains("pull stopped"), "{}", app.status);
+        assert!(app.status.contains("pull --rebase"), "{}", app.status);
+    }
+
+    #[test]
+    fn the_sync_keys_belong_to_the_first_tab() {
+        let (mut app, calls) = app_with_remote(Some((1, 0)));
+        app.tab = tabs::Tab::Branches;
+        alt(&mut app, 'u');
+        assert!(
+            !calls.borrow().iter().any(|call| call == "push"),
+            "Alt+U on tab 2 must not push"
+        );
+    }
+
+    #[test]
+    fn the_footer_label_says_how_far_the_branch_is() {
+        let (app, _) = app_with_remote(Some((2, 1)));
+        assert_eq!(app.sync_label().as_deref(), Some("↑2 ↓1"));
+        let (app, _) = app_with_remote(Some((0, 0)));
+        assert_eq!(app.sync_label().as_deref(), Some("in sync"));
+        let (app, _) = app_with_remote(None);
+        assert_eq!(app.sync_label().as_deref(), Some("no upstream"));
     }
 
     fn type_text(app: &mut App, text: &str) {

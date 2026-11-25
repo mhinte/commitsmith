@@ -68,6 +68,8 @@ impl Tab {
                 ("C-n", "scope"),
                 ("C-p", "profile"),
                 ("C-r", "reuse"),
+                ("A-p", "pull"),
+                ("A-u", "push"),
                 // Folding is a convenience; it yields to the keys people need.
                 ("C-o", "fold"),
             ],

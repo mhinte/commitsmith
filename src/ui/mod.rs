@@ -946,11 +946,18 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
 
     // Branch and profile are context, not decisions: they sit at the far right
     // of the second row, out of the way of the message.
+    // Branch, sync state and profile: context, not decisions. The short `↑n ↓n`
+    // form keeps its room even when the footer is busy.
     let context = if app.in_repository {
-        match app.repo_line.is_empty() {
-            true => format!("{} ", app.config.profile),
-            false => format!("{} · {} ", app.repo_line, app.config.profile),
+        let mut parts: Vec<String> = Vec::new();
+        if !app.repo_line.is_empty() {
+            parts.push(app.repo_line.clone());
         }
+        if let Some(sync) = app.sync_label() {
+            parts.push(sync);
+        }
+        parts.push(app.config.profile.clone());
+        format!("{} ", parts.join(" · "))
     } else {
         format!("no git repository · {} ", app.config.profile)
     };
