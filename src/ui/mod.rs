@@ -486,26 +486,18 @@ fn window(value: &str, cursor: usize, active: bool, width: usize) -> (String, Op
     }
 }
 
+/// One pane for the message and its checks: the preview is what would be
+/// committed, and the findings belong right under it, not in a second box.
 fn draw_content(frame: &mut Frame, app: &App, area: Rect) {
-    let [preview_area, checks_area] =
-        Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)]).areas(area);
-
-    draw_preview(frame, app, preview_area);
-    draw_checks(frame, app, checks_area);
-}
-
-fn draw_preview(frame: &mut Frame, app: &App, area: Rect) {
     let message = app.commit.render();
     let empty = app.commit.subject.trim().is_empty();
-    let mut text = Text::from(
-        message
-            .lines()
-            .map(|line| Line::raw(line.to_string()))
-            .collect::<Vec<_>>(),
-    );
+    let mut lines: Vec<Line> = message
+        .lines()
+        .map(|line| Line::raw(line.to_string()))
+        .collect();
 
     if empty {
-        text = Text::from(vec![
+        lines = vec![
             Line::raw(""),
             Line::styled("  start with a subject on the left", MUTED),
             Line::styled(
@@ -516,29 +508,10 @@ fn draw_preview(frame: &mut Frame, app: &App, area: Rect) {
                 },
                 MUTED,
             ),
-        ]);
+        ];
     }
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(MUTED)
-        .title(Span::styled(" preview ", HINT));
-
-    frame.render_widget(
-        Paragraph::new(text).block(block).wrap(Wrap { trim: false }),
-        area,
-    );
-}
-
-fn draw_checks(frame: &mut Frame, app: &App, area: Rect) {
-    let (errors, warnings) = validate::count(&app.issues);
-    let title = format!(
-        " checks · {} · {} ",
-        plural(errors, "error"),
-        plural(warnings, "warning")
-    );
-
-    let mut lines = Vec::new();
+    lines.push(Line::raw(""));
     if app.issues.is_empty() {
         lines.push(Line::from(vec![
             Span::styled(" ✓ ", Style::default().fg(Color::Green)),
@@ -559,10 +532,17 @@ fn draw_checks(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
 
+    let (errors, warnings) = validate::count(&app.issues);
+    let checks = format!(
+        " {} · {} ",
+        plural(errors, "error"),
+        plural(warnings, "warning")
+    );
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(MUTED)
-        .title(Span::styled(title, HINT));
+        .title(Span::styled(" preview ", HINT))
+        .title_top(Line::from(Span::styled(checks, HINT)).right_aligned());
 
     frame.render_widget(
         Paragraph::new(Text::from(lines))
@@ -1301,8 +1281,14 @@ mod tests {
             .iter()
             .filter(|line| line.contains("error") || line.contains("warning"))
             .collect();
+        // One line counts them, and it is the checks corner of the single
+        // preview pane — not the header, not the footer.
         assert_eq!(mentioning.len(), 1, "{screen:#?}");
-        assert!(mentioning[0].contains("checks"), "{}", mentioning[0]);
+        assert!(
+            mentioning[0].contains("preview") || mentioning[0].contains("1 error"),
+            "{}",
+            mentioning[0]
+        );
     }
 
     fn branch_app() -> App {
