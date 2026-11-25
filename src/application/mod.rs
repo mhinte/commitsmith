@@ -166,6 +166,9 @@ pub struct App {
     pub setup_request: bool,
     /// Which of the three surfaces is showing.
     pub tab: tabs::Tab,
+    /// False when the working directory is not inside a repository; the header
+    /// says so, because scope suggestions and committing need one.
+    pub in_repository: bool,
     /// File lists are read on demand: one `git show` per commit at startup made
     /// long histories slow.
     files_loader: Option<FilesLoader>,
@@ -208,6 +211,7 @@ impl App {
             commit_mode: false,
             setup_request: false,
             tab: tabs::Tab::Commit,
+            in_repository: false,
             files_loader: None,
             files_cache: HashMap::new(),
             should_quit: false,
@@ -254,6 +258,19 @@ impl App {
     /// Replace the list of recent commits offered as templates.
     pub fn set_history(&mut self, history: Vec<PastCommit>) {
         self.history = history;
+    }
+
+    /// Record whether a repository was found. Called once at startup.
+    pub fn set_in_repository(&mut self, found: bool) {
+        self.in_repository = found;
+        if !found {
+            let hint = "not a git repository · `check` works here, committing needs one";
+            self.status = if self.status.is_empty() {
+                hint.to_string()
+            } else {
+                format!("{} · {hint}", self.status)
+            };
+        }
     }
 
     /// Hand the composer a way to read a commit's file list when it is needed.

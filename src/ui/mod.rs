@@ -24,6 +24,10 @@ use crate::application::tabs::Tab;
 use crate::validate::{self, Severity};
 
 const LABEL_WIDTH: usize = 10;
+/// Columns from the inner edge to the first character of a value: one leading
+/// space, the padded label, then the `▌ ` marker. The caret is placed with this
+/// offset, so a change to the label layout cannot shift it by a column again.
+const VALUE_OFFSET: u16 = LABEL_WIDTH as u16 + 3;
 /// Rows a multiline field may occupy in the form.
 const MULTILINE_ROWS: u16 = 3;
 /// Below this height the full form does not fit, so one field is shown at a time.
@@ -180,12 +184,18 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         ]))
         .title_top(
             Line::from(Span::styled(
-                if app.repo_line.is_empty() {
+                if !app.in_repository {
+                    format!(" {} · no git repository ", app.config.profile)
+                } else if app.repo_line.is_empty() {
                     format!(" {} ", app.config.profile)
                 } else {
                     format!(" {} · {} ", app.config.profile, app.repo_line)
                 },
-                MUTED,
+                if app.in_repository {
+                    MUTED
+                } else {
+                    Style::default().fg(Color::Yellow)
+                },
             ))
             .right_aligned(),
         );
@@ -276,7 +286,7 @@ fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
                 if active && app.is_editing() {
                     if let Some((row, col)) = cursor_in_wrapped(&wrapped, app.cursor()) {
                         if row == line_idx {
-                            cursor = Some((inner.x + LABEL_WIDTH as u16 + 2 + col as u16, row_y));
+                            cursor = Some((inner.x + VALUE_OFFSET + col as u16, row_y));
                         }
                     }
                 }
@@ -309,7 +319,7 @@ fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
         ]));
 
         if let Some(col) = cursor_col {
-            cursor = Some((inner.x + LABEL_WIDTH as u16 + 2 + col as u16, row_y));
+            cursor = Some((inner.x + VALUE_OFFSET + col as u16, row_y));
         }
         row_y += 1;
     }
@@ -890,6 +900,7 @@ pub fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::crossterm::event::KeyCode;
 
     #[test]
     fn window_keeps_the_cursor_visible() {
@@ -917,6 +928,98 @@ mod tests {
         assert_eq!(col, text_cells(&display));
         assert!(text_cells(&display) < 20);
         assert!(display.ends_with("xxx"));
+    }
+
+    fn press(app: &mut App, code: ratatui::crossterm::event::KeyCode) {
+        use ratatui::crossterm::event::{KeyEvent, KeyModifiers};
+        app.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    /// Position of the first cell of `needle` in the rendered buffer.
+    fn find(
+        terminal: &ratatui::Terminal<ratatui::backend::TestBackend>,
+        needle: &str,
+    ) -> Option<(u16, u16)> {
+        let buffer = terminal.backend().buffer();
+        for y in 0..buffer.area.height {
+            let row: String = (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect();
+            if let Some(byte) = row.find(needle) {
+                let column = row[..byte].chars().count() as u16;
+                return Some((column, y));
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn the_caret_sits_after_the_last_character() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        app.handle_paste("new button");
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let (text_x, _) = find(&terminal, "new button").expect("subject row");
+        let caret = terminal.backend().cursor_position();
+        // The caret belongs one cell behind the last character, not on it.
+        assert_eq!(
+            caret.x,
+            text_x + "new button".len() as u16,
+            "caret {caret:?}"
+        );
+    }
+
+    #[test]
+    fn the_caret_starts_at_the_first_value_column_when_the_field_is_empty() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let (marker_x, _) = find(&terminal, "▌").expect("active marker");
+        let caret = terminal.backend().cursor_position();
+        // Marker plus its trailing space, then the (empty) value.
+        assert_eq!(
+            caret.x,
+            marker_x + 2,
+            "caret {caret:?}, marker at {marker_x}"
+        );
+    }
+
+    #[test]
+    fn the_header_warns_outside_a_repository() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.set_in_repository(false);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let header: String = (0..buffer.area.width)
+            .map(|x| buffer[(x, 0)].symbol())
+            .collect();
+        assert!(header.contains("no git repository"), "{header}");
+
+        app.set_in_repository(true);
+        app.set_repo_line("main · 0 staged".to_string());
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let header: String = (0..buffer.area.width)
+            .map(|x| buffer[(x, 0)].symbol())
+            .collect();
+        assert!(!header.contains("no git repository"), "{header}");
+        assert!(header.contains("main · 0 staged"), "{header}");
     }
 
     #[test]

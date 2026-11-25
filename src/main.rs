@@ -249,6 +249,7 @@ fn run_composer(commit: bool) -> ExitCode {
         }));
         match repo_data {
             Ok(Some(data)) => {
+                app.set_in_repository(true);
                 app.set_scopes(data.scopes);
                 app.set_repo_line(data.status);
                 app.set_history(data.history);
@@ -265,7 +266,9 @@ fn run_composer(commit: bool) -> ExitCode {
                     git::commit_files(&repo, oid)
                 }));
             }
-            Ok(None) => {}
+            // No repository: the composer still works (the message can be
+            // linted and printed), but it says so instead of looking normal.
+            Ok(None) => app.set_in_repository(false),
             Err(_) => {
                 // Recorded by the panic hook; tell the user where to look.
                 commitsmith::infrastructure::diagnostics::record(
