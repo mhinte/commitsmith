@@ -9,6 +9,7 @@ pub mod branch;
 pub mod commit;
 pub mod errors;
 pub mod history;
+pub mod log;
 pub mod ports;
 pub mod setup;
 pub mod slug;
@@ -17,6 +18,7 @@ pub mod validate;
 
 pub use author::{AuthorSlug, AuthorSlugError};
 pub use branch::{BranchError, BranchKind, BranchTemplate, ConventionalBranchName};
+pub use log::Filter;
 pub use setup::{Reference, SetupAnswers, SetupError};
 pub use slug::{BranchSlug, MAX_SLUG_LEN, SlugError};
 pub use ticket::{TicketId, TicketIdError};

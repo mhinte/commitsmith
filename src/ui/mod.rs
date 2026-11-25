@@ -49,6 +49,7 @@ const MUTED: Style = Style::new().fg(Color::DarkGray);
 
 pub mod branch_wizard;
 pub mod branches;
+pub mod history;
 pub mod staging;
 pub mod theme;
 
@@ -100,12 +101,7 @@ fn draw_full(frame: &mut Frame, app: &App, area: Rect) {
             }
         }
         Tab::History => {
-            draw_placeholder(
-                frame,
-                body,
-                "Historie & Release",
-                "Conventional Log, SemVer und Changelog folgen mit Epic 5.",
-            );
+            history::draw(frame, app, body);
             None
         }
     };
@@ -163,6 +159,7 @@ fn draw_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Something to look at on a tab that is not built yet.
+#[allow(dead_code)]
 fn draw_placeholder(frame: &mut Frame, area: Rect, title: &str, text: &str) {
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
@@ -1914,6 +1911,58 @@ mod tests {
         );
         // The diff title names the file in full, so nothing is lost.
         assert!(screen.contains("file_name.rs"), "{screen}");
+    }
+
+    fn past(kind: &str, scope: &str, summary: &str) -> commitsmith::domain::history::PastCommit {
+        commitsmith::domain::history::PastCommit {
+            short_id: "abc1234".to_string(),
+            id: "abc1234".to_string(),
+            author: "Marc".to_string(),
+            date: "2026-11-25".to_string(),
+            summary: summary.to_string(),
+            body: String::new(),
+            kind: Some(kind.to_string()),
+            scope: Some(scope.to_string()),
+            files: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_log_shows_what_the_filter_keeps() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.tab = crate::application::tabs::Tab::History;
+        app.set_history(vec![
+            past("feat", "ui", "add the button"),
+            past("fix", "api", "repair the route"),
+        ]);
+        app.log.filter.kind = Some("feat".to_string());
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+        assert!(screen.contains("add the button"), "{screen}");
+        assert!(!screen.contains("repair the route"), "{screen}");
+        assert!(screen.contains("1 of 2"), "{screen}");
+    }
+
+    #[test]
+    fn an_empty_filter_result_says_so() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.tab = crate::application::tabs::Tab::History;
+        app.set_history(vec![past("fix", "api", "repair the route")]);
+        app.log.filter.kind = Some("feat".to_string());
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+        assert!(screen.contains("keine Treffer"), "{screen}");
+        assert!(screen.contains("type: feat"), "{screen}");
     }
 
     #[test]

@@ -7,6 +7,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 pub mod branch_wizard;
 pub mod branches;
+pub mod log;
 pub mod navigation;
 pub mod staging;
 pub mod tabs;
@@ -26,6 +27,7 @@ use branch_wizard::BranchWizard;
 use branches::BranchList;
 use commitsmith::domain::branch::ConventionalBranchName;
 use commitsmith::domain::ports::{ConfigStore, GitRepository};
+use log::LogState;
 use staging::{Side, Staging};
 
 /// Order of the form fields, top to bottom.
@@ -225,6 +227,8 @@ pub struct App {
     pub git: Option<Box<dyn GitRepository>>,
     /// Branch explorer state.
     pub branches: BranchList,
+    /// Log state of tab 3.
+    pub log: LogState,
     /// Staging list of tab 1.
     pub staging: Staging,
     /// Short name of the checked-out branch, for the context bridge.
@@ -295,6 +299,7 @@ impl App {
             tab: tabs::Tab::Commit,
             git: None,
             branches: BranchList::default(),
+            log: LogState::default(),
             staging: Staging::default(),
             branch_name: None,
             type_touched: false,
@@ -467,6 +472,64 @@ impl App {
                 self.reload_staging();
             }
             Err(error) => self.status = explain_sync_error(&error, pull, &branch),
+        }
+    }
+
+    /// Keys of tab 3. While the filter line is open it swallows the characters,
+    /// so a ticket with digits cannot switch tabs.
+    fn history_key(&mut self, key: KeyEvent) {
+        if self.log.input.is_some() {
+            match key.code {
+                KeyCode::Esc => self.log.cancel_filter(),
+                KeyCode::Enter => {
+                    let types = self.config.type_names();
+                    self.log.apply_filter(&types);
+                    let len = self.log.visible(&self.history).len();
+                    self.log.clamp(len);
+                    self.status = match self.log.filter.is_empty() {
+                        true => "filter cleared".to_string(),
+                        false => {
+                            let matches = format!("{} matches", len);
+                            format!("{} · {}", self.log.filter.describe(), matches)
+                        }
+                    };
+                }
+                KeyCode::Backspace => self.log.backspace(),
+                KeyCode::Char(c) => self.log.push(c),
+                _ => {}
+            }
+            return;
+        }
+        let len = self.log.visible(&self.history).len();
+        match key.code {
+            KeyCode::Up => self.log.move_by(-1, len),
+            KeyCode::Down => self.log.move_by(1, len),
+            KeyCode::Home => self.log.selected = 0,
+            KeyCode::End => self.log.selected = len.saturating_sub(1),
+            KeyCode::Char('/') => self.log.open_filter(),
+            KeyCode::Char('c') => self.log.clear_filter(),
+            _ => {}
+        }
+    }
+
+    /// How a past commit's message would be judged today: the same rules the
+    /// composer and `commitsmith check` use.
+    pub fn log_mark(&self, commit: &PastCommit) -> Severity {
+        let mut text = commit.header();
+        if !commit.body.trim().is_empty() {
+            text.push_str("\n\n");
+            text.push_str(commit.body.trim_end());
+        }
+        let issues = validate::lint_with(&text, &self.rules);
+        if issues.iter().any(|issue| issue.severity == Severity::Error) {
+            Severity::Error
+        } else if issues
+            .iter()
+            .any(|issue| issue.severity == Severity::Warning)
+        {
+            Severity::Warning
+        } else {
+            Severity::Info
         }
     }
 
@@ -1540,6 +1603,13 @@ impl App {
                 KeyCode::Char('c') if ctrl => self.should_quit = true,
                 _ => {}
             }
+            return;
+        }
+
+        // Tab 3 keeps its own keyboard: the filter line takes typing, the list
+        // takes the arrows.
+        if self.tab == tabs::Tab::History {
+            self.history_key(key);
             return;
         }
 
