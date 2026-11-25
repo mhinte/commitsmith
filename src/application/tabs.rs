@@ -98,11 +98,9 @@ impl Tab {
         match self {
             Self::Commit => vec![
                 ("Tab, ↓ ↑", "next or previous field"),
-                (
-                    "← →",
-                    "move the caret · Shift+←/→ changes field · empty field: next field",
-                ),
-                ("Enter", "next field, or a new line in body and breaking"),
+                ("← →", "move the caret inside the field"),
+                ("Tab, Shift+Tab", "always the next or previous field"),
+                ("↑ ↓", "through the lines of body, breaking, footer"),
                 ("Space, Ctrl+T", "type picker: 1-9 jumps, 0 takes the last"),
                 ("Ctrl+N", "scopes from config and history"),
                 ("Ctrl+P", "switch the type profile"),
@@ -121,17 +119,14 @@ impl Tab {
             ],
             Self::Branches => vec![
                 ("j k, ↓ ↑", "move through the branches"),
-                (
-                    "← →",
-                    "in the wizard: kind, otherwise next field · typing: caret",
-                ),
+                ("← →", "move the caret, or change the kind"),
                 ("g G", "jump to the first or the last branch"),
                 ("Enter", "check out the selected branch"),
                 ("m", "merge the selected branch into the current one"),
                 ("d", "delete locally: press twice, Esc keeps it"),
                 (
                     "",
-                    "in the wizard: Tab next field, Esc cancels, Enter creates",
+                    "wizard: Tab/↑↓ change field, ←→ the text, Esc cancels, Enter creates",
                 ),
                 ("r", "reload the list"),
                 ("n", "new branch from kind, ticket and description"),

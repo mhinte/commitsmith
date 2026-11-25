@@ -447,30 +447,21 @@ impl App {
             }
             KeyCode::Tab => self.wizard.field = self.wizard.field.next(),
             KeyCode::BackTab => self.wizard.field = self.wizard.field.previous(),
-            // Same rule as in the composer: arrows stay in the text while there
-            // is text, otherwise they walk the fields.
+            // The same rules as in the composer: `←`/`→` are the text, `↑`/`↓`
+            // walk the fields, `Tab` does both the obvious way.
             KeyCode::Left | KeyCode::Right => {
-                let editable = self.wizard.current_text().is_some();
-                let len = self
-                    .wizard
-                    .current_text()
-                    .map(|text| text.chars().count())
-                    .unwrap_or(0);
-                match navigation::arrow_action(
-                    key.code,
-                    editable,
-                    len,
-                    navigation::is_shift(key.modifiers),
-                ) {
-                    navigation::ArrowAction::Cursor(_) => {
-                        // The caret is always at the end of the wizard's text:
-                        // typing appends, so there is nothing further to move.
-                    }
-                    navigation::ArrowAction::Field(delta) => self.wizard.step(delta),
-                    navigation::ArrowAction::Cycle(delta) => self.wizard.cycle_kind(delta > 0),
-                    navigation::ArrowAction::Ignore => {}
+                let has_text = self.wizard.current_text().is_some();
+                match navigation::horizontal(key.code, has_text) {
+                    Some(navigation::Horizontal::Caret(delta)) => self.wizard.move_cursor(delta),
+                    Some(navigation::Horizontal::Value(delta)) => self.wizard.cycle_kind(delta > 0),
+                    None => {}
                 }
             }
+            KeyCode::Up => self.wizard.step(-1),
+            KeyCode::Down => self.wizard.step(1),
+            KeyCode::Home => self.wizard.jump(false),
+            KeyCode::End => self.wizard.jump(true),
+            KeyCode::Delete => self.wizard.delete(),
             KeyCode::Backspace => self.wizard.backspace(),
             KeyCode::Enter => self.create_branch(),
             KeyCode::Char(c) if !ctrl => self.wizard.push_char(c),
@@ -1118,28 +1109,28 @@ impl App {
         }
     }
 
-    /// One rule for `←`/`→`, shared by the composer and the wizard.
+    /// `←`/`→`: always the text, on every tab.
     fn arrow(&mut self, key: KeyEvent) {
-        let editable = self.is_editing();
-        let len = self.value(self.active_field()).chars().count();
-        match navigation::arrow_action(key.code, editable, len, navigation::is_shift(key.modifiers))
-        {
-            navigation::ArrowAction::Cursor(delta) => self.move_cursor(delta),
-            navigation::ArrowAction::Field(delta) => {
+        let has_text = self.active_field() != Field::Type;
+        match navigation::horizontal(key.code, has_text) {
+            Some(navigation::Horizontal::Caret(delta)) => self.move_cursor(delta),
+            Some(navigation::Horizontal::Value(delta)) => self.cycle_type(delta > 0),
+            None => {}
+        }
+    }
+
+    /// `↑`/`↓`: between fields, or through the lines of a multiline field.
+    fn vertical(&mut self, key: KeyEvent) {
+        match navigation::vertical(key.code, self.active_field().multiline()) {
+            Some(navigation::Vertical::Lines(delta)) => self.line_move(delta),
+            Some(navigation::Vertical::Field(delta)) => {
                 if delta < 0 {
                     self.previous_field();
                 } else {
                     self.next_field();
                 }
             }
-            navigation::ArrowAction::Cycle(delta) => {
-                if delta < 0 {
-                    self.cycle_type(false);
-                } else {
-                    self.cycle_type(true);
-                }
-            }
-            navigation::ArrowAction::Ignore => {}
+            None => {}
         }
     }
 
@@ -1273,8 +1264,7 @@ impl App {
             KeyCode::Tab => self.next_field(),
             KeyCode::BackTab => self.previous_field(),
             KeyCode::Enter => self.enter(),
-            KeyCode::Up => self.line_move(-1),
-            KeyCode::Down => self.line_move(1),
+            KeyCode::Up | KeyCode::Down => self.vertical(key),
             // `h`/`l` on the type field cycle the value, as vi users expect; the
             // arrow keys go through the shared rule below.
             KeyCode::Char('l') if self.active_field() == Field::Type => self.cycle_type(true),
@@ -1518,31 +1508,38 @@ mod tests {
     }
 
     #[test]
-    fn arrows_in_a_filled_wizard_field_stay_in_the_field() {
+    fn arrows_in_the_wizard_move_through_the_text() {
         let mut app = wizard_on_description(RecordingGit::new(&["main"], "main"));
         type_text(&mut app, "abc");
-        let before = app.wizard.field;
+        let field = app.wizard.field;
         press(&mut app, KeyCode::Left);
-        press(&mut app, KeyCode::Right);
-        assert_eq!(app.wizard.field, before, "arrows must not walk the fields");
-        assert_eq!(app.wizard.description, "abc");
+        assert_eq!(app.wizard.field, field, "left stays in the field");
+        assert_eq!(app.wizard.cursor(), 2);
+        press(&mut app, KeyCode::Char('X'));
+        assert_eq!(
+            app.wizard.description, "abXc",
+            "typing happens at the caret"
+        );
+        press(&mut app, KeyCode::Home);
+        assert_eq!(app.wizard.cursor(), 0);
+        press(&mut app, KeyCode::Delete);
+        assert_eq!(app.wizard.description, "bXc");
+        press(&mut app, KeyCode::End);
+        assert_eq!(app.wizard.cursor(), 3);
     }
 
     #[test]
-    fn arrows_in_an_empty_wizard_field_walk_on() {
+    fn arrows_in_an_empty_wizard_field_move_between_fields() {
         let mut app = wizard_on_description(RecordingGit::new(&["main"], "main"));
-        press(&mut app, KeyCode::Left);
+        // Down/Up are the field keys, also inside an empty field.
+        press(&mut app, KeyCode::Up);
         assert_eq!(app.wizard.field, branch_wizard::WizardField::Ticket);
-        press(&mut app, KeyCode::Right);
+        press(&mut app, KeyCode::Down);
         assert_eq!(app.wizard.field, branch_wizard::WizardField::Description);
-    }
-
-    #[test]
-    fn shift_arrows_always_walk_the_wizard_fields() {
-        let mut app = wizard_on_description(RecordingGit::new(&["main"], "main"));
-        type_text(&mut app, "abc");
-        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT));
-        assert_eq!(app.wizard.field, branch_wizard::WizardField::Ticket);
+        // Left/Right stay on the (empty) text.
+        press(&mut app, KeyCode::Left);
+        assert_eq!(app.wizard.field, branch_wizard::WizardField::Description);
+        assert_eq!(app.wizard.cursor(), 0);
     }
 
     #[test]
@@ -1571,23 +1568,46 @@ mod tests {
     }
 
     #[test]
-    fn the_composer_follows_the_same_arrow_rule() {
+    fn the_composer_follows_the_same_rules() {
         let mut app = App::default();
-        // Empty scope: the arrow walks to the next field.
         press(&mut app, KeyCode::Tab);
         assert_eq!(app.active_field(), Field::Scope);
-        press(&mut app, KeyCode::Right);
-        assert_eq!(app.active_field(), Field::Subject);
 
-        // With text, the arrow moves the caret and stays.
+        // Left/Right are the text — also when it is empty.
+        press(&mut app, KeyCode::Right);
+        assert_eq!(app.active_field(), Field::Scope, "still in the field");
+
         type_text(&mut app, "abc");
         press(&mut app, KeyCode::Left);
-        assert_eq!(app.active_field(), Field::Subject, "still in the field");
-        assert_eq!(app.cursor(), 2);
-
-        // Shift+arrow leaves the field even with text.
-        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT));
         assert_eq!(app.active_field(), Field::Scope);
+        assert_eq!(app.cursor(), 2);
+        press(&mut app, KeyCode::Char('X'));
+        assert_eq!(app.commit.scope, "abXc");
+
+        // Up/Down are the fields.
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.active_field(), Field::Subject);
+        press(&mut app, KeyCode::Up);
+        assert_eq!(app.active_field(), Field::Scope);
+    }
+
+    #[test]
+    fn tab_and_shift_tab_step_through_every_field() {
+        let mut app = App::default();
+        for expected in [
+            Field::Scope,
+            Field::Subject,
+            Field::Body,
+            Field::Breaking,
+            Field::Footer,
+        ] {
+            press(&mut app, KeyCode::Tab);
+            assert_eq!(app.active_field(), expected);
+        }
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.active_field(), Field::Type, "wraps to the start");
+        press(&mut app, KeyCode::BackTab);
+        assert_eq!(app.active_field(), Field::Footer, "and back");
     }
 
     #[test]

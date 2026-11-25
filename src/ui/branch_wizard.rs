@@ -124,9 +124,11 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
         HINT,
     ));
 
-    // The caret sits behind the text being typed into, as in the composer.
+    // The caret sits at its position inside the text, as in the composer — and
+    // on the first character of an empty field.
     let caret = wizard.current_text().map(|text| {
-        let width = unicode_width::UnicodeWidthStr::width(text) as u16;
+        let before: String = text.chars().take(wizard.cursor()).collect();
+        let width = unicode_width::UnicodeWidthStr::width(before.as_str()) as u16;
         (
             area.x + VALUE_OFFSET + width,
             area.y + 1 + wizard.field.index() as u16,

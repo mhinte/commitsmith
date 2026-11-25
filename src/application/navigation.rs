@@ -1,58 +1,63 @@
-//! How arrows behave on a text field, for every tab.
+//! Navigation rules, the same on every tab.
 //!
-//! One rule instead of one per pane: `←`/`→` belong to the text while a field is
-//! being typed into, so the caret can be moved without leaving the field. Only
-//! where there is nothing to move through — an empty field, or a field that is
-//! not editable at all (the type on tab 1, the kind in the wizard) — they fall
-//! back to walking fields. Navigation that is always available stays on `Tab`,
-//! `Shift+Tab` and the vi keys in panes that are lists.
+//! One idea runs through all panes: **moving between fields and moving inside a
+//! field are separate keys.** `Tab`, `Shift+Tab`, `↑` and `↓` always move between
+//! fields; `←` and `→` always move through the text.
+//!
+//! That works because a field's caret is stored even when the field is not being
+//! edited: coming back to it with `Tab`/`Shift+Tab` puts the caret back where it
+//! was, so `←`/`→` are always useful.
+//!
+//! The one exception is a field that holds no text at all — the type on tab 1, the
+//! kind in the branch wizard. There is nothing to walk through, so `←`/`→` change
+//! its value instead.
 
-use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::crossterm::event::KeyCode;
 
-/// What the caller should do with an arrow key it received.
+/// What `←`/`→` should do in the focused field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ArrowAction {
-    /// Move the caret inside the field the user is typing into.
-    Cursor(isize),
-    /// Leave the field: `-1` previous, `1` next.
-    Field(isize),
-    /// Change the selected value of a picker field.
-    Cycle(isize),
-    /// Not ours.
-    Ignore,
+pub enum Horizontal {
+    /// Move the caret inside the field: `-1` back, `1` forward.
+    Caret(isize),
+    /// The field holds a value, not text: change it.
+    Value(isize),
 }
 
-/// The decision for `key`, given the field's content length and whether the
-/// field is a text field the user can type into.
-pub fn arrow_action(key: KeyCode, editable: bool, text_len: usize, shift: bool) -> ArrowAction {
+/// Decide for `←`/`→`, given whether the field carries text.
+pub fn horizontal(key: KeyCode, has_text: bool) -> Option<Horizontal> {
     let delta = match key {
         KeyCode::Left => -1,
         KeyCode::Right => 1,
-        _ => return ArrowAction::Ignore,
+        _ => return None,
     };
-
-    if !editable {
-        // A field that takes no text has nothing to move a caret through.
-        return ArrowAction::Cycle(delta);
-    }
-
-    // Shift+arrow is the one way to leave the field with the arrows, for people
-    // who expect to pan through a form with them.
-    if shift {
-        return ArrowAction::Field(delta);
-    }
-
-    if text_len == 0 {
-        // Nothing to move through: walking on is the only useful answer.
-        return ArrowAction::Field(delta);
-    }
-
-    ArrowAction::Cursor(delta)
+    Some(if has_text {
+        Horizontal::Caret(delta)
+    } else {
+        Horizontal::Value(delta)
+    })
 }
 
-/// True when the key carries shift.
-pub fn is_shift(modifiers: KeyModifiers) -> bool {
-    modifiers.contains(KeyModifiers::SHIFT)
+/// What `↑`/`↓` should do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Vertical {
+    /// Move between fields: `-1` previous, `1` next.
+    Field(isize),
+    /// Walk the lines of a multiline field, then leave it at the ends.
+    Lines(isize),
+}
+
+/// Decide for `↑`/`↓`. Inside a multiline field they walk its lines first.
+pub fn vertical(key: KeyCode, multiline: bool) -> Option<Vertical> {
+    let delta = match key {
+        KeyCode::Up => -1,
+        KeyCode::Down => 1,
+        _ => return None,
+    };
+    Some(if multiline {
+        Vertical::Lines(delta)
+    } else {
+        Vertical::Field(delta)
+    })
 }
 
 #[cfg(test)]
@@ -60,62 +65,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn arrows_move_the_caret_inside_a_filled_field() {
+    fn left_and_right_move_the_caret_in_a_text_field() {
+        assert_eq!(horizontal(KeyCode::Left, true), Some(Horizontal::Caret(-1)));
+        assert_eq!(horizontal(KeyCode::Right, true), Some(Horizontal::Caret(1)));
+    }
+
+    #[test]
+    fn left_and_right_change_the_value_of_a_field_without_text() {
         assert_eq!(
-            arrow_action(KeyCode::Left, true, 5, false),
-            ArrowAction::Cursor(-1)
+            horizontal(KeyCode::Left, false),
+            Some(Horizontal::Value(-1))
         );
         assert_eq!(
-            arrow_action(KeyCode::Right, true, 5, false),
-            ArrowAction::Cursor(1)
+            horizontal(KeyCode::Right, false),
+            Some(Horizontal::Value(1))
         );
     }
 
     #[test]
-    fn arrows_leave_an_empty_field() {
-        assert_eq!(
-            arrow_action(KeyCode::Right, true, 0, false),
-            ArrowAction::Field(1)
-        );
-        assert_eq!(
-            arrow_action(KeyCode::Left, true, 0, false),
-            ArrowAction::Field(-1)
-        );
+    fn up_and_down_walk_fields_unless_the_field_has_lines() {
+        assert_eq!(vertical(KeyCode::Down, false), Some(Vertical::Field(1)));
+        assert_eq!(vertical(KeyCode::Up, false), Some(Vertical::Field(-1)));
+        assert_eq!(vertical(KeyCode::Down, true), Some(Vertical::Lines(1)));
+        assert_eq!(vertical(KeyCode::Up, true), Some(Vertical::Lines(-1)));
     }
 
     #[test]
-    fn shift_arrows_always_walk_fields() {
-        assert_eq!(
-            arrow_action(KeyCode::Right, true, 5, true),
-            ArrowAction::Field(1)
-        );
-        assert_eq!(
-            arrow_action(KeyCode::Left, true, 0, true),
-            ArrowAction::Field(-1)
-        );
-    }
-
-    #[test]
-    fn a_field_without_text_cycles_its_value() {
-        assert_eq!(
-            arrow_action(KeyCode::Left, false, 0, false),
-            ArrowAction::Cycle(-1)
-        );
-        assert_eq!(
-            arrow_action(KeyCode::Right, false, 3, false),
-            ArrowAction::Cycle(1)
-        );
-    }
-
-    #[test]
-    fn other_keys_are_left_alone() {
-        assert_eq!(
-            arrow_action(KeyCode::Up, true, 3, false),
-            ArrowAction::Ignore
-        );
-        assert_eq!(
-            arrow_action(KeyCode::Char('j'), true, 3, false),
-            ArrowAction::Ignore
-        );
+    fn other_keys_are_not_ours() {
+        assert_eq!(horizontal(KeyCode::Tab, true), None);
+        assert_eq!(vertical(KeyCode::Enter, true), None);
     }
 }

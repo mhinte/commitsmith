@@ -54,6 +54,8 @@ impl WizardField {
 pub struct BranchWizard {
     pub open: bool,
     pub field: WizardField,
+    /// Caret position per field, counted in characters like the composer's.
+    cursors: [usize; 2],
     pub kind: BranchKind,
     pub ticket: String,
     pub description: String,
@@ -66,6 +68,7 @@ impl Default for BranchWizard {
         Self {
             open: false,
             field: WizardField::Kind,
+            cursors: [0, 0],
             kind: BranchKind::Feat,
             ticket: String::new(),
             description: String::new(),
@@ -86,6 +89,7 @@ impl BranchWizard {
     pub fn start(&mut self) {
         self.open = true;
         self.field = WizardField::Kind;
+        self.cursors = [0, 0];
         self.kind = BranchKind::Feat;
         self.ticket.clear();
         self.description.clear();
@@ -186,12 +190,54 @@ impl BranchWizard {
         Ok(preview.name)
     }
 
-    pub fn push_char(&mut self, c: char) {
+    /// Caret position inside the focused text field.
+    pub fn cursor(&self) -> usize {
         match self.field {
-            WizardField::Description => self.description.push(c),
-            WizardField::Ticket => self.ticket.push(c),
-            WizardField::Kind => {}
+            WizardField::Kind => 0,
+            WizardField::Ticket => self.cursors[0],
+            WizardField::Description => self.cursors[1],
         }
+    }
+
+    fn cursor_slot(&self) -> Option<usize> {
+        match self.field {
+            WizardField::Kind => None,
+            WizardField::Ticket => Some(0),
+            WizardField::Description => Some(1),
+        }
+    }
+
+    /// Move the caret inside the focused field, like the composer does.
+    pub fn move_cursor(&mut self, delta: isize) {
+        let Some(slot) = self.cursor_slot() else {
+            return;
+        };
+        let len = self
+            .current_text()
+            .map(|text| text.chars().count())
+            .unwrap_or(0);
+        let cursor = self.cursors[slot];
+        self.cursors[slot] = if delta < 0 {
+            cursor.saturating_sub(delta.unsigned_abs())
+        } else {
+            (cursor + delta as usize).min(len)
+        };
+    }
+
+    pub fn push_char(&mut self, c: char) {
+        let Some(slot) = self.cursor_slot() else {
+            self.error = None;
+            return;
+        };
+        let cursor = self.cursors[slot];
+        let text = match self.field {
+            WizardField::Ticket => &mut self.ticket,
+            _ => &mut self.description,
+        };
+        let mut chars: Vec<char> = text.chars().collect();
+        chars.insert(cursor.min(chars.len()), c);
+        *text = chars.into_iter().collect();
+        self.cursors[slot] = (cursor + 1).min(text.chars().count());
         self.error = None;
     }
 
@@ -214,16 +260,52 @@ impl BranchWizard {
     }
 
     pub fn backspace(&mut self) {
-        match self.field {
-            WizardField::Description => {
-                self.description.pop();
-            }
-            WizardField::Ticket => {
-                self.ticket.pop();
-            }
-            WizardField::Kind => {}
+        let Some(slot) = self.cursor_slot() else {
+            return;
+        };
+        let cursor = self.cursors[slot];
+        if cursor == 0 {
+            return;
         }
+        let text = match self.field {
+            WizardField::Ticket => &mut self.ticket,
+            _ => &mut self.description,
+        };
+        let mut chars: Vec<char> = text.chars().collect();
+        chars.remove(cursor - 1);
+        *text = chars.into_iter().collect();
+        self.cursors[slot] = cursor - 1;
         self.error = None;
+    }
+
+    /// Delete the character under the caret.
+    pub fn delete(&mut self) {
+        let Some(slot) = self.cursor_slot() else {
+            return;
+        };
+        let cursor = self.cursors[slot];
+        let text = match self.field {
+            WizardField::Ticket => &mut self.ticket,
+            _ => &mut self.description,
+        };
+        let mut chars: Vec<char> = text.chars().collect();
+        if cursor < chars.len() {
+            chars.remove(cursor);
+            *text = chars.into_iter().collect();
+            self.error = None;
+        }
+    }
+
+    /// Caret to the start or the end of the field.
+    pub fn jump(&mut self, to_end: bool) {
+        let Some(slot) = self.cursor_slot() else {
+            return;
+        };
+        let len = self
+            .current_text()
+            .map(|text| text.chars().count())
+            .unwrap_or(0);
+        self.cursors[slot] = if to_end { len } else { 0 };
     }
 
     pub fn cycle_kind(&mut self, forward: bool) {
