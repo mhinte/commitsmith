@@ -47,6 +47,8 @@ fn plural(count: usize, word: &str) -> String {
 const HINT: Style = Style::new().fg(Color::Gray);
 const MUTED: Style = Style::new().fg(Color::DarkGray);
 
+pub mod branches;
+
 pub fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
@@ -79,12 +81,7 @@ fn draw_full(frame: &mut Frame, app: &App, area: Rect) {
     let cursor = match app.tab {
         Tab::Commit => draw_commit_body(frame, app, body),
         Tab::Branches => {
-            draw_placeholder(
-                frame,
-                body,
-                "Branches",
-                "Explorer und Conventional-Branch-Wizard folgen mit E3-2 und E3-3.",
-            );
+            branches::draw(frame, app, body);
             None
         }
         Tab::History => {
@@ -92,7 +89,7 @@ fn draw_full(frame: &mut Frame, app: &App, area: Rect) {
                 frame,
                 body,
                 "Historie & Release",
-                "Conventional Log, SemVer und Changelog folgen mit Epico 5.",
+                "Conventional Log, SemVer und Changelog folgen mit Epic 5.",
             );
             None
         }
@@ -958,7 +955,7 @@ pub fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::crossterm::event::KeyCode;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
     fn window_keeps_the_cursor_visible() {
@@ -988,8 +985,7 @@ mod tests {
         assert!(display.ends_with("xxx"));
     }
 
-    fn press(app: &mut App, code: ratatui::crossterm::event::KeyCode) {
-        use ratatui::crossterm::event::{KeyEvent, KeyModifiers};
+    fn press(app: &mut App, code: KeyCode) {
         app.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
     }
 
@@ -1166,6 +1162,86 @@ mod tests {
             .collect();
         assert_eq!(mentioning.len(), 1, "{screen:#?}");
         assert!(mentioning[0].contains("checks"), "{}", mentioning[0]);
+    }
+
+    fn branch_app() -> App {
+        use crate::application::test_support::RecordingGit;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.set_in_repository(true);
+        let git = RecordingGit::new(&["main", "feature/x"], "main");
+        git.branches.borrow_mut().push({
+            let mut remote = commitsmith::domain::ports::BranchInfo::remote("origin/main");
+            remote.upstream = Some("origin/main".to_string());
+            remote
+        });
+        app.set_git(Box::new(git));
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app
+    }
+
+    #[test]
+    fn the_branch_tab_lists_branches_with_the_head_marker() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let app = branch_app();
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+
+        assert!(screen.contains(" branches · 3 "), "{screen}");
+        assert!(screen.contains("● main"), "HEAD marker: {screen}");
+        assert!(screen.contains("○ feature/x"), "{screen}");
+        assert!(screen.contains("remotes"), "remote heading: {screen}");
+        assert!(screen.contains("origin/main"), "{screen}");
+        assert!(screen.contains("▸ "), "selection marker: {screen}");
+    }
+
+    #[test]
+    fn the_branch_tab_shows_a_confirmation_before_deleting() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = branch_app();
+        app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE));
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+        assert!(screen.contains("press d again"), "{screen}");
+        assert!(screen.contains("feature/x"), "{screen}");
+    }
+
+    #[test]
+    fn the_branch_tab_says_so_outside_a_repository() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+        assert!(screen.contains("no repository"), "{screen}");
+    }
+
+    #[test]
+    fn the_branch_tab_advertises_its_own_keys() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let app = branch_app();
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+        for hint in ["checkout", "delete", "merge"] {
+            assert!(screen.contains(hint), "{hint} missing: {screen}");
+        }
+        assert!(
+            !screen.contains("C-s"),
+            "the composer keys do not belong here"
+        );
     }
 
     #[test]

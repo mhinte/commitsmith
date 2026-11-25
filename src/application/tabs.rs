@@ -69,12 +69,14 @@ impl Tab {
                 ("C-p", "profile"),
                 ("C-r", "reuse"),
             ],
+            // The first four are always shown; `d` and `m` are the actions
+            // people look for, so they come before the wizard.
             Self::Branches => vec![
                 ("j/k", "move"),
                 ("Enter", "checkout"),
-                ("n", "new branch"),
-                ("m", "merge"),
                 ("d", "delete"),
+                ("m", "merge"),
+                ("n", "new branch"),
             ],
             Self::History => vec![
                 ("j/k", "move"),

@@ -265,6 +265,12 @@ fn run_composer(commit: bool) -> ExitCode {
                     };
                     git::commit_files(&repo, oid)
                 }));
+                // Tab 2 acts on the repository: reads through gix, writes
+                // through `git`, behind the port.
+                match commitsmith::infrastructure::git_cli::GitBackend::open(&root) {
+                    Ok(backend) => app.set_git(Box::new(backend)),
+                    Err(error) => app.status = error.to_string(),
+                }
             }
             // No repository: the composer still works (the message can be
             // linted and printed), but it says so instead of looking normal.

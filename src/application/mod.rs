@@ -5,7 +5,10 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
+pub mod branches;
 pub mod tabs;
+#[cfg(test)]
+pub mod test_support;
 
 use std::collections::HashMap;
 
@@ -16,6 +19,8 @@ pub type FilesLoader = Box<dyn Fn(&str) -> Vec<String> + Send + Sync>;
 use crate::config::Config;
 use crate::git::{PastCommit, ScopeInfo};
 use crate::validate::{self, Issue, Rules, Severity};
+use branches::BranchList;
+use commitsmith::domain::ports::GitRepository;
 
 /// Order of the form fields, top to bottom.
 pub const FIELDS: [Field; 6] = [
@@ -166,6 +171,10 @@ pub struct App {
     pub setup_request: bool,
     /// Which of the three surfaces is showing.
     pub tab: tabs::Tab,
+    /// The repository behind the actions of tab 2, when there is one.
+    pub git: Option<Box<dyn GitRepository>>,
+    /// Branch explorer state.
+    pub branches: BranchList,
     /// False when the working directory is not inside a repository; the header
     /// says so, because scope suggestions and committing need one.
     pub in_repository: bool,
@@ -211,6 +220,8 @@ impl App {
             commit_mode: false,
             setup_request: false,
             tab: tabs::Tab::Commit,
+            git: None,
+            branches: BranchList::default(),
             in_repository: false,
             files_loader: None,
             files_cache: HashMap::new(),
@@ -258,6 +269,156 @@ impl App {
     /// Replace the list of recent commits offered as templates.
     pub fn set_history(&mut self, history: Vec<PastCommit>) {
         self.history = history;
+    }
+
+    /// Hand the application the repository it may act on, and fill the branch
+    /// list from it. Called once at startup.
+    pub fn set_git(&mut self, git: Box<dyn GitRepository>) {
+        self.git = Some(git);
+        self.reload_branches();
+    }
+
+    /// Re-read the branch list and the branch line in the footer.
+    pub fn reload_branches(&mut self) {
+        let (git, branches) = (&self.git, &mut self.branches);
+        let Some(git) = git.as_deref() else {
+            return;
+        };
+        let failure = branches.reload(git).err();
+        let branch = git
+            .current_branch()
+            .ok()
+            .flatten()
+            .map(|info| info.name)
+            .unwrap_or_else(|| "detached".to_string());
+        let staged = git
+            .changes()
+            .map(|files| files.iter().filter(|file| file.is_staged()).count())
+            .unwrap_or(0);
+        self.repo_line = format!("{branch} · {staged} staged");
+        if let Some(error) = failure {
+            self.status = error.to_string();
+        }
+    }
+
+    /// Keys of the second and third tab. The composer's keys must not fire here.
+    fn branch_key(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Char('c') | KeyCode::Char('q') if ctrl => self.should_quit = true,
+            KeyCode::Char('?') => self.show_help = true,
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.branches.confirming = None;
+                self.branches.move_by(1);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.branches.confirming = None;
+                self.branches.move_by(-1);
+            }
+            KeyCode::Char('g') => {
+                self.branches.confirming = None;
+                self.branches.jump_to_start();
+            }
+            KeyCode::Char('G') => {
+                self.branches.confirming = None;
+                self.branches.jump_to_end();
+            }
+            KeyCode::Enter => self.checkout_selected(),
+            KeyCode::Char('m') => self.merge_selected(),
+            KeyCode::Char('d') => self.delete_selected(),
+            KeyCode::Char('r') => self.reload_branches(),
+            KeyCode::Char('n') => {
+                self.status = "the branch wizard follows in E3-3".to_string();
+            }
+            KeyCode::Esc => {
+                // Esc is the cancel key while a deletion waits for its second
+                // press; otherwise it leaves the program as everywhere else.
+                if self.branches.confirming.take().is_none() {
+                    self.should_quit = true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn selected_branch(&mut self) -> Option<commitsmith::domain::ports::BranchInfo> {
+        self.branches.current().cloned()
+    }
+
+    fn checkout_selected(&mut self) {
+        let Some(branch) = self.selected_branch() else {
+            return;
+        };
+        if branch.is_remote {
+            self.status = format!("{} is remote · check out a local branch", branch.name);
+            return;
+        }
+        let Some(git) = self.git.as_deref() else {
+            self.status = "no repository".to_string();
+            return;
+        };
+        match git.checkout(&branch.name) {
+            Ok(()) => {
+                self.status = format!("checked out {}", branch.name);
+                self.reload_branches();
+            }
+            Err(error) => self.status = error.to_string(),
+        }
+    }
+
+    fn merge_selected(&mut self) {
+        let Some(branch) = self.selected_branch() else {
+            return;
+        };
+        if branch.is_head {
+            self.status = format!("{} is already checked out", branch.name);
+            return;
+        }
+        let Some(git) = self.git.as_deref() else {
+            self.status = "no repository".to_string();
+            return;
+        };
+        match git.merge(&branch.name) {
+            Ok(()) => {
+                self.status = format!("merged {} into the current branch", branch.name);
+                self.reload_branches();
+            }
+            Err(error) => self.status = error.to_string(),
+        }
+    }
+
+    fn delete_selected(&mut self) {
+        let Some(branch) = self.selected_branch() else {
+            return;
+        };
+        if branch.is_head {
+            self.status = format!("{} is checked out · switch first", branch.name);
+            return;
+        }
+        if branch.is_remote {
+            self.status = format!(
+                "{} lives on the remote · delete it with push --delete",
+                branch.name
+            );
+            return;
+        }
+        if self.branches.confirming.as_deref() != Some(branch.name.as_str()) {
+            self.branches.confirming = Some(branch.name.clone());
+            self.status = format!("press d again to delete {}", branch.name);
+            return;
+        }
+        let Some(git) = self.git.as_deref() else {
+            self.status = "no repository".to_string();
+            return;
+        };
+        self.branches.confirming = None;
+        match git.delete_branch(&branch.name) {
+            Ok(()) => {
+                self.status = format!("deleted {}", branch.name);
+                self.reload_branches();
+            }
+            Err(error) => self.status = error.to_string(),
+        }
     }
 
     /// Record whether a repository was found. Called once at startup.
@@ -898,6 +1059,13 @@ impl App {
             return;
         }
 
+        // The other tabs have their own keys; typing a subject there would be
+        // a surprise, so the composer never sees these events.
+        if self.tab != tabs::Tab::Commit {
+            self.branch_key(key);
+            return;
+        }
+
         match key.code {
             KeyCode::Esc => self.should_quit = true,
             KeyCode::Char('?') => self.show_help = true,
@@ -952,6 +1120,126 @@ enum PickerAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::test_support::RecordingGit;
+
+    fn app_on_the_branch_tab(git: RecordingGit) -> App {
+        let mut app = App::default();
+        app.set_in_repository(true);
+        app.set_git(Box::new(git));
+        press(&mut app, KeyCode::Char('2'));
+        app
+    }
+
+    #[test]
+    fn j_and_k_move_through_the_branch_list() {
+        let mut app = app_on_the_branch_tab(RecordingGit::new(&["main", "feature"], "main"));
+        assert_eq!(app.branches.selected, 0, "HEAD stays on top");
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.branches.selected, 1);
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.branches.selected, 1, "the list ends here");
+        press(&mut app, KeyCode::Char('k'));
+        assert_eq!(app.branches.selected, 0);
+        press(&mut app, KeyCode::Char('G'));
+        assert_eq!(app.branches.selected, 1);
+        press(&mut app, KeyCode::Char('g'));
+        assert_eq!(app.branches.selected, 0);
+    }
+
+    #[test]
+    fn enter_checks_out_the_selected_branch() {
+        let git = RecordingGit::new(&["main", "feature"], "main");
+        let mut app = app_on_the_branch_tab(git);
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.status, "checked out feature");
+        assert_eq!(app.repo_line, "feature · 0 staged");
+        assert!(app.branches.current().unwrap().is_head, "list reloaded");
+    }
+
+    #[test]
+    fn deleting_a_branch_takes_a_second_press() {
+        let mut app = app_on_the_branch_tab(RecordingGit::new(&["main", "feature"], "main"));
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('d'));
+        assert_eq!(
+            app.branches.confirming.as_deref(),
+            Some("feature"),
+            "the first press only asks"
+        );
+        assert!(app.status.contains("press d again"), "{}", app.status);
+        assert_eq!(app.branches.len(), 2, "nothing deleted yet");
+
+        press(&mut app, KeyCode::Char('d'));
+        assert_eq!(app.branches.len(), 1, "the second press deletes");
+        assert_eq!(app.status, "deleted feature");
+        assert!(app.branches.confirming.is_none());
+    }
+
+    #[test]
+    fn esc_cancels_the_deletion_instead_of_quitting() {
+        let mut app = app_on_the_branch_tab(RecordingGit::new(&["main", "feature"], "main"));
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('d'));
+        press(&mut app, KeyCode::Esc);
+        assert!(!app.should_quit, "Esc only cancels the pending deletion");
+        assert!(app.branches.confirming.is_none());
+        assert_eq!(app.branches.len(), 2);
+
+        press(&mut app, KeyCode::Esc);
+        assert!(app.should_quit, "a second Esc leaves");
+    }
+
+    #[test]
+    fn the_checked_out_branch_cannot_be_deleted() {
+        let git = RecordingGit::new(&["main", "feature"], "main");
+        let mut app = app_on_the_branch_tab(git);
+        press(&mut app, KeyCode::Char('d'));
+        assert!(app.status.contains("is checked out"), "{}", app.status);
+        assert_eq!(app.branches.len(), 2);
+    }
+
+    #[test]
+    fn a_merge_conflict_is_reported_and_the_app_stays_usable() {
+        let mut git = RecordingGit::new(&["main", "feature"], "main");
+        git.merge_fails = true;
+        let mut app = app_on_the_branch_tab(git);
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('m'));
+        assert!(!app.status.is_empty());
+        assert!(!app.should_quit);
+        press(&mut app, KeyCode::Char('k'));
+        assert_eq!(app.branches.selected, 0, "still navigable");
+    }
+
+    #[test]
+    fn the_actions_go_through_the_repository_port() {
+        let git = RecordingGit::new(&["main", "feature"], "main");
+        let log = git.calls();
+        let mut app = App::default();
+        app.set_in_repository(true);
+        app.set_git(Box::new(git));
+        press(&mut app, KeyCode::Char('2'));
+
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Enter);
+        // `feature` is checked out now, so the next row is `main`; merging it
+        // into the current branch is the normal direction.
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('m'));
+        assert_eq!(
+            log.borrow().as_slice(),
+            ["checkout feature", "merge main"],
+            "git must be told about both, in that order"
+        );
+    }
+
+    #[test]
+    fn the_composer_never_sees_keys_from_the_branch_tab() {
+        let mut app = app_on_the_branch_tab(RecordingGit::new(&["main"], "main"));
+        type_text(&mut app, "wxyz");
+        assert_eq!(app.commit.subject, "", "typing must not reach the subject");
+    }
 
     fn press(app: &mut App, code: KeyCode) {
         app.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
