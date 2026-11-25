@@ -72,14 +72,14 @@ impl Tab {
             // The first four are always shown; `d` and `m` are the actions
             // people look for, so they come before the wizard.
             Self::Branches => vec![
-                ("j/k", "move"),
+                ("↓ ↑", "move"),
                 ("Enter", "checkout"),
                 ("d", "delete"),
                 ("m", "merge"),
                 ("n", "new branch"),
             ],
             Self::History => vec![
-                ("j/k", "move"),
+                ("↓ ↑", "move"),
                 ("/", "filter"),
                 ("Enter", "details"),
                 ("y", "changelog"),
@@ -118,9 +118,9 @@ impl Tab {
                 ("", "checks show the same rules as `commitsmith check`"),
             ],
             Self::Branches => vec![
-                ("j k, ↓ ↑", "move through the branches"),
+                ("↓ ↑", "move through the branches"),
                 ("← →", "move the caret, or change the kind"),
-                ("g G", "jump to the first or the last branch"),
+                ("Home, End", "jump to the first or the last branch"),
                 ("Enter", "check out the selected branch"),
                 ("m", "merge the selected branch into the current one"),
                 ("d", "delete locally: press twice, Esc keeps it"),

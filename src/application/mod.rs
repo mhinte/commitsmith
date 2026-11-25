@@ -404,19 +404,21 @@ impl App {
         match key.code {
             KeyCode::Char('c') | KeyCode::Char('q') if ctrl => self.should_quit = true,
             KeyCode::Char('?') => self.show_help = true,
-            KeyCode::Char('j') | KeyCode::Down => {
+            // Only the arrows move through the list: `j`/`k` and `g`/`G` were a
+            // second vocabulary nobody asked for.
+            KeyCode::Down => {
                 self.branches.confirming = None;
                 self.branches.move_by(1);
             }
-            KeyCode::Char('k') | KeyCode::Up => {
+            KeyCode::Up => {
                 self.branches.confirming = None;
                 self.branches.move_by(-1);
             }
-            KeyCode::Char('g') => {
+            KeyCode::Home => {
                 self.branches.confirming = None;
                 self.branches.jump_to_start();
             }
-            KeyCode::Char('G') => {
+            KeyCode::End => {
                 self.branches.confirming = None;
                 self.branches.jump_to_end();
             }
@@ -1269,8 +1271,6 @@ impl App {
             // arrow keys go through the shared rule below.
             KeyCode::Char('l') if self.active_field() == Field::Type => self.cycle_type(true),
             KeyCode::Char('h') if self.active_field() == Field::Type => self.cycle_type(false),
-            KeyCode::Char('j') if self.active_field() == Field::Type => self.next_field(),
-            KeyCode::Char('k') if self.active_field() == Field::Type => self.previous_field(),
             KeyCode::Char(' ') if self.active_field() == Field::Type => self.open_type_picker(),
             KeyCode::Left | KeyCode::Right => self.arrow(key),
             KeyCode::Home => self.home(),
@@ -1307,26 +1307,33 @@ mod tests {
     }
 
     #[test]
-    fn j_and_k_move_through_the_branch_list() {
+    fn the_arrows_move_through_the_branch_list() {
         let mut app = app_on_the_branch_tab(RecordingGit::new(&["main", "feature"], "main"));
         assert_eq!(app.branches.selected, 0, "HEAD stays on top");
-        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Down);
         assert_eq!(app.branches.selected, 1);
-        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Down);
         assert_eq!(app.branches.selected, 1, "the list ends here");
-        press(&mut app, KeyCode::Char('k'));
+        press(&mut app, KeyCode::Up);
         assert_eq!(app.branches.selected, 0);
-        press(&mut app, KeyCode::Char('G'));
+        press(&mut app, KeyCode::End);
         assert_eq!(app.branches.selected, 1);
-        press(&mut app, KeyCode::Char('g'));
+        press(&mut app, KeyCode::Home);
         assert_eq!(app.branches.selected, 0);
+    }
+
+    #[test]
+    fn j_and_k_no_longer_move_the_branch_list() {
+        let mut app = app_on_the_branch_tab(RecordingGit::new(&["main", "feature"], "main"));
+        type_text(&mut app, "jk");
+        assert_eq!(app.branches.selected, 0, "letters are not navigation here");
     }
 
     #[test]
     fn enter_checks_out_the_selected_branch() {
         let git = RecordingGit::new(&["main", "feature"], "main");
         let mut app = app_on_the_branch_tab(git);
-        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.status, "checked out feature");
         assert_eq!(app.repo_line, "feature · 0 staged");
@@ -1336,7 +1343,7 @@ mod tests {
     #[test]
     fn deleting_a_branch_takes_a_second_press() {
         let mut app = app_on_the_branch_tab(RecordingGit::new(&["main", "feature"], "main"));
-        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Char('d'));
         assert_eq!(
             app.branches.confirming.as_deref(),
@@ -1355,7 +1362,7 @@ mod tests {
     #[test]
     fn esc_cancels_the_deletion_instead_of_quitting() {
         let mut app = app_on_the_branch_tab(RecordingGit::new(&["main", "feature"], "main"));
-        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Char('d'));
         press(&mut app, KeyCode::Esc);
         assert!(!app.should_quit, "Esc only cancels the pending deletion");
@@ -1380,11 +1387,11 @@ mod tests {
         let mut git = RecordingGit::new(&["main", "feature"], "main");
         git.merge_fails = true;
         let mut app = app_on_the_branch_tab(git);
-        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Char('m'));
         assert!(!app.status.is_empty());
         assert!(!app.should_quit);
-        press(&mut app, KeyCode::Char('k'));
+        press(&mut app, KeyCode::Up);
         assert_eq!(app.branches.selected, 0, "still navigable");
     }
 
@@ -1397,11 +1404,11 @@ mod tests {
         app.set_git(Box::new(git));
         press(&mut app, KeyCode::Char('2'));
 
-        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Enter);
         // `feature` is checked out now, so the next row is `main`; merging it
         // into the current branch is the normal direction.
-        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Char('m'));
         assert_eq!(
             log.borrow().as_slice(),
@@ -1497,6 +1504,7 @@ mod tests {
         press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Char('j'));
         assert_eq!(app.wizard.description, "j");
+        // `j` is text, not navigation — in the wizard and outside it.
     }
 
     fn wizard_on_description(git: RecordingGit) -> App {
@@ -2158,7 +2166,7 @@ mod tests {
         app.commit.footer = "Closes OTHER-9".to_string();
 
         press(&mut app, KeyCode::Char('2'));
-        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.commit.footer, "Closes OTHER-9", "typing wins");
     }
@@ -2210,7 +2218,7 @@ mod tests {
         assert_ne!(chosen, "chore");
 
         press(&mut app, KeyCode::Char('2'));
-        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Enter);
         assert_eq!(
             app.commit.kind, chosen,

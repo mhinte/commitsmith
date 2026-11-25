@@ -1249,7 +1249,7 @@ mod tests {
         use ratatui::backend::TestBackend;
 
         let mut app = branch_app();
-        app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE));
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
@@ -1340,6 +1340,26 @@ mod tests {
         );
         assert!(screen.contains("feat/hima/<description>"), "{screen}");
         assert!(screen.contains("description"), "{screen}");
+    }
+
+    #[test]
+    fn the_wizard_calls_the_field_type_and_brackets_the_value() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = branch_app();
+        app.config.author = Some("hima".to_string());
+        app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+        let mut terminal = Terminal::new(TestBackend::new(110, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+
+        assert!(screen.contains("type"), "same word as on tab 1: {screen}");
+        assert!(
+            screen.contains("[ feat ]"),
+            "bracketed like tab 1: {screen}"
+        );
+        assert!(!screen.contains("kind"), "{screen}");
     }
 
     #[test]

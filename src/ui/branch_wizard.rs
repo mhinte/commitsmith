@@ -34,7 +34,9 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
         };
 
         let (value, hint) = match field {
-            WizardField::Kind => (wizard.kind.as_str().to_string(), String::new()),
+            // Bracketed like the type field on tab 1, so the same thing reads the
+            // same way in both places.
+            WizardField::Kind => (format!("[ {} ]", wizard.kind.as_str()), String::new()),
             WizardField::Ticket => (
                 wizard.ticket.clone(),
                 if wizard.ticket.is_empty() {

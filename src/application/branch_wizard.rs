@@ -1,6 +1,6 @@
 //! The conventional branch wizard of tab 2.
 //!
-//! It turns three inputs — kind, ticket, description — into a branch name from
+//! It turns three inputs — type, ticket, description — into a branch name from
 //! the template in the config. The naming rules live in the domain; this holds
 //! what the user typed and what went wrong.
 
@@ -26,7 +26,7 @@ impl WizardField {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Kind => "kind",
+            Self::Kind => "type",
             Self::Ticket => "ticket",
             Self::Description => "description",
         }
