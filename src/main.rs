@@ -7,12 +7,12 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 mod app;
+mod application;
 mod commit;
 mod config;
 mod git;
 mod hooks;
 mod install;
-mod setup;
 mod ui;
 mod validate;
 
@@ -182,11 +182,13 @@ fn run_composer(commit: bool) -> ExitCode {
     // First start: ask once for the name, then never again.
     if Config::needs_setup() {
         let mut terminal = ratatui::init();
-        let first_run = setup::run(&mut terminal);
+        let first_run = ui::setup::run(&mut terminal);
         ratatui::restore();
         match first_run {
-            Ok(setup::Outcome::Saved(path)) => eprintln!("commitsmith: wrote {}", path.display()),
-            Ok(setup::Outcome::Skipped) => {
+            Ok(ui::setup::Outcome::Saved(path)) => {
+                eprintln!("commitsmith: wrote {}", path.display())
+            }
+            Ok(ui::setup::Outcome::Skipped) => {
                 eprintln!(
                     "commitsmith: no name set, run `commitsmith --user \"Firstname Lastname\"` later"
                 )
@@ -221,7 +223,7 @@ fn run_composer(commit: bool) -> ExitCode {
     }
 
     let mut terminal = ratatui::init();
-    let result = app::run(&mut terminal, &mut app);
+    let result = ui::run(&mut terminal, &mut app);
     ratatui::restore();
 
     match result {

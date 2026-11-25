@@ -1,7 +1,16 @@
-//! Rendering. Two layouts: the full form for normal terminals and a
-//! single-field view for small ones.
+//! The terminal surface: drawing, the event loop and the setup dialog.
+//!
+//! Nothing here touches `gix` or spawns a process; the state comes from
+//! [`crate::application`] and is only read.
 
+pub mod setup;
+
+use std::io;
+use std::time::Duration;
+
+use ratatui::DefaultTerminal;
 use ratatui::Frame;
+use ratatui::crossterm::event::{self, Event};
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -757,6 +766,26 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     frame.render_widget(Paragraph::new(Text::from(lines)), area);
+}
+
+/// Run the TUI until the user quits or hands the message over.
+pub fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
+    loop {
+        terminal.draw(|frame| draw(frame, app))?;
+        if event::poll(Duration::from_millis(200))? {
+            match event::read()? {
+                Event::Key(key) => app.handle_key(key),
+                // A pasted block of text goes into the active field, line
+                // breaks included, instead of being replayed as key presses.
+                Event::Paste(text) => app.handle_paste(&text),
+                Event::Resize(_, _) => {}
+                _ => {}
+            }
+        }
+        if app.should_quit {
+            return Ok(());
+        }
+    }
 }
 
 #[cfg(test)]

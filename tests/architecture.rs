@@ -89,6 +89,27 @@ fn the_domain_layer_stays_free_of_ui_git_and_io() {
 }
 
 #[test]
+fn the_application_layer_does_not_draw() {
+    let hits = forbidden_hits(
+        "src/application",
+        &[
+            "ratatui::Frame",
+            "ratatui::widgets",
+            "ratatui::layout",
+            "ratatui::text",
+            "DefaultTerminal",
+        ],
+    );
+    assert!(hits.is_empty(), "{hits:#?}");
+}
+
+#[test]
+fn the_ui_layer_does_not_read_git_or_spawn_processes() {
+    let hits = forbidden_hits("src/ui", &["gix::", "std::process", "Command::new"]);
+    assert!(hits.is_empty(), "{hits:#?}");
+}
+
+#[test]
 fn the_domain_layer_is_actually_there() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/domain");
     let files = sources(&root);
