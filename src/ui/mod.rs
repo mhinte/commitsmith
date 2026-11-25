@@ -155,7 +155,20 @@ fn draw_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
             style,
         ));
     }
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    // The name and version belong in the top right corner, out of everyone's way.
+    let version = if area.width >= 96 {
+        format!("commitsmith {} ", env!("CARGO_PKG_VERSION"))
+    } else {
+        format!("v{} ", env!("CARGO_PKG_VERSION"))
+    };
+    let width = version.chars().count() as u16;
+    let [tabs_area, version_area] =
+        Layout::horizontal([Constraint::Min(20), Constraint::Length(width)]).areas(area);
+    frame.render_widget(Paragraph::new(Line::from(spans)), tabs_area);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(version, MUTED))).right_aligned(),
+        version_area,
+    );
 }
 
 /// Something to look at on a tab that is not built yet.
@@ -900,20 +913,10 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
 
     // The corner shows the name and the version. If the essentials cannot fit
     // beside the name, the number alone has to do — but the hints win.
-    let full_version = format!("commitsmith {} ", env!("CARGO_PKG_VERSION"));
-    let short_version = format!("v{} ", env!("CARGO_PKG_VERSION"));
-    let full_budget = area
-        .width
-        .saturating_sub(full_version.chars().count() as u16) as usize;
-    let short_budget = area
-        .width
-        .saturating_sub(short_version.chars().count() as u16) as usize;
-    let (version, entries) = if measure(&essentials) <= full_budget {
-        (full_version, select(full_budget))
-    } else {
-        (short_version, select(short_budget))
-    };
-    let version_width = version.chars().count() as u16;
+    // The context takes the right end of this row; the keys only get what is left.
+    let context = branch_context(app, area.width);
+    let context_width = unicode_width::UnicodeWidthStr::width(context.as_str()) as u16;
+    let entries = select(area.width.saturating_sub(context_width + 1) as usize);
 
     let mut spans = Vec::new();
     for (index, (key, label)) in entries.iter().enumerate() {
@@ -923,16 +926,24 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         spans.push(Span::styled(format!(" {key} "), KEY));
         spans.push(Span::styled(format!(" {label}"), HINT));
     }
-    // The program name and version belong in the corner, not in a header that
-    // would take a whole block of the screen.
-    let [keys_area, version_area] =
-        Layout::horizontal([Constraint::Min(10), Constraint::Length(version_width)])
+    // The branch context moved up here, where the version used to sit: the same
+    // row as the keys, the same place the eye looks for it.
+    let [keys_area, context_area] =
+        Layout::horizontal([Constraint::Min(10), Constraint::Length(context_width)])
             .areas(Rect { height: 1, ..area });
 
     frame.render_widget(Paragraph::new(Line::from(spans)), keys_area);
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(version, MUTED))).right_aligned(),
-        version_area,
+        Paragraph::new(Line::from(Span::styled(
+            context,
+            if app.in_repository {
+                MUTED
+            } else {
+                Style::default().fg(Color::Yellow)
+            },
+        )))
+        .right_aligned(),
+        context_area,
     );
 
     let second_row = Rect {
@@ -945,24 +956,9 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     // of the second row, out of the way of the message.
     // Branch, sync state and profile: context, not decisions. The short `↑n ↓n`
     // form keeps its room even when the footer is busy.
-    let context = if app.in_repository {
-        let mut parts: Vec<String> = Vec::new();
-        if !app.repo_line.is_empty() {
-            parts.push(app.repo_line.clone());
-        }
-        if let Some(sync) = app.sync_label() {
-            parts.push(sync);
-        }
-        parts.push(app.config.profile.clone());
-        format!("{} ", parts.join(" · "))
-    } else {
-        format!("no git repository · {} ", app.config.profile)
-    };
-    let context_width = unicode_width::UnicodeWidthStr::width(context.as_str()) as u16;
-
     // The staging list is narrow, so the footer names the file under the cursor in
     // full. The status keeps its place: the path is shortened first.
-    let room = second_row.width.saturating_sub(context_width + 2) as usize;
+    let room = second_row.width.saturating_sub(2) as usize;
     let mut left = Vec::new();
     let mut used = 0;
     if let Some(path) = highlighted_file(app) {
@@ -989,19 +985,27 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             },
         );
     }
+}
 
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            context,
-            if app.in_repository {
-                MUTED
-            } else {
-                Style::default().fg(Color::Yellow)
-            },
-        )))
-        .right_aligned(),
-        second_row,
-    );
+/// Branch, sync state and profile: context, not decisions.
+fn branch_context(app: &App, width: u16) -> String {
+    // A narrow footer cannot carry branch, sync state and profile without eating
+    // the keys; the profile is the part that stays.
+    if width < 100 {
+        return format!("{} ", app.config.profile);
+    }
+    if !app.in_repository {
+        return format!("no git repository · {} ", app.config.profile);
+    }
+    let mut parts: Vec<String> = Vec::new();
+    if !app.repo_line.is_empty() {
+        parts.push(app.repo_line.clone());
+    }
+    if let Some(sync) = app.sync_label() {
+        parts.push(sync);
+    }
+    parts.push(app.config.profile.clone());
+    format!("{} ", parts.join(" · "))
 }
 
 /// The file the staging cursor sits on, if this tab shows one.
@@ -1649,21 +1653,21 @@ mod tests {
         let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
         app.set_in_repository(true);
         app.set_repo_line("feat/hima/TICKET-42/add-a-thing · 0 staged".to_string());
-        app.status = "created and checked out feat/hima/TICKET-42/add-a-thing".to_string();
+        app.status = "created and checked out feat/hima/TICKET-42/add-a-thing · now on the branch, working tree clean, nothing staged".to_string();
 
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let screen = rows(&terminal);
-        let row = &screen[29];
-        assert!(row.trim_end().ends_with("conventional"), "{row:?}");
+        // The context moved to the keys row; it must survive there in full.
         assert!(
-            row.contains("feat/hima/TICKET-42/add-a-thing · 0 staged · conventional"),
-            "the context stays whole: {row:?}"
+            screen[28].contains("feat/hima/TICKET-42/add-a-thing · 0 staged · conventional"),
+            "the context stays whole: {:?}",
+            screen[28]
         );
-        assert!(
-            row.contains('…'),
-            "the status is cut, not overwritten: {row:?}"
-        );
+        // The status has the second row to itself and is cut, not dropped.
+        let status = &screen[29];
+        assert!(status.contains("created"), "{status:?}");
+        assert!(status.contains('…'), "cut, not overwritten: {status:?}");
     }
 
     #[test]
@@ -1681,7 +1685,7 @@ mod tests {
     }
 
     #[test]
-    fn the_version_sits_at_the_bottom_right() {
+    fn the_version_sits_in_the_header() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
@@ -1694,9 +1698,9 @@ mod tests {
             .iter()
             .position(|line| line.contains(&version))
             .expect("version in the footer");
-        assert_eq!(row, 28, "the keys row of the footer: {screen:#?}");
+        assert_eq!(row, 0, "the header row: {screen:#?}");
         let column = screen[row].find(&version).unwrap() as u16;
-        assert!(column > 60, "bottom right, not left: {column}");
+        assert!(column > 60, "top right, not left: {column}");
     }
 
     #[test]
@@ -1704,7 +1708,7 @@ mod tests {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
-        for width in [80u16, 100, 120] {
+        for width in [80u16, 100, 120, 160] {
             let app = App::with_config(crate::config::Config::conventional(), Vec::new());
             let mut terminal = Terminal::new(TestBackend::new(width, 30)).unwrap();
             terminal.draw(|frame| draw(frame, &app)).unwrap();
@@ -1729,24 +1733,17 @@ mod tests {
                     "{needed:?} missing at {width}: {footer:?}"
                 );
             }
-            // More room means more hints, in order of usefulness. The name in
-            // the corner costs 17 columns, so the thresholds sit 20 further out
-            // than they did before it moved there.
-            if width >= 100 {
-                assert!(
-                    footer.contains("commitsmith"),
-                    "the corner shows the program name: {footer:?}"
-                );
-            } else {
-                assert!(
-                    footer.contains(&format!("v{}", env!("CARGO_PKG_VERSION"))),
-                    "a narrow corner still shows the version: {footer:?}"
-                );
-            }
+            // The version moved to the header; the footer must not repeat it.
+            assert!(
+                !footer.contains("commitsmith"),
+                "no version in the footer at {width}: {footer:?}"
+            );
+            // The context takes the right end of this row, so the optional hints
+            // start later than they used to.
             if width >= 120 {
                 assert!(
-                    footer.contains("scope"),
-                    "a 120 column footer should reach the scope hint: {footer:?}"
+                    footer.contains("type"),
+                    "a 120 column footer should reach the type hint: {footer:?}"
                 );
             }
         }
@@ -1905,9 +1902,11 @@ mod tests {
         let screen = rows(&terminal).join("\n");
 
         assert!(screen.contains("file_name.rs"), "the file name survives");
-        assert!(
-            !screen.contains(path),
-            "the list does not print the whole path"
+        // The list shortens; only the footer names the file in full.
+        assert_eq!(
+            screen.matches(path).count(),
+            1,
+            "the whole path appears once, in the footer"
         );
         // The diff title names the file in full, so nothing is lost.
         assert!(screen.contains("file_name.rs"), "{screen}");
@@ -1946,6 +1945,76 @@ mod tests {
         assert!(screen.contains("add the button"), "{screen}");
         assert!(!screen.contains("repair the route"), "{screen}");
         assert!(screen.contains("1 of 2"), "{screen}");
+    }
+
+    #[test]
+    fn help_opens_on_the_third_tab() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.tab = crate::application::tabs::Tab::History;
+        app.set_history(vec![past("feat", "ui", "add the button")]);
+
+        press(&mut app, KeyCode::Char('?'));
+        assert!(app.show_help, "the help must open here too");
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+        assert!(screen.contains("filter"), "{screen}");
+        assert!(screen.contains("clear filter"), "{screen}");
+
+        // Esc closes it again.
+        press(&mut app, KeyCode::Esc);
+        assert!(!app.show_help);
+    }
+
+    #[test]
+    fn the_version_sits_in_the_header_and_the_branch_in_the_footer() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.set_in_repository(true);
+        app.set_repo_line("main".to_string());
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let lines = rows(&terminal);
+        assert!(lines[0].contains("commitsmith"), "header: {}", lines[0]);
+        let footer = lines
+            .iter()
+            .rev()
+            .take(2)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(footer.contains("main"), "context moved down: {footer}");
+        assert!(
+            !footer.contains("commitsmith"),
+            "no double version: {footer}"
+        );
+    }
+
+    #[test]
+    fn the_detail_pane_names_what_the_linter_objects_to() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.tab = crate::application::tabs::Tab::History;
+        // A subject that starts with a capital and ends with a period: two
+        // findings the composer would also show.
+        app.set_history(vec![past("feat", "ui", "Add the button.")]);
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+        assert!(screen.contains("subject:"), "{screen}");
+        assert!(
+            screen.contains("period") || screen.contains("imperative"),
+            "{screen}"
+        );
     }
 
     #[test]

@@ -501,6 +501,15 @@ impl App {
     /// Keys of tab 3. While the filter line is open it swallows the characters,
     /// so a ticket with digits cannot switch tabs.
     fn history_key(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if key.code == KeyCode::Char('?') && self.log.input.is_none() {
+            self.show_help = true;
+            return;
+        }
+        if matches!(key.code, KeyCode::Char('c') | KeyCode::Char('q')) && ctrl {
+            self.should_quit = true;
+            return;
+        }
         if self.log.input.is_some() {
             match key.code {
                 KeyCode::Esc => self.log.cancel_filter(),
@@ -538,12 +547,7 @@ impl App {
     /// How a past commit's message would be judged today: the same rules the
     /// composer and `commitsmith check` use.
     pub fn log_mark(&self, commit: &PastCommit) -> Severity {
-        let mut text = commit.header();
-        if !commit.body.trim().is_empty() {
-            text.push_str("\n\n");
-            text.push_str(commit.body.trim_end());
-        }
-        let issues = validate::lint_with(&text, &self.rules);
+        let issues = self.log_issues(commit);
         if issues.iter().any(|issue| issue.severity == Severity::Error) {
             Severity::Error
         } else if issues
@@ -554,6 +558,17 @@ impl App {
         } else {
             Severity::Info
         }
+    }
+
+    /// The concrete findings for a past commit, so the detail pane can say which
+    /// rule broke instead of only that something did.
+    pub fn log_issues(&self, commit: &PastCommit) -> Vec<Issue> {
+        let mut text = commit.header();
+        if !commit.body.trim().is_empty() {
+            text.push_str("\n\n");
+            text.push_str(commit.body.trim_end());
+        }
+        validate::lint_with(&text, &self.rules)
     }
 
     /// `f` on tab 2: update the remote-tracking branches, then redraw the list so

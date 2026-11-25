@@ -56,7 +56,7 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect, matches: usize) {
         lines.push(Line::styled("  c clears the filter", MUTED));
     } else {
         let offset = app.log.selected.saturating_sub(height.saturating_sub(1));
-        let name_width = area.width.saturating_sub(24) as usize;
+        let name_width = area.width.saturating_sub(18) as usize;
         for (index, commit) in app
             .log
             .visible(&app.history)
@@ -90,7 +90,7 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect, matches: usize) {
                 Span::styled(format!(" {mark} "), mark_style),
                 Span::styled(format!("{} ", commit.short_id), HINT),
                 Span::styled(
-                    format!("{kind:<14} "),
+                    format!("{kind:<9} "),
                     if selected {
                         theme::focused_value()
                     } else {
@@ -135,6 +135,7 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
         None => lines.push(Line::styled("  nothing selected", MUTED)),
         Some(commit) => {
             lines.push(Line::styled(format!("  {}", commit.header()), HINT));
+            lines.push(Line::raw(""));
             if !commit.body.trim().is_empty() {
                 lines.push(Line::raw(""));
                 for line in commit.body.lines().take(12) {
@@ -146,18 +147,30 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
                 format!("  {} · {}", commit.author, commit.date),
                 MUTED,
             ));
-            let issues = app.log_mark(&commit);
-            let (text, style) = match issues {
-                crate::validate::Severity::Error => {
-                    ("lint: would fail today", Style::default().fg(Color::Red))
+            // What exactly is wrong, not only that something is: the message is
+            // the one the composer would show.
+            let findings = app.log_issues(&commit);
+            if findings.is_empty() {
+                lines.push(Line::styled(
+                    "  lint: clean",
+                    Style::default().fg(Color::Green),
+                ));
+            } else {
+                for issue in findings.iter().take(6) {
+                    let (mark, style) = match issue.severity {
+                        crate::validate::Severity::Error => ("✗", Style::default().fg(Color::Red)),
+                        crate::validate::Severity::Warning => {
+                            ("▲", Style::default().fg(Color::Yellow))
+                        }
+                        _ => ("·", MUTED),
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("  {mark} "), style),
+                        Span::styled(format!("{}: ", issue.field), MUTED),
+                        Span::styled(issue.message.clone(), HINT),
+                    ]));
                 }
-                crate::validate::Severity::Warning => (
-                    "lint: passes with a warning",
-                    Style::default().fg(Color::Yellow),
-                ),
-                _ => ("lint: clean", Style::default().fg(Color::Green)),
-            };
-            lines.push(Line::styled(format!("  {text}"), style));
+            }
             if !commit.files.is_empty() {
                 lines.push(Line::raw(""));
                 for file in commit.files.iter().take(8) {
