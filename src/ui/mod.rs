@@ -49,6 +49,7 @@ const MUTED: Style = Style::new().fg(Color::DarkGray);
 
 pub mod branch_wizard;
 pub mod branches;
+pub mod theme;
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
@@ -235,7 +236,13 @@ fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
                 } else {
                     spans.push(Span::styled(text.clone(), value_style));
                 }
-                lines.push(Line::from(spans));
+                // A multiline field is marked row by row, so the area reads as
+                // one block instead of three loose lines.
+                lines.push(if active {
+                    Line::from(spans).style(theme::focused_row())
+                } else {
+                    Line::from(spans)
+                });
 
                 if active && app.is_editing() {
                     if let Some((row, col)) = cursor_in_wrapped(&wrapped, app.cursor()) {
@@ -247,7 +254,11 @@ fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
                 row_y += 1;
             }
             for _ in rows..MULTILINE_ROWS as usize {
-                lines.push(Line::raw(""));
+                lines.push(if active {
+                    Line::raw("").style(theme::focused_row())
+                } else {
+                    Line::raw("")
+                });
                 row_y += 1;
             }
             continue;
@@ -272,12 +283,19 @@ fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
             (display, col, hint)
         };
 
-        lines.push(Line::from(vec![
+        let row = Line::from(vec![
             Span::styled(format!(" {:<LABEL_WIDTH$}", field.label()), label_style),
             Span::styled(marker, Style::default().fg(Color::Cyan)),
             Span::styled(display, value_style),
             Span::styled(hint, MUTED),
-        ]));
+        ]);
+        // Same mark as the wizard and the lists: the focused row is filled, so
+        // the eye finds it without reading the labels.
+        lines.push(if active && !field.multiline() {
+            row.style(theme::focused_row())
+        } else {
+            row
+        });
 
         if let Some(col) = cursor_col {
             cursor = Some((inner.x + VALUE_OFFSET + col as u16, row_y));
@@ -1340,6 +1358,92 @@ mod tests {
         );
         assert!(screen.contains("feat/hima/<description>"), "{screen}");
         assert!(screen.contains("description"), "{screen}");
+    }
+
+    /// Style of the first cell of the row containing `needle`.
+    fn row_style(
+        terminal: &ratatui::Terminal<ratatui::backend::TestBackend>,
+        needle: &str,
+    ) -> ratatui::style::Style {
+        let buffer = terminal.backend().buffer();
+        for y in 0..buffer.area.height {
+            let row: String = (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect();
+            if row.contains(needle) {
+                // The border cell (x = 0) never carries the style; look inside.
+                return buffer[(2, y)].style();
+            }
+        }
+        panic!("no row with {needle:?}");
+    }
+
+    #[test]
+    fn the_focused_field_is_filled_in_the_composer() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        press(&mut app, KeyCode::Tab); // scope
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+        let focused = row_style(&terminal, "scope");
+        let idle = row_style(&terminal, "subject");
+        assert_eq!(focused.bg, Some(theme::FOCUS_BG), "scope has the focus");
+        assert_ne!(idle.bg, Some(theme::FOCUS_BG), "subject does not");
+
+        press(&mut app, KeyCode::Down);
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        assert_eq!(row_style(&terminal, "subject").bg, Some(theme::FOCUS_BG));
+        assert_ne!(row_style(&terminal, "scope").bg, Some(theme::FOCUS_BG));
+    }
+
+    #[test]
+    fn the_focused_wizard_field_is_filled_and_its_panel_bright() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = branch_app();
+        app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+        let mut terminal = Terminal::new(TestBackend::new(110, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+        assert_eq!(
+            row_style(&terminal, "│ type").bg,
+            Some(theme::FOCUS_BG),
+            "the first wizard field is focused"
+        );
+        assert_ne!(row_style(&terminal, "ticket").bg, Some(theme::FOCUS_BG));
+
+        // The panel border carries the same cyan as a focused row's label.
+        let buffer = terminal.backend().buffer();
+        let border = (0..buffer.area.height)
+            .map(|y| buffer[(56, y)].style())
+            .find(|style| style.fg == Some(ratatui::style::Color::Cyan));
+        assert!(border.is_some(), "the wizard panel has the bright border");
+    }
+
+    #[test]
+    fn the_selected_branch_is_filled_too() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = branch_app();
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        assert_eq!(row_style(&terminal, "● main").bg, Some(theme::FOCUS_BG));
+        assert_ne!(
+            row_style(&terminal, "○ feature/x").bg,
+            Some(theme::FOCUS_BG)
+        );
+
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        assert_eq!(
+            row_style(&terminal, "○ feature/x").bg,
+            Some(theme::FOCUS_BG)
+        );
     }
 
     #[test]

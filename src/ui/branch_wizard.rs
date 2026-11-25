@@ -8,6 +8,7 @@ use ratatui::widgets::{Block, BorderType, Paragraph};
 
 use crate::app::App;
 use crate::application::branch_wizard::WizardField;
+use crate::ui::theme;
 
 const MUTED: Style = Style::new().fg(Color::DarkGray);
 const HINT: Style = Style::new().fg(Color::Gray);
@@ -24,14 +25,6 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
 
     for field in WizardField::ALL {
         let active = field == wizard.field;
-        let marker = if active { "▌ " } else { "  " };
-        let label_style = if active {
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            HINT
-        };
 
         let (value, hint) = match field {
             // Bracketed like the type field on tab 1, so the same thing reads the
@@ -55,19 +48,24 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
             ),
         };
 
-        lines.push(Line::from(vec![
-            Span::styled(format!(" {:<12}", field.label()), label_style),
-            Span::styled(marker, Style::default().fg(Color::Cyan)),
-            Span::styled(
-                value,
-                if active {
-                    Style::default().fg(Color::White)
-                } else {
-                    HINT
-                },
-            ),
-            Span::styled(hint, MUTED),
-        ]));
+        if active {
+            // The focused row gets a filled background across the panel, so the
+            // field you are typing into is unmistakable.
+            let row = vec![
+                Span::styled(format!(" {:<12}", field.label()), theme::focused_label()),
+                Span::styled(theme::FOCUS_MARKER, theme::focused_label()),
+                Span::styled(value, theme::focused_value()),
+                Span::styled(hint, theme::focused_value()),
+            ];
+            lines.push(Line::from(row).style(theme::focused_row()));
+        } else {
+            lines.push(Line::from(vec![
+                Span::styled(format!(" {:<12}", field.label()), HINT),
+                Span::styled("  ", HINT),
+                Span::styled(value, HINT),
+                Span::styled(hint, MUTED),
+            ]));
+        }
     }
 
     lines.push(Line::raw(""));
@@ -137,15 +135,21 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
         )
     });
 
-    frame.render_widget(Paragraph::new(Text::from(lines)).block(block()), area);
+    frame.render_widget(Paragraph::new(Text::from(lines)).block(block(wizard)), area);
     caret
 }
 
-fn block() -> Block<'static> {
+fn block(wizard: &crate::application::branch_wizard::BranchWizard) -> Block<'static> {
+    // The panel that has the keyboard has the bright border.
+    let (border, title) = if wizard.open {
+        (theme::focused_panel(), theme::focused_panel())
+    } else {
+        (theme::idle_panel(), theme::idle_title())
+    };
     Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(MUTED)
-        .title(Line::from(Span::styled(" new branch ", HINT)))
+        .border_style(border)
+        .title(Line::from(Span::styled(" new branch ", title)))
 }
 
 fn shorten(name: &str, width: usize) -> String {

@@ -5,11 +5,12 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Paragraph};
 
 use crate::app::App;
+use crate::ui::theme;
 
 const MUTED: Style = Style::new().fg(Color::DarkGray);
 const HINT: Style = Style::new().fg(Color::Gray);
@@ -63,7 +64,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(
                 format!(" {marker}"),
                 if selected {
-                    Style::default().fg(Color::Cyan)
+                    theme::focused_label()
                 } else {
                     MUTED
                 },
@@ -79,13 +80,11 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(
                 format!("{name:<width$}"),
                 if selected {
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD)
+                    theme::focused_value()
                 } else if branch.is_remote {
                     MUTED
                 } else {
-                    HINT
+                    theme::idle_row()
                 },
             ),
             Span::styled(
@@ -97,7 +96,12 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
                 MUTED,
             ),
         ]);
-        lines.push(row);
+        // The selected branch is filled, like the focused field in the composer.
+        lines.push(if selected {
+            row.style(theme::focused_row())
+        } else {
+            row
+        });
     }
 
     if let Some(name) = &app.branches.confirming {
@@ -118,10 +122,16 @@ fn block(app: &App) -> Block<'static> {
     } else {
         format!(" branches · {count} ")
     };
+    // The wizard takes the bright border when it is open; the list steps back.
+    let (border, title_style) = if app.wizard.open {
+        (theme::idle_panel(), theme::idle_title())
+    } else {
+        (theme::focused_panel(), theme::focused_panel())
+    };
     Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(MUTED)
-        .title(Line::from(Span::styled(title, HINT)))
+        .border_style(border)
+        .title(Line::from(Span::styled(title, title_style)))
 }
 
 /// Cut a branch name to `width` characters, keeping the end where the type and
