@@ -1,47 +1,100 @@
 name: ci
 
+# Minutes are metered on a private repository, so this runs where it earns its
+# keep: on pull requests, on demand, and when the release workflow calls it for a
+# tag. A push to `main` no longer starts a run — the same checks decide whether a
+# tag may ship, and the linter runs locally via the commit hook.
 on:
-  push:
-    branches: [main]
   pull_request:
+  workflow_dispatch:
   workflow_call:
+  # Advisories appear without anyone pushing; once a week is enough.
+  schedule:
+    - cron: "0 4 * * 1"
+
+concurrency:
+  # A newer push to the same branch makes the older run pointless.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # The project's own rules, applied to the commits that were just pushed.
-  # Skipped on pull requests: their head commit belongs to the contributor.
-  commit-message:
-    if: github.event_name == 'push'
+  # One runner for all checks: fmt, clippy and the tests share the compiled
+  # dependencies instead of paying for cache restore and startup four times.
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
       - uses: Swatinem/rust-cache@v2.9.3
-      - name: Lint every non-merge commit of this push
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      # The Windows code (registry PATH entry) only compiles on that target, so
+      # check it here instead of finding out during a release.
+      - name: Windows target
+        run: |
+          rustup target add x86_64-pc-windows-msvc
+          cargo check --target x86_64-pc-windows-msvc
+
+      - name: Tests
+        run: cargo test --all-targets
+
+      # What unit tests cannot reach: a real repository, a real hook, a real
+      # commit, and the TUI through a pty.
+      - name: Smoke test the release binary
         run: |
           set -euo pipefail
-          cargo build --release
+          cargo build --release --locked
           bin="$PWD/target/release/commitsmith"
-          before="${{ github.event.before }}"
-          case "$before" in
-            0000000000000000000000000000000000000000|"")
-              range="HEAD" ;;
-            *)
-              if ! git cat-file -e "$before^{commit}" 2>/dev/null; then
-                echo "previous head $before is unknown here, checking only HEAD"
-                range="HEAD"
-              else
-                range="$before..HEAD"
-              fi
-              ;;
-          esac
+          python3 scripts/check-installers.py
+          python3 scripts/smoke.py "$bin"
+          work=$(mktemp -d)
+          git -C "$work" init -q
+          git -C "$work" config user.email ci@example.com
+          git -C "$work" config user.name CI
+          printf 'hello\n' > "$work/a.txt"
+          git -C "$work" add a.txt
+          "$bin" check --message 'feat(api): add rate limit'
+          if "$bin" check --message 'Add stuff.'; then
+            echo "the linter accepted a non-conventional message" >&2
+            exit 1
+          fi
+          export PATH="$(dirname "$bin"):$PATH"
+          if (cd "$work" && "$bin" hooks install && git commit -q -m 'Add stuff.'); then
+            echo "the installed hook let a plain message through" >&2
+            exit 1
+          fi
+          (cd "$work" && git commit -q -m 'feat(ci): smoke test' \
+            && test "$(git log -1 --format=%s)" = 'feat(ci): smoke test')
+          (cd "$work" && "$bin" hooks uninstall && test ! -e .git/hooks/commit-msg)
+
+      # The project's own linter, applied to the commits of this change. Only
+      # meaningful when the event carries a range of commits to compare.
+      - name: Commit messages
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_call'
+        run: |
+          set -euo pipefail
+          bin="$PWD/target/release/commitsmith"
+          base="${{ github.event.pull_request.base.sha }}"
+          range="HEAD"
+          if [ -n "${base:-}" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            range="$base..HEAD"
+          fi
           status=0
           for sha in $(git rev-list "$range"); do
-            # Merge commits do not follow the template, skip them.
             if [ "$(git rev-list --parents -n1 "$sha" | wc -w)" -gt 2 ]; then
               continue
             fi
@@ -53,77 +106,10 @@ jobs:
           done
           exit "$status"
 
-  fmt:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - run: cargo fmt --all -- --check
-
-  clippy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2.9.3
-      - run: cargo clippy --all-targets -- -D warnings
-      # The Windows code (registry PATH entry) only compiles on that target, so
-      # check it here instead of finding out during a release.
-      - run: rustup target add x86_64-pc-windows-msvc
-      - run: cargo check --target x86_64-pc-windows-msvc
-
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2.9.3
-      - run: cargo test --all-targets
-      # What unit tests cannot reach: a real repository, a real hook, a real commit.
-      - name: Smoke test the release binary
-        run: |
-          set -euo pipefail
-          cargo build --release
-          bin="$PWD/target/release/commitsmith"
-          work=$(mktemp -d)
-          git -C "$work" init -q
-          git -C "$work" config user.email ci@example.com
-          git -C "$work" config user.name CI
-          printf 'hello\n' > "$work/a.txt"
-          git -C "$work" add a.txt
-
-          "$bin" check --message 'feat(api): add rate limit'
-          if "$bin" check --message 'Add stuff.'; then
-            echo "the linter accepted a non-conventional message" >&2
-            exit 1
-          fi
-          # The hook calls `commitsmith` by name, so the release build has to be
-          # reachable on PATH for this part.
-          export PATH="$(dirname "$bin"):$PATH"
-          if (cd "$work" && "$bin" hooks install && git commit -q -m 'Add stuff.'); then
-            echo "the installed hook let a plain message through" >&2
-            exit 1
-          fi
-          (cd "$work" && git commit -q -m 'feat(ci): smoke test' \
-            && test "$(git log -1 --format=%s)" = 'feat(ci): smoke test')
-          (cd "$work" && "$bin" hooks uninstall && test ! -e .git/hooks/commit-msg)
-
-  installers:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      # Fakes the release host and the binary, so the installer logic runs
-      # without a token and without PowerShell.
-      - run: python3 scripts/check-installers.py
-      # Drives the real binary through a pty: first-start dialog, composer,
-      # --commit. Covers the wiring that unit tests cannot see.
-      - run: cargo build --release && python3 scripts/smoke.py target/release/commitsmith
-
+  # Weekly only: cargo-audit downloads its advisory database, which is not worth
+  # a minute on every pull request.
   audit:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

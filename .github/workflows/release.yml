@@ -8,6 +8,10 @@ on:
       tag:
         description: "Tag to build and publish, e.g. v0.1.0"
         required: true
+      full:
+        description: "Also build macOS and aarch64 (costs ~25 extra runner minutes)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -34,6 +38,7 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
       tag: ${{ steps.v.outputs.tag }}
+      matrix: ${{ steps.v.outputs.matrix }}
     steps:
       - id: v
         env:
@@ -45,37 +50,39 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
-  # One job per target, so a broken target does not hide the others. The matrix
-  # deliberately avoids Windows: the packaging step stays plain POSIX shell.
+          # macOS runners bill at 10x and aarch64 is rarely used, so the default
+          # release is the three targets that are actually installed. The full
+          # set is one input away.
+          if [ "${{ github.event.inputs.full }}" = "true" ]; then
+            matrix='[
+              {"target":"x86_64-unknown-linux-gnu","os":"ubuntu-latest"},
+              {"target":"aarch64-unknown-linux-gnu","os":"ubuntu-latest","linker":"aarch64-linux-gnu-gcc","packages":"gcc-aarch64-linux-gnu"},
+              {"target":"x86_64-unknown-linux-musl","os":"ubuntu-latest","packages":"musl-tools"},
+              {"target":"aarch64-unknown-linux-musl","os":"ubuntu-latest","musl_cross":true},
+              {"target":"x86_64-apple-darwin","os":"macos-latest"},
+              {"target":"aarch64-apple-darwin","os":"macos-latest"},
+              {"target":"x86_64-pc-windows-msvc","os":"windows-latest"}
+            ]'
+          else
+            matrix='[
+              {"target":"x86_64-unknown-linux-gnu","os":"ubuntu-latest"},
+              {"target":"x86_64-unknown-linux-musl","os":"ubuntu-latest","packages":"musl-tools"},
+              {"target":"x86_64-pc-windows-msvc","os":"windows-latest"}
+            ]'
+          fi
+          echo "matrix<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$matrix" | tr -d '\n' | sed 's/  */ /g' >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+  # One job per target, so a broken target does not hide the others. The target
+  # list comes from the version job: three targets by default, all seven when the
+  # `full` input asks for it.
   build:
     needs: [verify, version]
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            linker: aarch64-linux-gnu-gcc
-            packages: gcc-aarch64-linux-gnu
-          # musl builds are static, so they run on any glibc version.
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-            packages: musl-tools
-          # Ubuntu does not ship an aarch64 musl cross gcc; fetch the
-          # musl.cc toolchain instead.
-          - target: aarch64-unknown-linux-musl
-            os: ubuntu-latest
-            musl_cross: true
-          - target: x86_64-apple-darwin
-            os: macos-latest
-          - target: aarch64-apple-darwin
-            os: macos-latest
-          # Windows 11 runs x86_64 and arm64 binaries either way; one build
-          # keeps the installer's asset lookup simple.
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
+        include: ${{ fromJSON(needs.version.outputs.matrix) }}
 
     runs-on: ${{ matrix.os }}
     steps:
