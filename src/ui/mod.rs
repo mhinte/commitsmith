@@ -62,7 +62,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         draw_picker(frame, picker, area);
     }
     if app.show_help {
-        draw_help(frame, area);
+        draw_help(frame, app, area);
     }
 }
 
@@ -757,24 +757,15 @@ fn draw_commit_preview(frame: &mut Frame, picker: &Picker, area: Rect) {
     );
 }
 
-fn draw_help(frame: &mut Frame, area: Rect) {
-    let rows = [
-        ("Tab / ↓ ↑", "next or previous field"),
-        ("Enter", "next field or new line"),
-        ("Space, Ctrl+T", "type picker: 1-9 jump, 0 last"),
-        ("Ctrl+N", "scopes from config and history"),
-        ("Ctrl+P", "switch type profile"),
-        ("Ctrl+R", "reuse a recent commit's type, scope and body"),
-        ("← →", "previous/next type"),
-        ("Ctrl+K", "clear this field (the type stays)"),
-        ("S", "setup: author, ticket prefix, template, profile"),
-        ("Ctrl+S", "render the message and exit, or commit"),
-        ("Esc, Ctrl+Q", "quit without output"),
-        ("?", "this help"),
-    ];
+fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
+    // Only what this tab can do, then the keys that work everywhere. A shortcut
+    // that does nothing here would be worse than no help at all.
+    let mut rows = app.tab.help(app.commit_mode);
+    rows.push(("", ""));
+    rows.extend(Tab::global_help());
 
     let height = rows.len() as u16 + 2;
-    let width = area.width.saturating_sub(4).clamp(30, 68);
+    let width = area.width.saturating_sub(4).clamp(30, 72);
     let popup = Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
         y: area.y + (area.height.saturating_sub(height)) / 2,
@@ -786,8 +777,15 @@ fn draw_help(frame: &mut Frame, area: Rect) {
     let lines: Vec<Line> = rows
         .iter()
         .map(|(key, text)| {
+            if key.is_empty() && text.is_empty() {
+                return Line::raw("");
+            }
+            if key.is_empty() {
+                // A note about the tab, not a shortcut.
+                return Line::styled(format!(" {text}"), MUTED);
+            }
             Line::from(vec![
-                Span::styled(format!(" {key:<14}"), Style::default().fg(Color::Cyan)),
+                Span::styled(format!(" {key:<16}"), Style::default().fg(Color::Cyan)),
                 Span::styled(*text, HINT),
             ])
         })
@@ -796,7 +794,10 @@ fn draw_help(frame: &mut Frame, area: Rect) {
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::Cyan))
-        .title(Span::styled(" keys ", Style::default().fg(Color::Cyan)));
+        .title(Span::styled(
+            format!(" keys · {} ", app.tab.label()),
+            Style::default().fg(Color::Cyan),
+        ));
 
     frame.render_widget(Paragraph::new(Text::from(lines)).block(block), popup);
 }
@@ -1224,6 +1225,33 @@ mod tests {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let screen = rows(&terminal).join("\n");
         assert!(screen.contains("no repository"), "{screen}");
+    }
+
+    #[test]
+    fn the_help_shows_the_keys_of_the_active_tab() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        // Tab 1: the composer's keys, not the explorer's actions.
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+        assert!(screen.contains("keys · Commit & Stage"), "{screen}");
+        assert!(screen.contains("type picker"), "{screen}");
+        assert!(!screen.contains("check out"), "{screen}");
+
+        // Tab 2: the explorer's keys, and no commit shortcut.
+        let mut app = branch_app();
+        app.handle_key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+        assert!(screen.contains("keys · Branches"), "{screen}");
+        assert!(screen.contains("check out the selected branch"), "{screen}");
+        assert!(screen.contains("merge the selected branch"), "{screen}");
+        assert!(!screen.contains("type picker"), "{screen}");
+        assert!(!screen.contains("Ctrl+S"), "{screen}");
     }
 
     #[test]

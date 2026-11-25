@@ -89,6 +89,59 @@ impl Tab {
         keys.push(("?", "help"));
         keys
     }
+
+    /// The help overlay: only what this tab can actually do.
+    ///
+    /// An empty key means the line is a note, not a shortcut. Advertising a key
+    /// that does nothing here would be worse than showing nothing at all.
+    pub fn help(self, commit_mode: bool) -> Vec<(&'static str, &'static str)> {
+        match self {
+            Self::Commit => vec![
+                ("Tab, ↓ ↑", "next or previous field"),
+                ("Enter", "next field, or a new line in body and breaking"),
+                ("Space, Ctrl+T", "type picker: 1-9 jumps, 0 takes the last"),
+                ("← →", "previous or next type"),
+                ("Ctrl+N", "scopes from config and history"),
+                ("Ctrl+P", "switch the type profile"),
+                ("Ctrl+R", "reuse a recent commit"),
+                ("Ctrl+K", "clear this field, the type stays"),
+                ("S", "setup: author, ticket prefix, template, profile"),
+                (
+                    "Ctrl+S",
+                    if commit_mode {
+                        "commit the message and exit"
+                    } else {
+                        "render the message and exit"
+                    },
+                ),
+                ("", "checks show the same rules as `commitsmith check`"),
+            ],
+            Self::Branches => vec![
+                ("j k, ↓ ↑", "move through the branches"),
+                ("g G", "jump to the first or the last branch"),
+                ("Enter", "check out the selected branch"),
+                ("m", "merge the selected branch into the current one"),
+                ("d", "delete locally: press twice, Esc keeps it"),
+                ("r", "reload the list"),
+                ("n", "new branch (conventional wizard, E3-3)"),
+                ("", "HEAD and remote-only branches cannot be deleted"),
+            ],
+            Self::History => vec![
+                ("", "the conventional log, its filters and the release"),
+                ("", "toolbox arrive with Epic 5"),
+            ],
+        }
+    }
+
+    /// Keys that work on every tab.
+    pub fn global_help() -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("1-3", "switch tab"),
+            ("Ctrl+PgUp/PgDn", "previous or next tab"),
+            ("?", "close this help"),
+            ("Esc, Ctrl+Q", "quit without output"),
+        ]
+    }
 }
 
 #[cfg(test)]
@@ -106,6 +159,43 @@ mod tests {
         assert_eq!(Tab::History.next(), Tab::Commit);
         assert_eq!(Tab::Commit.previous(), Tab::History);
         assert_eq!(Tab::from_digit('9'), None);
+    }
+
+    #[test]
+    fn the_help_lists_only_what_the_tab_can_do() {
+        let commit = Tab::Commit.help(false);
+        assert!(commit.iter().any(|(key, _)| *key == "Ctrl+S"));
+        assert!(
+            !commit.iter().any(|(_, text)| text.contains("check out")),
+            "the composer cannot check out branches: {commit:?}"
+        );
+
+        let branches = Tab::Branches.help(false);
+        for expected in ["check out", "merge", "delete"] {
+            assert!(
+                branches.iter().any(|(_, text)| text.contains(expected)),
+                "{expected} missing: {branches:?}"
+            );
+        }
+        assert!(
+            !branches.iter().any(|(key, _)| *key == "Ctrl+S"),
+            "committing is not a key of this tab: {branches:?}"
+        );
+
+        let history = Tab::History.help(false);
+        assert!(history.iter().all(|(key, _)| key.is_empty()));
+        assert!(history.iter().any(|(_, text)| text.contains("Epic 5")));
+    }
+
+    #[test]
+    fn the_global_help_names_the_tab_keys_and_quitting() {
+        let globals = Tab::global_help();
+        for expected in ["1-3", "?", "Esc, Ctrl+Q"] {
+            assert!(
+                globals.iter().any(|(key, _)| *key == expected),
+                "{expected} missing: {globals:?}"
+            );
+        }
     }
 
     #[test]
