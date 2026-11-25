@@ -149,10 +149,16 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
             ));
             // What exactly is wrong, not only that something is: the message is
             // the one the composer would show.
-            let findings = app.log_issues(&commit);
+            // Only what would block a commit: the "optional: …" hints belong in
+            // the composer, where they help while writing, not in a review.
+            let findings: Vec<_> = app
+                .log_issues(&commit)
+                .into_iter()
+                .filter(|issue| issue.severity != crate::validate::Severity::Info)
+                .collect();
             if findings.is_empty() {
                 lines.push(Line::styled(
-                    "  lint: clean",
+                    "  ✓ lint: clean · would pass the hook today",
                     Style::default().fg(Color::Green),
                 ));
             } else {

@@ -1997,6 +1997,47 @@ mod tests {
     }
 
     #[test]
+    fn the_staging_title_counts_what_is_staged() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.staging.items = vec![
+            commitsmith::domain::ports::ChangedFile {
+                path: "src/a.rs".to_string(),
+                index: Some(commitsmith::domain::ports::FileState::Modified),
+                worktree: None,
+            },
+            commitsmith::domain::ports::ChangedFile {
+                path: "src/b.rs".to_string(),
+                index: None,
+                worktree: Some(commitsmith::domain::ports::FileState::Modified),
+            },
+        ];
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+        assert!(screen.contains("staging · 2 · 1 staged"), "{screen}");
+    }
+
+    #[test]
+    fn a_clean_commit_is_green_and_optional_hints_are_not_repeated() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.tab = crate::application::tabs::Tab::History;
+        app.set_history(vec![past("feat", "ui", "add the button")]);
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+        assert!(screen.contains("lint: clean"), "{screen}");
+        assert!(!screen.contains("optional:"), "no hints here: {screen}");
+    }
+
+    #[test]
     fn the_detail_pane_names_what_the_linter_objects_to() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;

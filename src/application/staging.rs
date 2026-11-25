@@ -39,6 +39,11 @@ impl Staging {
         self.refresh_diff(repo)
     }
 
+    /// How many files are fully staged — the number the pane title shows.
+    pub fn staged_count(&self) -> usize {
+        self.items.iter().filter(|file| file.is_staged()).count()
+    }
+
     pub fn selected_path(&self) -> Option<String> {
         self.items.get(self.selected).map(|file| file.path.clone())
     }

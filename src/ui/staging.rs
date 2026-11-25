@@ -25,10 +25,12 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             theme::idle_panel()
         })
         .title(Line::from(Span::styled(
-            if staging.items.is_empty() {
-                " staging ".to_string()
-            } else {
-                format!(" staging · {} ", staging.items.len())
+            match (staging.items.is_empty(), staging.staged_count()) {
+                (true, _) => " staging ".to_string(),
+                (false, 0) => format!(" staging · {} ", staging.items.len()),
+                (false, staged) => {
+                    format!(" staging · {} · {} staged ", staging.items.len(), staged)
+                }
             },
             if focused {
                 theme::focused_panel()
