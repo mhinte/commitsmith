@@ -201,6 +201,17 @@ fn draw_release(frame: &mut Frame, app: &App, area: Rect) {
         None => lines.push(Line::styled("  no repository", MUTED)),
         Some(plan) => {
             lines.push(Line::styled(format!("  {}", plan.headline()), HINT));
+            if app.release_confirm {
+                lines.push(Line::styled(
+                    format!(
+                        "  Enter writes CHANGELOG.md and tags v{} · Esc cancels",
+                        plan.next
+                    ),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                ));
+            }
             lines.push(Line::raw(""));
             for line in commitsmith::domain::release::render_section(plan).lines() {
                 if lines.len() >= height {

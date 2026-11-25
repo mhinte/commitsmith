@@ -222,6 +222,10 @@ impl GitRepository for GitBackend {
         self.git(&["fetch", "--prune", "--quiet"]).map(|_| ())
     }
 
+    fn create_tag(&self, tag: &str, message: &str) -> Result<(), GitError> {
+        self.git(&["tag", "-a", tag, "-m", message]).map(|_| ())
+    }
+
     /// `git rev-list --left-right --count HEAD...@{upstream}` answers both numbers
     /// in one call: left is ahead, right is behind. A missing upstream is not an
     /// error — it is a state the caller has to explain to the user.

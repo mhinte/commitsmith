@@ -24,6 +24,8 @@ pub struct RecordingGit {
     pub sync_error: Option<String>,
     /// Per-branch ahead/behind, as `branch_sync` reports it.
     pub sync_map: std::collections::HashMap<String, (usize, usize)>,
+    /// When set, `create_tag` fails with this message.
+    pub tag_error: Option<String>,
     /// What `commits_since` hands out.
     pub commits: RefCell<Vec<PastCommit>>,
     /// Files the fake reports, with their real index/worktree state.
@@ -44,6 +46,7 @@ impl RecordingGit {
             create_fails: false,
             sync: Some((0, 0)),
             sync_error: None,
+            tag_error: None,
             sync_map: std::collections::HashMap::new(),
             commits: RefCell::new(Vec::new()),
             files: RefCell::new(Vec::new()),
@@ -200,6 +203,14 @@ impl GitRepository for RecordingGit {
     fn fetch(&self) -> Result<(), GitError> {
         self.calls.borrow_mut().push("fetch".to_string());
         Ok(())
+    }
+
+    fn create_tag(&self, tag: &str, _message: &str) -> Result<(), GitError> {
+        self.calls.borrow_mut().push(format!("tag {tag}"));
+        match &self.tag_error {
+            Some(message) => Err(GitError::remote("tag", message.clone())),
+            None => Ok(()),
+        }
     }
 
     fn ahead_behind(&self) -> Result<Option<(usize, usize)>, GitError> {

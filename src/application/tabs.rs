@@ -83,7 +83,12 @@ impl Tab {
                 ("n", "new branch"),
                 ("f", "fetch"),
             ],
-            Self::History => vec![("↓ ↑", "move"), ("/", "filter"), ("c", "clear filter")],
+            Self::History => vec![
+                ("↓ ↑", "move"),
+                ("/", "filter"),
+                ("y", "write release"),
+                ("c", "clear filter"),
+            ],
         };
         keys.push(("1-3", "tabs"));
         keys.push(("?", "help"));

@@ -231,6 +231,11 @@ pub struct App {
     pub log: LogState,
     /// What the next release would be, from the last tag to `HEAD`.
     pub plan: Option<commitsmith::domain::release::ReleasePlan>,
+    /// True while the write waits for a second keypress: nothing happens behind
+    /// the user's back.
+    pub release_confirm: bool,
+    /// Where `CHANGELOG.md` lives; set by the caller, `None` outside a repository.
+    changelog_root: Option<std::path::PathBuf>,
     /// Staging list of tab 1.
     pub staging: Staging,
     /// Short name of the checked-out branch, for the context bridge.
@@ -303,6 +308,8 @@ impl App {
             branches: BranchList::default(),
             log: LogState::default(),
             plan: None,
+            release_confirm: false,
+            changelog_root: None,
             staging: Staging::default(),
             branch_name: None,
             type_touched: false,
@@ -409,6 +416,48 @@ impl App {
         self.refresh_plan();
     }
 
+    pub fn set_changelog_root(&mut self, root: std::path::PathBuf) {
+        self.changelog_root = Some(root);
+    }
+
+    /// Write the changelog section and tag the release — but only after `y` armed
+    /// it and Enter confirmed.
+    fn write_release(&mut self) {
+        self.release_confirm = false;
+        let Some(plan) = self.plan.clone() else {
+            self.status = "no release plan · nothing to write".to_string();
+            return;
+        };
+        let Some(root) = self.changelog_root.clone() else {
+            self.status = "no repository · nowhere to write CHANGELOG.md".to_string();
+            return;
+        };
+        let section = commitsmith::domain::release::render_section(&plan);
+        match commitsmith::infrastructure::changelog::write_section(&root, &plan.next, &section) {
+            Ok(path) => {
+                let tag = format!("v{}", plan.next);
+                let message = format!("Release {}", plan.next);
+                match self
+                    .git
+                    .as_deref()
+                    .map(|git| git.create_tag(&tag, &message))
+                {
+                    Some(Ok(())) => {
+                        self.status = format!("wrote {} · tagged {tag}", path.display());
+                        self.refresh_plan();
+                    }
+                    // The file is written; saying so is more useful than hiding it.
+                    Some(Err(error)) => {
+                        self.status =
+                            format!("wrote {} · tag {tag} failed: {error}", path.display());
+                    }
+                    None => self.status = format!("wrote {}", path.display()),
+                }
+            }
+            Err(error) => self.status = format!("changelog not written: {error}"),
+        }
+    }
+
     /// Rebuild the release plan: last version tag, the commits since it, and what
     /// they demand. Reading only — nothing is written until the user asks.
     pub fn refresh_plan(&mut self) {
@@ -510,6 +559,18 @@ impl App {
             self.should_quit = true;
             return;
         }
+        // The release: `y` asks, Enter writes, Esc or `n` backs out.
+        if self.release_confirm && self.log.input.is_none() {
+            match key.code {
+                KeyCode::Enter | KeyCode::Char('y') => self.write_release(),
+                KeyCode::Esc | KeyCode::Char('n') => {
+                    self.release_confirm = false;
+                    self.status = "release cancelled · file and tags untouched".to_string();
+                }
+                _ => {}
+            }
+            return;
+        }
         if self.log.input.is_some() {
             match key.code {
                 KeyCode::Esc => self.log.cancel_filter(),
@@ -540,6 +601,16 @@ impl App {
             KeyCode::End => self.log.selected = len.saturating_sub(1),
             KeyCode::Char('/') => self.log.open_filter(),
             KeyCode::Char('c') => self.log.clear_filter(),
+            KeyCode::Char('y') => {
+                self.release_confirm = true;
+                let next = self
+                    .plan
+                    .as_ref()
+                    .map(|plan| plan.next.to_string())
+                    .unwrap_or_default();
+                self.status =
+                    format!("write CHANGELOG.md and tag v{next}? Enter confirms · Esc cancels");
+            }
             _ => {}
         }
     }
@@ -2276,6 +2347,80 @@ mod tests {
         assert_eq!(app.sync_label().as_deref(), Some("in sync"));
         let (app, _) = app_with_remote(None);
         assert_eq!(app.sync_label().as_deref(), Some("no upstream"));
+    }
+
+    #[test]
+    fn a_cancelled_release_writes_nothing() {
+        let dir = std::env::temp_dir().join(format!("commitsmith-cancel-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        use crate::application::test_support::RecordingGit;
+        let git = RecordingGit::new(&["main"], "main");
+        let calls = git.calls();
+        let mut app = App::with_config(Config::conventional(), Vec::new());
+        app.tab = tabs::Tab::History;
+        app.set_changelog_root(dir.clone());
+        app.set_git(Box::new(git));
+        app.refresh_plan();
+
+        press(&mut app, KeyCode::Char('y'));
+        assert!(app.release_confirm);
+        press(&mut app, KeyCode::Esc);
+        assert!(!app.release_confirm);
+        assert!(
+            calls.borrow().iter().all(|call| !call.starts_with("tag ")),
+            "no tag after cancelling: {:?}",
+            calls.borrow()
+        );
+        assert!(
+            !dir.join("CHANGELOG.md").exists(),
+            "no file after cancelling"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_confirmed_release_writes_the_file_and_tags_it() {
+        let dir = std::env::temp_dir().join(format!("commitsmith-write-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        use crate::application::test_support::RecordingGit;
+        let git = RecordingGit::new(&["main"], "main");
+        git.commits
+            .borrow_mut()
+            .push(commitsmith::domain::history::PastCommit {
+                short_id: "abc1234".to_string(),
+                id: "abc1234".to_string(),
+                author: "Marc".to_string(),
+                date: "today".to_string(),
+                summary: "add a button".to_string(),
+                body: String::new(),
+                kind: Some("feat".to_string()),
+                scope: Some("ui".to_string()),
+                files: Vec::new(),
+            });
+        let calls = git.calls();
+        let mut app = App::with_config(Config::conventional(), Vec::new());
+        app.tab = tabs::Tab::History;
+        app.set_changelog_root(dir.clone());
+        app.set_git(Box::new(git));
+        app.refresh_plan();
+
+        press(&mut app, KeyCode::Char('y'));
+        press(&mut app, KeyCode::Enter);
+
+        let text = std::fs::read_to_string(dir.join("CHANGELOG.md")).unwrap();
+        assert!(text.contains("## 0.1.0"), "{text}");
+        assert!(text.contains("**ui**: add a button"), "{text}");
+        assert!(
+            calls.borrow().iter().any(|call| call == "tag v0.1.0"),
+            "annotated tag created: {:?}",
+            calls.borrow()
+        );
+        assert!(app.status.contains("tagged v0.1.0"), "{}", app.status);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -139,6 +139,8 @@ pub trait GitRepository {
     fn branch_sync(&self) -> Result<Vec<(String, usize, usize)>, GitError>;
     /// Updates the remote-tracking branches; nothing in the work tree changes.
     fn fetch(&self) -> Result<(), GitError>;
+    /// Creates an annotated tag, which is what a release is.
+    fn create_tag(&self, tag: &str, message: &str) -> Result<(), GitError>;
 }
 
 /// The user-wide and the project config file.
@@ -281,6 +283,11 @@ mod tests {
 
         fn fetch(&self) -> Result<(), GitError> {
             self.calls.borrow_mut().push("fetch".to_string());
+            Ok(())
+        }
+
+        fn create_tag(&self, tag: &str, _message: &str) -> Result<(), GitError> {
+            self.calls.borrow_mut().push(format!("tag {tag}"));
             Ok(())
         }
     }

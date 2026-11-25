@@ -241,6 +241,8 @@ fn run_composer(commit: bool) -> ExitCode {
         app.set_config_store(Box::new(
             commitsmith::infrastructure::config_toml::TomlConfigStore::new(),
         ));
+        // Tab 3 writes CHANGELOG.md into the working directory it was started in.
+        app.set_changelog_root(cwd());
 
         // Scope suggestions come from history; a missing repository is fine, and
         // so is one that cannot be read: the composer still opens.

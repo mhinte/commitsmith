@@ -251,10 +251,43 @@ fn entry(commit: &PastCommit) -> String {
         Some(scope) => format!("**{scope}**: {}", commit.summary),
         None => commit.summary.clone(),
     };
+    // Only add the ticket when the subject does not already name it.
     if let Some(ticket) = ticket_of(commit) {
-        text.push_str(&format!(" ({ticket})"));
+        if !commit
+            .summary
+            .to_uppercase()
+            .contains(&ticket.to_uppercase())
+        {
+            text.push_str(&format!(" ({ticket})"));
+        }
     }
     text
+}
+
+/// Where a new section goes in an existing changelog: directly under the title,
+/// above everything that is already there. Existing sections are never touched,
+/// and a version that is already written is not written twice.
+pub fn prepend(existing: &str, version: &SemVer, section: &str) -> String {
+    let marker = format!("## {version}");
+    if existing.contains(&marker) {
+        return existing.to_string();
+    }
+    let section = section.trim_end();
+    if existing.trim().is_empty() {
+        return format!("# Changelog\n\n{section}\n");
+    }
+    // Keep the title (if any) on top, then the new section, then the rest.
+    let (head, rest) = match existing.find("\n## ") {
+        Some(position) => (&existing[..position], &existing[position..]),
+        None => (existing, ""),
+    };
+    let head = head.trim_end();
+    let rest = rest.trim_start_matches('\n');
+    if rest.is_empty() {
+        format!("{head}\n\n{section}\n")
+    } else {
+        format!("{head}\n\n{section}\n\n{rest}")
+    }
 }
 
 #[cfg(test)]
@@ -325,10 +358,12 @@ mod tests {
         let text = render_section(&plan);
         assert!(text.starts_with("## 0.16.0"), "{text}");
         assert!(text.contains("### Features"), "{text}");
+        // The subject already names the ticket; it is not repeated.
         assert!(
             text.contains("**ui**: add the button (TICKET-42)"),
             "{text}"
         );
+        assert_eq!(text.matches("TICKET-42").count(), 1, "{text}");
         assert!(text.contains("### Fixes"), "{text}");
         assert!(text.contains("repair it (TICKET-7)"), "{text}");
     }
@@ -349,6 +384,33 @@ mod tests {
         let breaking_at = text.find("### Breaking changes").unwrap();
         let features_at = text.find("### Features").unwrap();
         assert!(breaking_at < features_at, "breaking comes first");
+    }
+
+    #[test]
+    fn a_new_section_goes_under_the_title_and_keeps_the_old_ones() {
+        let existing = "# Changelog\n\n## 0.15.0\n\n### Features\n\n- old thing\n";
+        let section = "## 0.16.0\n\n### Fixes\n\n- new thing";
+        let text = prepend(existing, &SemVer::new(0, 16, 0), section);
+        let title = text.find("# Changelog").unwrap();
+        let new_at = text.find("## 0.16.0").unwrap();
+        let old_at = text.find("## 0.15.0").unwrap();
+        assert!(title < new_at && new_at < old_at, "{text}");
+        assert!(text.contains("- old thing"), "old section kept: {text}");
+    }
+
+    #[test]
+    fn a_version_that_is_already_there_is_not_written_twice() {
+        let existing = "# Changelog\n\n## 0.16.0\n\n- done\n";
+        let text = prepend(existing, &SemVer::new(0, 16, 0), "## 0.16.0\n- again");
+        assert_eq!(text, existing);
+        assert_eq!(text.matches("## 0.16.0").count(), 1);
+    }
+
+    #[test]
+    fn an_empty_file_becomes_a_changelog() {
+        let text = prepend("", &SemVer::new(0, 1, 0), "## 0.1.0\n\n- first");
+        assert!(text.starts_with("# Changelog"), "{text}");
+        assert!(text.contains("## 0.1.0"), "{text}");
     }
 
     #[test]

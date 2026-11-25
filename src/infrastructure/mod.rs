@@ -4,6 +4,7 @@
 //! the `git` CLI for writing, TOML files for the config. The application only
 //! knows the traits from [`crate::domain::ports`].
 
+pub mod changelog;
 pub mod config_toml;
 pub mod diagnostics;
 pub mod git_cli;
