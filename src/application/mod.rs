@@ -180,6 +180,8 @@ pub struct App {
     pub branches: BranchList,
     /// Short name of the checked-out branch, for the context bridge.
     pub branch_name: Option<String>,
+    /// True once the user chose a type; the branch must not override it.
+    type_touched: bool,
     /// What `seed_footer` last wrote, so a later suggestion may replace its own
     /// text but never what the user typed.
     footer_seed: Option<String>,
@@ -233,6 +235,7 @@ impl App {
             git: None,
             branches: BranchList::default(),
             branch_name: None,
+            type_touched: false,
             footer_seed: None,
             wizard: BranchWizard::default(),
             in_repository: false,
@@ -363,7 +366,31 @@ impl App {
         if let Some(error) = failure {
             self.status = error.to_string();
         }
+        self.apply_branch_type();
         self.seed_footer();
+    }
+
+    /// Take the commit type from the branch kind — but only while the user has
+    /// not chosen a type themselves.
+    fn apply_branch_type(&mut self) {
+        if self.type_touched {
+            return;
+        }
+        let Some(name) = self.branch_name.as_deref() else {
+            return;
+        };
+        let Ok(parsed) = ConventionalBranchName::parse(name) else {
+            return;
+        };
+        let kind = parsed.kind().commit_type().to_string();
+        // A profile may not have that type; then the current one stays.
+        if !self.config.type_names().contains(&kind) {
+            return;
+        }
+        if self.commit.kind != kind {
+            self.commit.kind = kind;
+            self.revalidate();
+        }
     }
 
     /// Keys of the second and third tab. The composer's keys must not fire here.
@@ -667,6 +694,7 @@ impl App {
             None => 0,
         };
         self.commit.kind = types[idx].clone();
+        self.type_touched = true;
         self.revalidate();
     }
 
@@ -765,6 +793,7 @@ impl App {
             if self.rules.types.is_empty() || self.rules.types.contains(&kind) {
                 applied.push("type");
                 self.commit.kind = kind;
+                self.type_touched = true;
             }
         }
         if let Some(scope) = template.scope {
@@ -827,6 +856,7 @@ impl App {
         match kind {
             PickerKind::Type => {
                 self.commit.kind = choice;
+                self.type_touched = true;
                 self.next_field();
             }
             PickerKind::Scope => self.commit.scope = choice,
@@ -2013,6 +2043,83 @@ mod tests {
             app.commit.footer, "Refs TICKET-42\nCo-authored-by: hima",
             "the branch's ticket and the co-author follow each other"
         );
+    }
+
+    #[test]
+    fn the_branch_kind_sets_the_commit_type() {
+        let config = Config::conventional();
+        let app = app_on_branch(config, "hotfix/hima/TICKET-1/urgent");
+        assert_eq!(app.commit.kind, "fix", "a hotfix is a fix for the message");
+    }
+
+    #[test]
+    fn a_docs_branch_sets_docs() {
+        let app = app_on_branch(Config::conventional(), "docs/hima/TICKET-2/readme");
+        assert_eq!(app.commit.kind, "docs");
+    }
+
+    #[test]
+    fn a_typed_type_is_never_overwritten_by_a_branch() {
+        let git = RecordingGit::new(&["main", "chore/hima/TICKET-3/tidy"], "main");
+        let mut app = App::with_config(Config::conventional(), Vec::new());
+        app.set_in_repository(true);
+        app.set_git(Box::new(git));
+        // The user picks a type themselves.
+        press(&mut app, KeyCode::Right);
+        let chosen = app.commit.kind.clone();
+        assert_ne!(chosen, "chore");
+
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            app.commit.kind, chosen,
+            "the branch must not win over the user"
+        );
+    }
+
+    #[test]
+    fn a_branch_kind_missing_from_the_profile_is_ignored() {
+        let mut config = Config::conventional();
+        // A house profile without `docs`: the branch kind has no counterpart.
+        let mut profile = config.active().clone();
+        profile.types.retain(|kind| kind.name != "docs");
+        config.profiles.insert("house".into(), profile);
+        config.profile = "house".into();
+        assert!(!config.type_names().contains(&"docs".to_string()));
+
+        let app = app_on_branch(config, "docs/hima/TICKET-4/readme");
+        assert_ne!(app.commit.kind, "docs", "the profile has no such type");
+        assert_eq!(app.commit.kind, "feat", "the default stays");
+    }
+
+    #[test]
+    fn a_non_conventional_branch_leaves_the_type_alone() {
+        let app = app_on_branch(Config::conventional(), "main");
+        assert_eq!(app.commit.kind, "feat", "the default stays");
+    }
+
+    #[test]
+    fn a_branch_from_the_wizard_sets_the_type_too() {
+        let mut config = Config::conventional();
+        config.author = Some("hima".into());
+        config.prefix = Some("hima".into());
+        config.ticket_prefix = "TICKET".into();
+        config.branch_template = "{type}/{author}/{ticket}/{slug}".into();
+        let mut app = app_on_branch(config, "main");
+        assert_eq!(app.commit.kind, "feat");
+
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('n'));
+        press(&mut app, KeyCode::Right); // feat -> fix
+        press(&mut app, KeyCode::Tab);
+        type_text(&mut app, "12");
+        press(&mut app, KeyCode::Tab);
+        type_text(&mut app, "broken thing");
+        press(&mut app, KeyCode::Enter);
+
+        assert_eq!(app.commit.kind, "fix", "the new branch is a fix branch");
+        assert_eq!(app.commit.footer, "Refs TICKET-12\nCo-authored-by: hima");
     }
 
     #[test]

@@ -239,6 +239,11 @@ branch that carries a ticket contributes `Refs TICKET-1234`, and `co_author`
 adds the co-author line. Text you type yourself is never replaced — not even
 when you switch branches. `co_author = false` leaves the line out.
 
+The commit type follows the branch as long as you have not picked one yourself:
+`hotfix/...` and `fix/...` mean `fix`, `docs/...` means `docs`, `chore/...` and
+`release/...` mean `chore`. A branch that is not conventional, or a kind your
+profile does not offer, leaves the current type alone.
+
 ## Keys
 
 | Key | Action |
