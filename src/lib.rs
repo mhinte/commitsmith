@@ -11,3 +11,4 @@
 //! new code lands in the layers below.
 
 pub mod domain;
+pub mod infrastructure;
