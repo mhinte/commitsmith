@@ -99,6 +99,8 @@ pub struct SetupAnswers {
     pub profile: String,
     /// Show emojis in the type picker.
     pub emoji: bool,
+    /// Add `Co-authored-by:` to the commit footer.
+    pub co_author: bool,
     /// Offer to install the `git smith` alias.
     pub git_alias: bool,
 }
@@ -123,6 +125,7 @@ impl SetupAnswers {
                     .unwrap_or_else(|| "conventional".to_string())
             },
             emoji: true,
+            co_author: true,
             git_alias: false,
         }
     }

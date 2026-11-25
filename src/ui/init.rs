@@ -79,6 +79,10 @@ pub fn ask(
     }
 
     answers.emoji = confirm("Emojis in the type picker", answers.emoji);
+    answers.co_author = confirm(
+        "Add `Co-authored-by:` to the commit footer",
+        answers.co_author,
+    );
     answers.git_alias = confirm("Offer `git smith` as a git alias", answers.git_alias);
     Some(answers)
 }

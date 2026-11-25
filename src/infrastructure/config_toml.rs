@@ -580,6 +580,7 @@ pub fn save_setup(
     );
     table.insert("profile".into(), answers.profile.clone().into());
     table.insert("emoji".into(), answers.emoji.into());
+    table.insert("co_author".into(), answers.co_author.into());
 
     let text = toml::to_string_pretty(&table)
         .map_err(|error| ConfigError::parse("user config", format!("{error}")))?;
