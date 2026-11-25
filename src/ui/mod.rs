@@ -47,6 +47,7 @@ fn plural(count: usize, word: &str) -> String {
 const HINT: Style = Style::new().fg(Color::Gray);
 const MUTED: Style = Style::new().fg(Color::DarkGray);
 
+pub mod branch_wizard;
 pub mod branches;
 
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -81,8 +82,20 @@ fn draw_full(frame: &mut Frame, app: &App, area: Rect) {
     let cursor = match app.tab {
         Tab::Commit => draw_commit_body(frame, app, body),
         Tab::Branches => {
-            branches::draw(frame, app, body);
-            None
+            // The wizard sits beside the list, not on top of it: while it is
+            // open the branches stay visible for reference.
+            if app.wizard.open {
+                let [list, wizard] = Layout::horizontal([
+                    Constraint::Min(24),
+                    Constraint::Length(body.width.clamp(0, 52).max(body.width / 2)),
+                ])
+                .areas(body);
+                branches::draw(frame, app, list);
+                branch_wizard::draw(frame, app, wizard)
+            } else {
+                branches::draw(frame, app, body);
+                None
+            }
         }
         Tab::History => {
             draw_placeholder(
@@ -890,15 +903,6 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         height: 1,
         ..area
     };
-    if !app.status.is_empty() {
-        frame.render_widget(
-            Paragraph::new(Line::styled(
-                format!(" {}", app.status),
-                Style::default().fg(Color::Cyan),
-            )),
-            second_row,
-        );
-    }
 
     // Branch and profile are context, not decisions: they sit at the far right
     // of the second row, out of the way of the message.
@@ -910,6 +914,25 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         format!("no git repository · {} ", app.config.profile)
     };
+    let context_width = unicode_width::UnicodeWidthStr::width(context.as_str()) as u16;
+
+    if !app.status.is_empty() {
+        // The status must not run under the context: it is cut, not overwritten.
+        // One cell of air between the status and the context.
+        let room = second_row.width.saturating_sub(context_width + 2);
+        let status = fit(&app.status, room as usize);
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                format!(" {status}"),
+                Style::default().fg(Color::Cyan),
+            )),
+            Rect {
+                width: room.saturating_add(1),
+                ..second_row
+            },
+        );
+    }
+
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             context,
@@ -922,6 +945,25 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         .right_aligned(),
         second_row,
     );
+}
+
+/// Cut `text` to `width` display cells, with an ellipsis when it was longer.
+fn fit(text: &str, width: usize) -> String {
+    if unicode_width::UnicodeWidthStr::width(text) <= width {
+        return text.to_string();
+    }
+    let mut out = String::new();
+    let mut used = 0;
+    for c in text.chars() {
+        let cell = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1);
+        if used + cell + 1 > width {
+            break;
+        }
+        used += cell;
+        out.push(c);
+    }
+    out.push('…');
+    out
 }
 
 /// Run the TUI until the user quits or hands the message over.
@@ -1255,6 +1297,51 @@ mod tests {
     }
 
     #[test]
+    fn the_wizard_sits_beside_the_branch_list() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = branch_app();
+        app.config.author = Some("hima".to_string());
+        app.config.ticket_prefix = "TICKET".to_string();
+        app.config.branch_template = "{type}/{author}/{ticket}/{slug}".to_string();
+        app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+
+        let mut terminal = Terminal::new(TestBackend::new(110, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+
+        assert!(screen.contains("new branch"), "{screen}");
+        assert!(
+            screen.contains("branches · "),
+            "the list stays visible: {screen}"
+        );
+        assert!(screen.contains("feat/hima/<description>"), "{screen}");
+        assert!(screen.contains("description"), "{screen}");
+    }
+
+    #[test]
+    fn the_wizard_previews_the_name_as_it_is_typed() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = branch_app();
+        app.config.author = Some("hima".to_string());
+        app.config.branch_template = "{type}/{author}/{slug}".to_string();
+        app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        for c in "Add a thing".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+
+        let mut terminal = Terminal::new(TestBackend::new(110, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+        assert!(screen.contains("feat/hima/add-a-thing"), "{screen}");
+    }
+
+    #[test]
     fn the_branch_tab_advertises_its_own_keys() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
@@ -1269,6 +1356,31 @@ mod tests {
         assert!(
             !screen.contains("C-s"),
             "the composer keys do not belong here"
+        );
+    }
+
+    #[test]
+    fn a_long_status_does_not_run_under_the_context() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.set_in_repository(true);
+        app.set_repo_line("feat/hima/TICKET-42/add-a-thing · 0 staged".to_string());
+        app.status = "created and checked out feat/hima/TICKET-42/add-a-thing".to_string();
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal);
+        let row = &screen[29];
+        assert!(row.trim_end().ends_with("conventional"), "{row:?}");
+        assert!(
+            row.contains("feat/hima/TICKET-42/add-a-thing · 0 staged · conventional"),
+            "the context stays whole: {row:?}"
+        );
+        assert!(
+            row.contains('…'),
+            "the status is cut, not overwritten: {row:?}"
         );
     }
 

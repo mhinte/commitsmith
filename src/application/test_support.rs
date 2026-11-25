@@ -12,6 +12,7 @@ pub struct RecordingGit {
     pub branches: RefCell<Vec<BranchInfo>>,
     calls: Rc<RefCell<Vec<String>>>,
     pub merge_fails: bool,
+    pub create_fails: bool,
 }
 
 impl RecordingGit {
@@ -25,6 +26,7 @@ impl RecordingGit {
             ),
             calls: Rc::new(RefCell::new(Vec::new())),
             merge_fails: false,
+            create_fails: false,
         }
     }
 
@@ -88,6 +90,11 @@ impl GitRepository for RecordingGit {
 
     fn create_branch(&self, name: &str) -> Result<(), GitError> {
         self.calls.borrow_mut().push(format!("create {name}"));
+        if self.create_fails {
+            return Err(GitError::invalid_state(format!(
+                "a branch called `{name}` already exists"
+            )));
+        }
         Ok(())
     }
 

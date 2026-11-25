@@ -5,6 +5,7 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
+pub mod branch_wizard;
 pub mod branches;
 pub mod tabs;
 #[cfg(test)]
@@ -19,6 +20,7 @@ pub type FilesLoader = Box<dyn Fn(&str) -> Vec<String> + Send + Sync>;
 use crate::config::Config;
 use crate::git::{PastCommit, ScopeInfo};
 use crate::validate::{self, Issue, Rules, Severity};
+use branch_wizard::BranchWizard;
 use branches::BranchList;
 use commitsmith::domain::ports::GitRepository;
 
@@ -175,6 +177,8 @@ pub struct App {
     pub git: Option<Box<dyn GitRepository>>,
     /// Branch explorer state.
     pub branches: BranchList,
+    /// The conventional branch wizard on tab 2.
+    pub wizard: BranchWizard,
     /// False when the working directory is not inside a repository; the header
     /// says so, because scope suggestions and committing need one.
     pub in_repository: bool,
@@ -222,6 +226,7 @@ impl App {
             tab: tabs::Tab::Commit,
             git: None,
             branches: BranchList::default(),
+            wizard: BranchWizard::default(),
             in_repository: false,
             files_loader: None,
             files_cache: HashMap::new(),
@@ -304,6 +309,10 @@ impl App {
     /// Keys of the second and third tab. The composer's keys must not fire here.
     fn branch_key(&mut self, key: KeyEvent) {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if self.wizard.open {
+            self.wizard_key(key);
+            return;
+        }
         match key.code {
             KeyCode::Char('c') | KeyCode::Char('q') if ctrl => self.should_quit = true,
             KeyCode::Char('?') => self.show_help = true,
@@ -327,9 +336,7 @@ impl App {
             KeyCode::Char('m') => self.merge_selected(),
             KeyCode::Char('d') => self.delete_selected(),
             KeyCode::Char('r') => self.reload_branches(),
-            KeyCode::Char('n') => {
-                self.status = "the branch wizard follows in E3-3".to_string();
-            }
+            KeyCode::Char('n') => self.wizard.start(),
             KeyCode::Esc => {
                 // Esc is the cancel key while a deletion waits for its second
                 // press; otherwise it leaves the program as everywhere else.
@@ -338,6 +345,54 @@ impl App {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Keys inside the wizard: typing wins over every list shortcut.
+    fn wizard_key(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Esc => self.wizard.close(),
+            KeyCode::Char('c') if ctrl => {
+                self.wizard.close();
+                self.should_quit = true;
+            }
+            KeyCode::Tab => self.wizard.field = self.wizard.field.next(),
+            KeyCode::BackTab => self.wizard.field = self.wizard.field.previous(),
+            KeyCode::Left if self.wizard.field == branch_wizard::WizardField::Kind => {
+                self.wizard.cycle_kind(false);
+            }
+            KeyCode::Right if self.wizard.field == branch_wizard::WizardField::Kind => {
+                self.wizard.cycle_kind(true);
+            }
+            KeyCode::Left => self.wizard.field = self.wizard.field.previous(),
+            KeyCode::Right => self.wizard.field = self.wizard.field.next(),
+            KeyCode::Backspace => self.wizard.backspace(),
+            KeyCode::Enter => self.create_branch(),
+            KeyCode::Char(c) if !ctrl => self.wizard.push_char(c),
+            _ => {}
+        }
+    }
+
+    fn create_branch(&mut self) {
+        let author = self
+            .config
+            .author
+            .clone()
+            .or_else(|| self.config.prefix.clone());
+        let prefix = self.config.ticket_prefix.clone();
+        let template = self.config.branch_template.clone();
+        let (git, wizard) = (&self.git, &mut self.wizard);
+        let Some(git) = git.as_deref() else {
+            self.status = "no repository".to_string();
+            return;
+        };
+        match wizard.create(git, author.as_deref(), &prefix, &template) {
+            Ok(name) => {
+                self.status = format!("created and checked out {name}");
+                self.reload_branches();
+            }
+            Err(message) => self.status = message,
         }
     }
 
@@ -807,7 +862,9 @@ impl App {
         if self.show_help || self.picker.is_some() {
             return false;
         }
-        let typing = self.tab == tabs::Tab::Commit && self.is_editing();
+        // Digits are text while a field is being typed into — in the composer
+        // and in the branch wizard, where a ticket number starts with one.
+        let typing = (self.tab == tabs::Tab::Commit && self.is_editing()) || self.wizard.open;
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Char(digit @ '1'..='3') if !ctrl && !typing => {
@@ -1232,6 +1289,95 @@ mod tests {
             ["checkout feature", "merge main"],
             "git must be told about both, in that order"
         );
+    }
+
+    fn wizard_app(git: RecordingGit) -> App {
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.config.author = Some("hima".to_string());
+        app.config.ticket_prefix = "TICKET".to_string();
+        app.config.branch_template = "{type}/{author}/{ticket}/{slug}".to_string();
+        app.set_in_repository(true);
+        app.set_git(Box::new(git));
+        press(&mut app, KeyCode::Char('2'));
+        app
+    }
+
+    #[test]
+    fn n_opens_the_wizard_and_esc_closes_it_again() {
+        let mut app = wizard_app(RecordingGit::new(&["main"], "main"));
+        press(&mut app, KeyCode::Char('n'));
+        assert!(app.wizard.open);
+        press(&mut app, KeyCode::Esc);
+        assert!(!app.wizard.open, "Esc closes the wizard");
+        assert!(!app.should_quit, "and does not leave the program");
+    }
+
+    #[test]
+    fn enter_creates_the_branch_and_checks_it_out() {
+        let git = RecordingGit::new(&["main"], "main");
+        let log = git.calls();
+        let mut app = wizard_app(git);
+        press(&mut app, KeyCode::Char('n'));
+        press(&mut app, KeyCode::Tab); // ticket
+        press(&mut app, KeyCode::Tab); // description
+        type_text(&mut app, "Add a thing");
+        press(&mut app, KeyCode::Enter);
+
+        assert_eq!(app.status, "created and checked out feat/hima/add-a-thing");
+        assert!(!app.wizard.open, "the wizard closes on success");
+        assert_eq!(
+            log.borrow().as_slice(),
+            [
+                "create feat/hima/add-a-thing",
+                "checkout feat/hima/add-a-thing"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_ticket_lands_in_the_name() {
+        let git = RecordingGit::new(&["main"], "main");
+        let log = git.calls();
+        let mut app = wizard_app(git);
+        press(&mut app, KeyCode::Char('n'));
+        press(&mut app, KeyCode::Tab);
+        type_text(&mut app, "1234");
+        press(&mut app, KeyCode::Tab);
+        type_text(&mut app, "add a thing");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            app.status,
+            "created and checked out feat/hima/TICKET-1234/add-a-thing"
+        );
+        assert_eq!(log.borrow()[0], "create feat/hima/TICKET-1234/add-a-thing");
+    }
+
+    #[test]
+    fn a_duplicate_branch_keeps_the_wizard_open() {
+        let mut git = RecordingGit::new(&["main"], "main");
+        git.create_fails = true;
+        let mut app = wizard_app(git);
+        press(&mut app, KeyCode::Char('n'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        type_text(&mut app, "thing");
+        press(&mut app, KeyCode::Enter);
+
+        assert!(app.wizard.open, "the user can correct and try again");
+        assert!(app.wizard.error.is_some());
+        assert!(app.status.contains("already exists"), "{}", app.status);
+    }
+
+    #[test]
+    fn the_wizard_takes_the_keys_away_from_the_list() {
+        let mut app = wizard_app(RecordingGit::new(&["main", "feature"], "main"));
+        press(&mut app, KeyCode::Char('n'));
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.branches.selected, 0, "j does not move the list");
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.wizard.description, "j");
     }
 
     #[test]

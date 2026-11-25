@@ -122,8 +122,12 @@ impl Tab {
                 ("Enter", "check out the selected branch"),
                 ("m", "merge the selected branch into the current one"),
                 ("d", "delete locally: press twice, Esc keeps it"),
+                (
+                    "",
+                    "in the wizard: Tab next field, Esc cancels, Enter creates",
+                ),
                 ("r", "reload the list"),
-                ("n", "new branch (conventional wizard, E3-3)"),
+                ("n", "new branch from kind, ticket and description"),
                 ("", "HEAD and remote-only branches cannot be deleted"),
             ],
             Self::History => vec![
