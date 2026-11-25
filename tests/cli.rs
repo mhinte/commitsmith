@@ -105,6 +105,40 @@ fn init_defaults_writes_a_usable_config_and_is_idempotent() {
 }
 
 #[test]
+fn doctor_reports_environment_and_repository() {
+    let dir = repo("doctor");
+    let output = bin()
+        .arg("--doctor")
+        .current_dir(&dir)
+        .output()
+        .expect("run doctor");
+    assert!(output.status.success(), "{output:?}");
+    let text = String::from_utf8_lossy(&output.stdout);
+    for expected in ["commitsmith ", "os:", "user config:", "repository:", "git:"] {
+        assert!(text.contains(expected), "{expected} missing in:\n{text}");
+    }
+    assert!(
+        text.contains(&dir.display().to_string()) || text.contains("repository:  "),
+        "the report should name the repository:\n{text}"
+    );
+
+    // Outside a repository the same command must still work and say so.
+    let empty = std::env::temp_dir().join(format!("commitsmith-plain-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&empty);
+    std::fs::create_dir_all(&empty).unwrap();
+    let output = bin()
+        .arg("--doctor")
+        .current_dir(&empty)
+        .output()
+        .expect("run doctor");
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("repository:  none"), "{text}");
+    let _ = std::fs::remove_dir_all(&empty);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn accepts_conventional_and_rejects_plain_messages() {
     let dir = repo("check");
     let good = check(&dir, "feat(api): add rate limit");

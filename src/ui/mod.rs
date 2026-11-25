@@ -860,6 +860,15 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
 
 /// Run the TUI until the user quits or hands the message over.
 pub fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
+    // A terminal that reports no size draws nothing at all, which looks exactly
+    // like a program that did not start. Say so instead of showing a blank screen.
+    let size = terminal.size()?;
+    if size.width == 0 || size.height == 0 {
+        return Err(io::Error::other(
+            "the terminal reports a size of 0x0 · resize the window or run it in a real console",
+        ));
+    }
+
     loop {
         terminal.draw(|frame| draw(frame, app))?;
         if event::poll(Duration::from_millis(200))? {

@@ -151,13 +151,27 @@ impl GitRepository for GitBackend {
 
 /// Point a git alias at this binary: `git smith` then opens the composer.
 ///
-/// `!` makes git run it through a shell, which is what an alias that is not a git
-/// subcommand needs.
+/// `!` makes git run the command through a shell. That is why the path needs
+/// forward slashes and quotes: a shell reads `C:\Users\marc` as `C:Usersmarc`,
+/// which is exactly the broken alias a Windows user reported.
 pub fn install_alias(name: &str, binary: &str) -> Result<(), GitError> {
+    install_alias_in(name, binary, None)
+}
+
+/// Same, but with an explicit global config file (used by tests).
+pub fn install_alias_in(
+    name: &str,
+    binary: &str,
+    global_config: Option<&Path>,
+) -> Result<(), GitError> {
     let key = format!("alias.{name}");
-    let value = format!("!{binary}");
-    let output = Command::new("git")
-        .args(["config", "--global", &key, &value])
+    let value = shell_command(binary);
+    let mut command = Command::new("git");
+    command.args(["config", "--global", &key, &value]);
+    if let Some(path) = global_config {
+        command.env("GIT_CONFIG_GLOBAL", path);
+    }
+    let output = command
         .output()
         .map_err(|error| GitError::io("git config --global", error))?;
     if output.status.success() {
@@ -167,6 +181,20 @@ pub fn install_alias(name: &str, binary: &str) -> Result<(), GitError> {
             "git config",
             String::from_utf8_lossy(&output.stderr).trim().to_string(),
         ))
+    }
+}
+
+/// Quote a binary path for git's `!` aliases.
+///
+/// Windows paths become `!"C:/Program Files/commitsmith.exe"`: forward slashes
+/// because the shell strips backslashes, quotes because the path may contain
+/// spaces.
+fn shell_command(binary: &str) -> String {
+    let path = binary.replace('\\', "/");
+    if path.contains(' ') || path.contains('"') {
+        format!("!\"{}\"", path.replace('"', "\\\""))
+    } else {
+        format!("!{path}")
     }
 }
 
@@ -301,6 +329,47 @@ mod tests {
         let error = repo.checkout("does-not-exist").unwrap_err();
         let message = error.to_string();
         assert!(message.contains("does-not-exist"), "{message}");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn windows_paths_are_quoted_with_forward_slashes() {
+        // git runs `!` aliases through a shell, which eats the backslashes and
+        // ends up with `C:Usersmarc...` — the bug from issue #1.
+        assert_eq!(
+            shell_command(r"C:\Users\marc.hinte\commitsmith.exe"),
+            "!C:/Users/marc.hinte/commitsmith.exe"
+        );
+        assert_eq!(
+            shell_command(r"C:\Program Files\commitsmith.exe"),
+            "!\"C:/Program Files/commitsmith.exe\""
+        );
+        assert_eq!(
+            shell_command("/usr/local/bin/commitsmith"),
+            "!/usr/local/bin/commitsmith"
+        );
+    }
+
+    #[test]
+    fn the_alias_is_stored_in_the_form_a_shell_can_run() {
+        let dir = std::env::temp_dir().join(format!(
+            "commitsmith-alias-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let config = dir.join("gitconfig");
+        fs::write(&config, "").unwrap();
+
+        install_alias_in("smith", r"C:\Users\marc\commitsmith.exe", Some(&config)).unwrap();
+        let stored = fs::read_to_string(&config).unwrap();
+        assert!(stored.contains("[alias]"), "{stored}");
+        assert!(
+            stored.contains("smith = !C:/Users/marc/commitsmith.exe"),
+            "{stored}"
+        );
+        assert!(!stored.contains(r"\Users"), "backslashes survive: {stored}");
         let _ = fs::remove_dir_all(dir);
     }
 

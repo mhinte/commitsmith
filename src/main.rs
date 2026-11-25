@@ -47,6 +47,10 @@ struct Cli {
     #[arg(long, conflicts_with = "uninstall")]
     install: bool,
 
+    /// Print environment, config paths and repository detection, then exit
+    #[arg(long)]
+    doctor: bool,
+
     /// Remove the installed copies again
     #[arg(long)]
     uninstall: bool,
@@ -109,6 +113,13 @@ enum HookAction {
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
+    if cli.doctor {
+        print!(
+            "{}",
+            commitsmith::infrastructure::diagnostics::doctor(&cwd())
+        );
+        return ExitCode::SUCCESS;
+    }
     if cli.install {
         return run_install(cli.alias.as_deref());
     }
@@ -175,6 +186,23 @@ fn run_hooks(action: HookAction) -> ExitCode {
 fn install_panic_hook() {
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        // A panic in a TUI leaves nothing on screen; the log is the only trace
+        // a user can send.
+        let message = match info.payload().downcast_ref::<&str>() {
+            Some(text) => (*text).to_string(),
+            None => match info.payload().downcast_ref::<String>() {
+                Some(text) => text.clone(),
+                None => "panic without a message".to_string(),
+            },
+        };
+        let location = info
+            .location()
+            .map(|loc| format!("{}:{}", loc.file(), loc.line()))
+            .unwrap_or_else(|| "unknown".to_string());
+        commitsmith::infrastructure::diagnostics::record(
+            "panic",
+            &format!("{location}: {message}"),
+        );
         ratatui::restore();
         let _ = std::io::stdout().flush();
         default(info);
@@ -210,22 +238,30 @@ fn run_composer(commit: bool) -> ExitCode {
         let mut app = app::App::with_config(config, warnings);
         app.set_commit_mode(commit);
 
-        // Scope suggestions come from history; a missing repository is fine.
+        // Scope suggestions come from history; a missing repository is fine, and
+        // so is one that cannot be read: the composer still opens.
         let root = cwd();
-        if let Some(repo) = git::open(&root) {
-            let depth = app.config.history_depth;
-            let configured = app.config.scopes.clone();
-            app.set_scopes(git::scope_info(&repo, &configured, depth));
-            let branch = repo
-                .head_name()
-                .ok()
-                .flatten()
-                .map(|name| name.shorten().to_string())
-                .unwrap_or_else(|| "detached".to_string());
-            let staged = git::staged_summary(&root).len();
-            app.set_repo_line(format!("{branch} · {staged} staged"));
-            let depth = app.config.history_depth.min(200);
-            app.set_history(git::recent_commits(&repo, depth));
+        let configured = app.config.scopes.clone();
+        let depth = app.config.history_depth;
+        let history_depth = depth.min(200);
+        let repo_data = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            read_repository(&root, &configured, depth, history_depth)
+        }));
+        match repo_data {
+            Ok(Some(data)) => {
+                app.set_scopes(data.scopes);
+                app.set_repo_line(data.status);
+                app.set_history(data.history);
+            }
+            Ok(None) => {}
+            Err(_) => {
+                // Recorded by the panic hook; tell the user where to look.
+                commitsmith::infrastructure::diagnostics::record(
+                    "repository",
+                    &format!("reading {} failed", root.display()),
+                );
+                app.status = "repository could not be read · see startup.log".to_string();
+            }
         }
 
         let mut terminal = ratatui::init();
@@ -261,6 +297,39 @@ fn run_composer(commit: bool) -> ExitCode {
             None => ExitCode::SUCCESS,
         };
     }
+}
+
+/// What the composer needs from the repository, read in one guarded step.
+struct RepoData {
+    scopes: git::ScopeInfo,
+    status: String,
+    history: Vec<git::PastCommit>,
+}
+
+/// Read scopes, the status line and recent commits; `None` outside a repository.
+///
+/// Runs inside `catch_unwind`, so a repository that makes the reader panic
+/// (odd `HEAD`, unreadable config, whatever a platform does differently) costs
+/// the scope suggestions instead of the whole session.
+fn read_repository(
+    root: &std::path::Path,
+    configured: &[String],
+    depth: usize,
+    history_depth: usize,
+) -> Option<RepoData> {
+    let repo = git::open(root)?;
+    let branch = repo
+        .head_name()
+        .ok()
+        .flatten()
+        .map(|name| name.shorten().to_string())
+        .unwrap_or_else(|| "detached".to_string());
+    let staged = git::staged_summary(root).len();
+    Some(RepoData {
+        scopes: git::scope_info(&repo, configured, depth),
+        status: format!("{branch} · {staged} staged"),
+        history: git::recent_commits(&repo, history_depth),
+    })
 }
 
 /// The setup dialog from inside the composer: ask, then store.
@@ -567,5 +636,52 @@ fn run_check(file: Option<PathBuf>, message: Option<String>, strict: bool) -> Ex
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "commitsmith-main-{name}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_plain_directory_has_no_repository_data() {
+        let dir = temp("plain");
+        assert!(read_repository(&dir, &[], 50, 20).is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_repository_yields_a_status_line() {
+        let dir = temp("repo");
+        for args in [
+            vec!["init", "-q", "-b", "main"],
+            vec!["config", "user.email", "t@example.com"],
+            vec!["config", "user.name", "T"],
+        ] {
+            assert!(
+                std::process::Command::new("git")
+                    .args(&args)
+                    .current_dir(&dir)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        let data = read_repository(&dir, &["api".to_string()], 50, 20).expect("repo data");
+        assert!(data.status.contains("main"), "{}", data.status);
+        assert!(data.status.contains("0 staged"), "{}", data.status);
+        assert!(data.scopes.all().contains(&"api".to_string()));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

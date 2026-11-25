@@ -265,8 +265,11 @@ pub struct GixRepo {
 
 impl GixRepo {
     pub fn open(path: &Path) -> Result<Self, GitError> {
-        let repo = gix::discover(path)
-            .map_err(|error| GitError::not_found(format!("{}: {error}", path.display())))?;
+        // Not `GitError::not_found`: that one talks about a reference inside a
+        // repository, and here there is no repository at all.
+        let repo = gix::discover(path).map_err(|_| {
+            GitError::invalid_state(format!("no git repository at {}", path.display()))
+        })?;
         let workdir = repo
             .workdir()
             .map(Path::to_path_buf)

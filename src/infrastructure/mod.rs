@@ -5,5 +5,6 @@
 //! knows the traits from [`crate::domain::ports`].
 
 pub mod config_toml;
+pub mod diagnostics;
 pub mod git_cli;
 pub mod gix_repo;
