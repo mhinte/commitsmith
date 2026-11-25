@@ -46,7 +46,7 @@ active field only, so it stays usable over a phone-sized ssh session.
 
 ## Install
 
-### Linux und macOS
+### Linux
 
 ```sh
 curl -sSL https://raw.githubusercontent.com/mhinte/commitsmith/main/scripts/install.sh | sh
@@ -94,10 +94,11 @@ cargo install --path .
 Rust 1.85 or newer. Needs `git` on PATH.
 
 Prebuilt binaries come from the [releases](https://github.com/mhinte/commitsmith/releases):
-`commitsmith-<version>-<target>.tar.gz` for Linux x86_64 (gnu and static musl),
-Linux aarch64 (gnu and musl) and macOS (Intel and Apple silicon). Each archive
-holds the binary, README and LICENSE, and `SHA256SUMS` in the release covers all
-of them.
+`commitsmith-<version>-<target>.tar.gz` for Linux x86_64 (gnu and static musl) and
+`commitsmith-<version>-x86_64-pc-windows-msvc.zip` for Windows. Each archive holds
+the binary, README and LICENSE, and `SHA256SUMS` covers all of them. Other targets
+are not built: nobody here could test them, and an untested binary is worse than
+none.
 
 ## Use
 

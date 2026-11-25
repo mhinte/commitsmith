@@ -5,6 +5,10 @@ name: ci
 # tag. A push to `main` no longer starts a run — the same checks decide whether a
 # tag may ship, and the linter runs locally via the commit hook.
 on:
+  # The repository is public now, so a run per push costs nothing — and it keeps
+  # the badge on main honest.
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
   workflow_call:

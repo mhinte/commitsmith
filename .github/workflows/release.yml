@@ -8,10 +8,6 @@ on:
       tag:
         description: "Tag to build and publish, e.g. v0.1.0"
         required: true
-      full:
-        description: "Also build macOS and aarch64 (costs ~25 extra runner minutes)"
-        type: boolean
-        default: false
 
 permissions:
   contents: write
@@ -38,7 +34,6 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
       tag: ${{ steps.v.outputs.tag }}
-      matrix: ${{ steps.v.outputs.matrix }}
     steps:
       - id: v
         env:
@@ -50,39 +45,26 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
-          # macOS runners bill at 10x and aarch64 is rarely used, so the default
-          # release is the three targets that are actually installed. The full
-          # set is one input away.
-          if [ "${{ github.event.inputs.full }}" = "true" ]; then
-            matrix='[
-              {"target":"x86_64-unknown-linux-gnu","os":"ubuntu-latest"},
-              {"target":"aarch64-unknown-linux-gnu","os":"ubuntu-latest","linker":"aarch64-linux-gnu-gcc","packages":"gcc-aarch64-linux-gnu"},
-              {"target":"x86_64-unknown-linux-musl","os":"ubuntu-latest","packages":"musl-tools"},
-              {"target":"aarch64-unknown-linux-musl","os":"ubuntu-latest","musl_cross":true},
-              {"target":"x86_64-apple-darwin","os":"macos-latest"},
-              {"target":"aarch64-apple-darwin","os":"macos-latest"},
-              {"target":"x86_64-pc-windows-msvc","os":"windows-latest"}
-            ]'
-          else
-            matrix='[
-              {"target":"x86_64-unknown-linux-gnu","os":"ubuntu-latest"},
-              {"target":"x86_64-unknown-linux-musl","os":"ubuntu-latest","packages":"musl-tools"},
-              {"target":"x86_64-pc-windows-msvc","os":"windows-latest"}
-            ]'
-          fi
-          echo "matrix<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$matrix" | tr -d '\n' | sed 's/  */ /g' >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
 
-  # One job per target, so a broken target does not hide the others. The target
-  # list comes from the version job: three targets by default, all seven when the
-  # `full` input asks for it.
+  # One job per target, so a broken target does not hide the others. Only the
+  # three targets that are actually installed and tested: x86_64 Linux (glibc and
+  # static musl) and Windows. No macOS, no ARM — nobody here could try them.
   build:
     needs: [verify, version]
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.version.outputs.matrix) }}
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          # musl builds are static, so they run on any glibc version.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            packages: musl-tools
+          # Windows 11 runs x86_64 and arm64 binaries either way; one build
+          # keeps the installer's asset lookup simple.
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -164,16 +146,11 @@ jobs:
           chmod +x "$pkg/commitsmith"
           stamp="$(date -u -r README.md +%Y%m%d%H%M.%S)"
           touch -t "$stamp" "$pkg" "$pkg"/*
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            # BSD tar has no --sort/--owner; ditto sets the metadata explicitly.
-            ditto -c -k --sequesterRsrc --keepParent "$pkg" "dist/upload/${archive}.tar.gz"
-          else
-            # Deterministic archive: same content, same bytes. The archive holds
-            # the directory, so unpacking creates ${archive}/.
-            tar --sort=name --owner=0 --group=0 --numeric-owner \
-                --mtime="@$(date -u -r README.md +%s)" \
-                -C dist -czf "dist/upload/${archive}.tar.gz" "${archive}"
-          fi
+          # Deterministic archive: same content, same bytes. The archive holds
+          # the directory, so unpacking creates ${archive}/.
+          tar --sort=name --owner=0 --group=0 --numeric-owner \
+              --mtime="@$(date -u -r README.md +%s)" \
+              -C dist -czf "dist/upload/${archive}.tar.gz" "${archive}"
           if command -v sha256sum >/dev/null 2>&1; then
             (cd dist/upload && sha256sum "${archive}.tar.gz" > "${archive}.tar.gz.sha256")
           else
