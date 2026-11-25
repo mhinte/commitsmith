@@ -111,6 +111,10 @@ pub trait GitRepository {
     /// Scopes from history, merged with the configured ones.
     fn scopes(&self, configured: &[String], depth: usize) -> Result<ScopeInfo, GitError>;
 
+    /// Unified diff of one path: `staged` compares the index with `HEAD`,
+    /// otherwise the working tree with the index.
+    fn diff(&self, path: &str, staged: bool) -> Result<String, GitError>;
+
     fn stage(&self, path: &str) -> Result<(), GitError>;
     fn unstage(&self, path: &str) -> Result<(), GitError>;
     /// Commit what is staged; returns the short id git printed.
@@ -191,6 +195,13 @@ mod tests {
                 history: self.scopes.clone(),
                 configured: configured.to_vec(),
             })
+        }
+
+        fn diff(&self, path: &str, staged: bool) -> Result<String, GitError> {
+            self.calls
+                .borrow_mut()
+                .push(format!("diff {path} staged={staged}"));
+            Ok(format!("diff --git a/{path} b/{path}\n+added\n-removed\n"))
         }
 
         fn stage(&self, path: &str) -> Result<(), GitError> {

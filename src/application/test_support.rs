@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use commitsmith::domain::errors::GitError;
 use commitsmith::domain::history::{PastCommit, ScopeInfo};
-use commitsmith::domain::ports::{BranchInfo, ChangedFile, GitRepository};
+use commitsmith::domain::ports::{BranchInfo, ChangedFile, FileState, GitRepository};
 
 /// A repository that records what the surface asked it to do.
 pub struct RecordingGit {
@@ -13,6 +13,8 @@ pub struct RecordingGit {
     calls: Rc<RefCell<Vec<String>>>,
     pub merge_fails: bool,
     pub create_fails: bool,
+    /// Files the fake reports, with their real index/worktree state.
+    pub files: RefCell<Vec<ChangedFile>>,
 }
 
 impl RecordingGit {
@@ -27,6 +29,7 @@ impl RecordingGit {
             calls: Rc::new(RefCell::new(Vec::new())),
             merge_fails: false,
             create_fails: false,
+            files: RefCell::new(Vec::new()),
         }
     }
 
@@ -51,8 +54,15 @@ impl GitRepository for RecordingGit {
         Ok(self.branches.borrow().clone())
     }
 
+    fn diff(&self, path: &str, staged: bool) -> Result<String, GitError> {
+        self.calls
+            .borrow_mut()
+            .push(format!("diff {path} staged={staged}"));
+        Ok(format!("diff --git a/{path} b/{path}\n+added\n-removed\n"))
+    }
+
     fn changes(&self) -> Result<Vec<ChangedFile>, GitError> {
-        Ok(Vec::new())
+        Ok(self.files.borrow().clone())
     }
 
     fn recent_commits(&self, _limit: usize) -> Result<Vec<PastCommit>, GitError> {
@@ -69,11 +79,28 @@ impl GitRepository for RecordingGit {
 
     fn stage(&self, path: &str) -> Result<(), GitError> {
         self.calls.borrow_mut().push(format!("stage {path}"));
+        let mut files = self.files.borrow_mut();
+        match files.iter_mut().find(|file| file.path == path) {
+            Some(file) => {
+                file.index = Some(FileState::Modified);
+                file.worktree = None;
+            }
+            None => files.push(ChangedFile {
+                path: path.to_string(),
+                index: Some(FileState::Added),
+                worktree: None,
+            }),
+        }
         Ok(())
     }
 
     fn unstage(&self, path: &str) -> Result<(), GitError> {
         self.calls.borrow_mut().push(format!("unstage {path}"));
+        let mut files = self.files.borrow_mut();
+        if let Some(file) = files.iter_mut().find(|file| file.path == path) {
+            file.index = None;
+            file.worktree = Some(FileState::Modified);
+        }
         Ok(())
     }
 

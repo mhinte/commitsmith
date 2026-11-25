@@ -49,6 +49,7 @@ const MUTED: Style = Style::new().fg(Color::DarkGray);
 
 pub mod branch_wizard;
 pub mod branches;
+pub mod staging;
 pub mod theme;
 
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -117,6 +118,11 @@ fn draw_full(frame: &mut Frame, app: &App, area: Rect) {
 
 /// Staging, composer, preview and checks: the first tab.
 fn draw_commit_body(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
+    // The staging list sits left of the composer, as wide as its names need.
+    let list_width = (area.width / 3).clamp(24, 40);
+    let [list, right] =
+        Layout::horizontal([Constraint::Length(list_width), Constraint::Min(30)]).areas(area);
+    staging::draw(frame, app, list);
     // Body, breaking and footer all grow to MULTILINE_ROWS; counting only two of
     // them cut the footer's last rows off.
     let rows: u16 = FIELDS
@@ -124,7 +130,7 @@ fn draw_commit_body(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u1
         .map(|field| if field.multiline() { MULTILINE_ROWS } else { 1 })
         .sum();
     let [form, content] =
-        Layout::vertical([Constraint::Length(rows + 2), Constraint::Min(6)]).areas(area);
+        Layout::vertical([Constraint::Length(rows + 2), Constraint::Min(6)]).areas(right);
 
     let cursor = draw_form(frame, app, form);
     draw_content(frame, app, content);
@@ -307,7 +313,7 @@ fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
             " compose ",
             theme::focused_panel(),
         )));
-    if area.width >= 70 {
+    if area.width >= 46 {
         block = block.title_top(
             Line::from(Span::styled(format!("{}  ", app.type_label()), HINT)).right_aligned(),
         );
@@ -1163,9 +1169,16 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let screen = rows(&terminal);
-        let title = &screen[1];
+        let title = &screen
+            .iter()
+            .find(|row| row.contains("compose"))
+            .cloned()
+            .expect("compose panel");
         // Same shape as " preview " and " checks ": the name, nothing else.
-        assert!(title.starts_with("╭ compose ─"), "{title}");
+        assert!(
+            title.contains("╭ compose ─") || title.contains("┬ compose ─"),
+            "{title}"
+        );
         // The type appears once, as the description at the other end.
         assert!(title.contains("a new feature"), "{title}");
         for gone in [
@@ -1368,8 +1381,14 @@ mod tests {
                 .map(|x| buffer[(x, y)].symbol())
                 .collect();
             if row.contains(needle) {
-                // The border cell (x = 0) never carries the style; look inside.
-                return buffer[(2, y)].style();
+                // Any cell of the row carries the fill; the panels start at
+                // different columns now.
+                return (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].style())
+                    .find(|style| {
+                        style.bg.is_some() && style.bg != Some(ratatui::style::Color::Reset)
+                    })
+                    .unwrap_or_else(|| buffer[(0, y)].style());
             }
         }
         panic!("no row with {needle:?}");
@@ -1385,17 +1404,50 @@ mod tests {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let buffer = terminal.backend().buffer();
 
-        // The compose panel's top-left corner is bright; preview/checks are not.
-        assert_eq!(buffer[(0, 1)].fg, ratatui::style::Color::Cyan);
         let screen = rows(&terminal);
+        let cyan_in = |y: u16| {
+            (0..buffer.area.width).any(|x| buffer[(x, y)].fg == ratatui::style::Color::Cyan)
+        };
+        let compose_row = screen
+            .iter()
+            .position(|row| row.contains("compose"))
+            .expect("compose panel");
+        assert!(cyan_in(compose_row as u16), "the compose panel is lit");
         let preview_row = screen
             .iter()
             .position(|row| row.contains("preview"))
             .expect("preview panel");
-        assert_ne!(
-            buffer[(0, preview_row as u16)].fg,
-            ratatui::style::Color::Cyan
-        );
+        assert!(!cyan_in(preview_row as u16), "preview stays quiet");
+    }
+
+    #[test]
+    fn tab_one_lists_the_changed_files_left_of_the_composer() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let (app, _) = staging_app_in_ui();
+        let mut terminal = Terminal::new(TestBackend::new(110, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+        assert!(screen.contains("staging · 1"), "{screen}");
+        assert!(screen.contains("a.txt"), "{screen}");
+        assert!(screen.contains("compose"), "the composer stays: {screen}");
+    }
+
+    fn staging_app_in_ui() -> (App, ()) {
+        use crate::application::test_support::RecordingGit;
+        use commitsmith::domain::ports::{ChangedFile, FileState};
+
+        let git = RecordingGit::new(&["main"], "main");
+        git.files.borrow_mut().push(ChangedFile {
+            path: "a.txt".to_string(),
+            index: None,
+            worktree: Some(FileState::Modified),
+        });
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.set_in_repository(true);
+        app.set_git(Box::new(git));
+        (app, ())
     }
 
     #[test]

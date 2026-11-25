@@ -8,6 +8,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 pub mod branch_wizard;
 pub mod branches;
 pub mod navigation;
+pub mod staging;
 pub mod tabs;
 #[cfg(test)]
 pub mod test_support;
@@ -25,6 +26,7 @@ use branch_wizard::BranchWizard;
 use branches::BranchList;
 use commitsmith::domain::branch::ConventionalBranchName;
 use commitsmith::domain::ports::GitRepository;
+use staging::{Side, Staging};
 
 /// Order of the form fields, top to bottom.
 pub const FIELDS: [Field; 6] = [
@@ -179,6 +181,8 @@ pub struct App {
     pub git: Option<Box<dyn GitRepository>>,
     /// Branch explorer state.
     pub branches: BranchList,
+    /// Staging list of tab 1.
+    pub staging: Staging,
     /// Short name of the checked-out branch, for the context bridge.
     pub branch_name: Option<String>,
     /// True once the user chose a type; the branch must not override it.
@@ -235,6 +239,7 @@ impl App {
             tab: tabs::Tab::Commit,
             git: None,
             branches: BranchList::default(),
+            staging: Staging::default(),
             branch_name: None,
             type_touched: false,
             footer_seed: None,
@@ -335,6 +340,64 @@ impl App {
     pub fn set_git(&mut self, git: Box<dyn GitRepository>) {
         self.git = Some(git);
         self.reload_branches();
+        self.reload_staging();
+    }
+
+    /// Re-read the changed files and the diff of the highlighted one.
+    pub fn reload_staging(&mut self) {
+        let (git, staging) = (&self.git, &mut self.staging);
+        let Some(git) = git.as_deref() else {
+            return;
+        };
+        if let Err(error) = staging.reload(git) {
+            self.status = error.to_string();
+        }
+    }
+
+    /// Keys while the staging list has the keyboard.
+    fn staging_key(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Up => self.move_staging(-1),
+            KeyCode::Down => self.move_staging(1),
+            KeyCode::Char(' ') => self.toggle_staged(),
+            KeyCode::Char('v') => {
+                self.staging.show_diff = !self.staging.show_diff;
+            }
+            KeyCode::Esc => self.staging.side = Side::Composer,
+            KeyCode::Char('c') if ctrl => self.should_quit = true,
+            _ => {}
+        }
+    }
+
+    fn move_staging(&mut self, delta: isize) {
+        let (git, staging) = (&self.git, &mut self.staging);
+        if let Some(git) = git.as_deref() {
+            staging.move_by(delta, git);
+        }
+    }
+
+    fn toggle_staged(&mut self) {
+        let (git, staging) = (&self.git, &mut self.staging);
+        let Some(git) = git.as_deref() else {
+            return;
+        };
+        match staging.toggle(git) {
+            Ok(message) => {
+                self.status = message;
+                // The footer's staged count changed with the action.
+                let staged = git
+                    .changes()
+                    .map(|files| files.iter().filter(|file| file.is_staged()).count())
+                    .unwrap_or(0);
+                let branch = self
+                    .branch_name
+                    .clone()
+                    .unwrap_or_else(|| "detached".to_string());
+                self.repo_line = format!("{branch} · {staged} staged");
+            }
+            Err(error) => self.status = error.to_string(),
+        }
     }
 
     /// Re-read the branch list, the branch line in the footer, and the context
@@ -1241,6 +1304,22 @@ impl App {
             return;
         }
 
+        // Tab 1 has two sides: the staging list and the composer. Ctrl+L hands
+        // the keyboard over and Esc gives it back.
+        if self.tab == tabs::Tab::Commit {
+            if key.code == KeyCode::Char('l') && ctrl {
+                self.staging.side = match self.staging.side {
+                    Side::Composer => Side::Staging,
+                    Side::Staging => Side::Composer,
+                };
+                return;
+            }
+            if self.staging.side == Side::Staging {
+                self.staging_key(key);
+                return;
+            }
+        }
+
         // The other tabs have their own keys; typing a subject there would be
         // a surprise, so the composer never sees these events.
         if self.tab != tabs::Tab::Commit {
@@ -1304,6 +1383,51 @@ mod tests {
         app.set_git(Box::new(git));
         press(&mut app, KeyCode::Char('2'));
         app
+    }
+
+    fn staging_app() -> (App, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
+        let git = RecordingGit::new(&["main"], "main");
+        git.files
+            .borrow_mut()
+            .push(commitsmith::domain::ports::ChangedFile {
+                path: "a.txt".to_string(),
+                index: None,
+                worktree: Some(commitsmith::domain::ports::FileState::Modified),
+            });
+        let log = git.calls();
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.set_in_repository(true);
+        app.set_git(Box::new(git));
+        (app, log)
+    }
+
+    #[test]
+    fn ctrl_l_hands_the_keyboard_to_the_staging_list() {
+        let (mut app, _) = staging_app();
+        assert_eq!(app.staging.side, staging::Side::Composer);
+        press(&mut app, KeyCode::Char('l')); // plain l is text in the composer
+        assert_eq!(app.staging.side, staging::Side::Composer);
+        ctrl(&mut app, 'l');
+        assert_eq!(app.staging.side, staging::Side::Staging);
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(
+            app.staging.side,
+            staging::Side::Composer,
+            "Esc gives it back"
+        );
+    }
+
+    #[test]
+    fn space_stages_and_v_shows_the_diff() {
+        let (mut app, log) = staging_app();
+        ctrl(&mut app, 'l');
+        press(&mut app, KeyCode::Char(' '));
+        assert!(log.borrow().iter().any(|call| call == "stage a.txt"));
+        assert_eq!(app.status, "staged a.txt");
+
+        press(&mut app, KeyCode::Char('v'));
+        assert!(app.staging.show_diff);
+        assert!(app.staging.diff.contains("diff --git"));
     }
 
     #[test]

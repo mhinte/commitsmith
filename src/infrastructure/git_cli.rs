@@ -84,14 +84,22 @@ impl GitRepository for GitBackend {
             let index = line.as_bytes()[0] as char;
             let worktree = line.as_bytes()[1] as char;
             let path = line[3..].trim().to_string();
+            // `??` is untracked: nothing in the index, and the file is new in
+            // the worktree. Treating it as staged made `Space` unstage it, which
+            // failed with "pathspec did not match".
             let state = |code: char| match code {
-                ' ' => None,
+                ' ' | '?' => None,
                 other => Some(file_state(other)),
             };
+            let untracked = index == '?' && worktree == '?';
             changes.push(ChangedFile {
                 path,
                 index: state(index),
-                worktree: state(worktree),
+                worktree: if untracked {
+                    Some(crate::domain::ports::FileState::Untracked)
+                } else {
+                    state(worktree)
+                },
             });
         }
         changes.sort_by(|a, b| a.path.cmp(&b.path));
@@ -108,6 +116,23 @@ impl GitRepository for GitBackend {
 
     fn scopes(&self, configured: &[String], depth: usize) -> Result<ScopeInfo, GitError> {
         self.reader.scopes(configured, depth)
+    }
+
+    fn diff(&self, path: &str, staged: bool) -> Result<String, GitError> {
+        // No pager, no colour: the pane decides how to paint the hunks.
+        let args: Vec<&str> = if staged {
+            vec![
+                "diff",
+                "--cached",
+                "--no-color",
+                "--no-ext-diff",
+                "--",
+                path,
+            ]
+        } else {
+            vec!["diff", "--no-color", "--no-ext-diff", "--", path]
+        };
+        self.git(&args)
     }
 
     fn stage(&self, path: &str) -> Result<(), GitError> {
@@ -237,6 +262,23 @@ mod tests {
         fs::write(dir.join("a.txt"), "hello\n").unwrap();
         let backend = GitBackend::open(&dir).unwrap();
         (dir, backend)
+    }
+
+    #[test]
+    fn an_untracked_file_is_not_staged() {
+        let (dir, repo) = temp_repo("untracked");
+        std::fs::write(dir.join("new.txt"), "x").unwrap();
+        let changes = repo.changes().unwrap();
+        let file = changes
+            .iter()
+            .find(|file| file.path == "new.txt")
+            .expect("new.txt");
+        assert!(!file.is_staged(), "?? must not count as staged");
+        assert_eq!(
+            file.worktree,
+            Some(crate::domain::ports::FileState::Untracked)
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
