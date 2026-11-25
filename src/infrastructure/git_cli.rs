@@ -254,8 +254,11 @@ mod tests {
 
         // A second clone sees the commit the push created.
         let clone_dir = dir.join("clone");
+        // `-b main` on purpose: a bare repository's HEAD points at whatever
+        // `init.defaultBranch` was, and on a CI runner that is still `master`,
+        // so a plain clone would check out an unborn branch and see no log.
         let status = Command::new("git")
-            .args(["clone", "-q"])
+            .args(["clone", "-q", "-b", "main"])
             .arg(&remote)
             .arg(&clone_dir)
             .status()
