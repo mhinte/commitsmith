@@ -192,6 +192,8 @@ original is kept as `commit-msg.bak`.
 ### Configure it
 
 ```sh
+scripts/release-local.sh v0.11.1          # build a release here, no runner minutes
+scripts/release-local.sh v0.11.1 --publish # … and upload it to GitHub
 commitsmith init     # writes .commitsmith.toml from the current defaults
 commitsmith config   # shows the effective values and which files were read
 commitsmith types    # the types of the active profile, one per line
