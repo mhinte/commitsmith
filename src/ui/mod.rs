@@ -169,81 +169,12 @@ fn draw_placeholder(frame: &mut Frame, area: Rect, title: &str, text: &str) {
     );
 }
 
-/// Everything the old header showed, as one title line for the compose panel.
-/// Parts are dropped from the right when the panel is narrow, so the branch and
-/// the kind stay visible instead of being cut off mid-word.
-fn status_title(app: &App, width: u16) -> Line<'static> {
-    let (errors, warnings) = validate::count(&app.issues);
-    let subject_len = app.commit.subject.chars().count();
-    let max = app.rules.max_subject;
-    let counter_color = if subject_len > max {
-        Color::Red
-    } else if subject_len > app.rules.recommended_subject {
-        Color::Yellow
-    } else {
-        Color::DarkGray
-    };
-
-    let location = if app.in_repository {
-        match app.repo_line.is_empty() {
-            true => "repository".to_string(),
-            false => app.repo_line.clone(),
-        }
-    } else {
-        "no git repository".to_string()
-    };
-
-    // Priority order: what the message is and where it goes beats the counters.
-    let parts: Vec<(String, Style)> = vec![
-        (
-            " compose ".to_string(),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        (
-            format!(" {} ", app.commit.kind),
-            Style::default().fg(Color::Cyan),
-        ),
-        (format!("· {} ", app.config.profile), MUTED),
-        (
-            format!("· {location} "),
-            if app.in_repository {
-                MUTED
-            } else {
-                Style::default().fg(Color::Yellow)
-            },
-        ),
-        (
-            format!("· {subject_len}/{max} "),
-            Style::default().fg(counter_color),
-        ),
-        (
-            format!("· {} ", plural(errors, "error")),
-            Style::default().fg(if errors > 0 { Color::Red } else { Color::Green }),
-        ),
-        (
-            format!("· {}", plural(warnings, "warning")),
-            Style::default().fg(if warnings > 0 {
-                Color::Yellow
-            } else {
-                Color::Green
-            }),
-        ),
-    ];
-
-    let budget = width.saturating_sub(2) as usize;
-    let mut spans = Vec::new();
-    let mut used = 0usize;
-    for (text, style) in parts {
-        let length = text.chars().count();
-        if used + length > budget {
-            break;
-        }
-        used += length;
-        spans.push(Span::styled(text, style));
-    }
-    Line::from(spans)
+/// The compose panel's title. Plain, like every other panel title: the state of
+/// the message belongs at the field it concerns, not in a second header.
+fn compose_title() -> Line<'static> {
+    // The same style as " preview " and " checks ", so the three panels of this
+    // tab read as siblings.
+    Line::from(Span::styled(" compose ", HINT))
 }
 
 /// Draws the form and returns the terminal cursor position, if any.
@@ -251,6 +182,7 @@ fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
     let inner = area.inner(ratatui::layout::Margin::new(1, 1));
     let mut lines = Vec::new();
     let mut cursor = None;
+    let mut subject_row = None;
     let mut row_y = inner.y;
     let width = area.width.saturating_sub(LABEL_WIDTH as u16 + 4) as usize;
 
@@ -312,7 +244,14 @@ fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
         let (display, cursor_col, hint) = if *field == Field::Type {
             (format!("[ {value} ]"), None, String::new())
         } else {
-            let (display, col) = window(value, app.cursor(), active && app.is_editing(), width);
+            // The subject row carries the counter on its right, so the text
+            // has to stop short of it instead of running underneath.
+            let room = if *field == Field::Subject {
+                width.saturating_sub(8)
+            } else {
+                width
+            };
+            let (display, col) = window(value, app.cursor(), active && app.is_editing(), room);
             let hint = if value.is_empty() {
                 format!("  {}", field.hint())
             } else {
@@ -331,34 +270,54 @@ fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
         if let Some(col) = cursor_col {
             cursor = Some((inner.x + VALUE_OFFSET + col as u16, row_y));
         }
+        if *field == Field::Subject && subject_row.is_none() {
+            subject_row = Some(row_y);
+        }
         row_y += 1;
     }
 
-    frame.render_widget(
-        Paragraph::new(Text::from(lines)).block(
-            Block::bordered()
-                .border_type(BorderType::Rounded)
-                .border_style(MUTED)
-                .title(status_title(app, area.width))
-                // The type's description moves here from the old header, but
-                // only where the line has room for both ends.
-                .title_top(
-                    if area.width >= 70
-                        && status_title(app, area.width).width()
-                            + unicode_width::UnicodeWidthStr::width(app.type_label().as_str())
-                            + 12
-                            <= area.width as usize
-                    {
-                        Line::from(Span::styled(app.type_label(), HINT)).right_aligned()
-                    } else {
-                        Line::from("")
-                    },
-                ),
-        ),
-        area,
-    );
+    let mut block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(MUTED)
+        .title(compose_title());
+    if area.width >= 70 {
+        block = block.title_top(
+            Line::from(Span::styled(format!("{}  ", app.type_label()), HINT)).right_aligned(),
+        );
+    }
+    frame.render_widget(Paragraph::new(Text::from(lines)).block(block), area);
+
+    // The subject counter belongs to its field, not in a title far above it.
+    if let Some(row) = subject_row {
+        let (length, max) = subject_len(app);
+        let color = if length > max {
+            Color::Red
+        } else if length > app.rules.recommended_subject {
+            Color::Yellow
+        } else {
+            Color::DarkGray
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!("{length}/{max} "),
+                Style::default().fg(color),
+            )))
+            .right_aligned(),
+            Rect {
+                x: area.x + 1,
+                y: row,
+                width: area.width.saturating_sub(2),
+                height: 1,
+            },
+        );
+    }
 
     cursor
+}
+
+/// Characters in the subject, and the limit they are measured against.
+fn subject_len(app: &App) -> (usize, usize) {
+    (app.commit.subject.chars().count(), app.rules.max_subject)
 }
 
 /// Soft-wrap a field value to `width`.
@@ -928,20 +887,43 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         version_area,
     );
 
+    let second_row = Rect {
+        y: area.y + 1,
+        height: 1,
+        ..area
+    };
     if !app.status.is_empty() {
-        let status_area = Rect {
-            y: area.y + 1,
-            height: 1,
-            ..area
-        };
         frame.render_widget(
             Paragraph::new(Line::styled(
                 format!(" {}", app.status),
                 Style::default().fg(Color::Cyan),
             )),
-            status_area,
+            second_row,
         );
     }
+
+    // Branch and profile are context, not decisions: they sit at the far right
+    // of the second row, out of the way of the message.
+    let context = if app.in_repository {
+        match app.repo_line.is_empty() {
+            true => format!("{} ", app.config.profile),
+            false => format!("{} · {} ", app.repo_line, app.config.profile),
+        }
+    } else {
+        format!("no git repository · {} ", app.config.profile)
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            context,
+            if app.in_repository {
+                MUTED
+            } else {
+                Style::default().fg(Color::Yellow)
+            },
+        )))
+        .right_aligned(),
+        second_row,
+    );
 }
 
 /// Run the TUI until the user quits or hands the message over.
@@ -1085,7 +1067,7 @@ mod tests {
     }
 
     #[test]
-    fn the_compose_title_warns_outside_a_repository() {
+    fn the_warning_outside_a_repository_sits_in_the_footer() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
@@ -1094,7 +1076,10 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let screen = rows(&terminal).join("\n");
-        assert!(screen.contains("no git repository"), "{screen}");
+        assert!(
+            screen.contains("no git repository · conventional"),
+            "{screen}"
+        );
         assert!(
             screen.contains("not a git repository · `check` works here"),
             "{screen}"
@@ -1105,7 +1090,82 @@ mod tests {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let screen = rows(&terminal).join("\n");
         assert!(!screen.contains("no git repository"), "{screen}");
-        assert!(screen.contains("main · 0 staged"), "{screen}");
+        assert!(
+            screen.contains("main · 0 staged · conventional"),
+            "{screen}"
+        );
+    }
+
+    #[test]
+    fn the_title_is_plain_like_the_other_panels() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.set_in_repository(true);
+        app.set_repo_line("main · 1 staged".to_string());
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal);
+        let title = &screen[1];
+        // Same shape as " preview " and " checks ": the name, nothing else.
+        assert!(title.starts_with("╭ compose ─"), "{title}");
+        // The type appears once, as the description at the other end.
+        assert!(title.contains("a new feature"), "{title}");
+        for gone in [
+            "error",
+            "warning",
+            "· conventional",
+            "main · 1 staged",
+            "0/72",
+        ] {
+            assert!(
+                !title.contains(gone),
+                "{gone:?} still in the title: {title}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_subject_counter_sits_next_to_the_subject() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.commit.subject = "add the thing".to_string();
+        app.revalidate();
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal);
+        let subject_row = screen
+            .iter()
+            .position(|line| line.contains("subject"))
+            .expect("subject row");
+        let counter_row = screen
+            .iter()
+            .position(|line| line.contains("/72"))
+            .expect("counter");
+        assert_eq!(counter_row, subject_row, "{screen:#?}");
+        let column = screen[counter_row].find("/72").unwrap();
+        assert!(column > 60, "right end of the field: {column}");
+        assert!(screen[subject_row].contains("add the thing"), "{screen:#?}");
+    }
+
+    #[test]
+    fn errors_are_counted_only_in_the_checks_panel() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal);
+        let mentioning: Vec<&String> = screen
+            .iter()
+            .filter(|line| line.contains("error") || line.contains("warning"))
+            .collect();
+        assert_eq!(mentioning.len(), 1, "{screen:#?}");
+        assert!(mentioning[0].contains("checks"), "{}", mentioning[0]);
     }
 
     #[test]
@@ -1139,25 +1199,6 @@ mod tests {
         assert_eq!(row, 28, "the keys row of the footer: {screen:#?}");
         let column = screen[row].find(&version).unwrap() as u16;
         assert!(column > 60, "bottom right, not left: {column}");
-    }
-
-    #[test]
-    fn the_state_of_the_message_lives_in_the_compose_panel() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
-
-        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
-        app.set_in_repository(true);
-        app.set_repo_line("main · 1 staged".to_string());
-        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
-        let screen = rows(&terminal);
-        let title = &screen[1];
-        assert!(title.contains("compose"), "{title}");
-        assert!(title.contains("conventional"), "{title}");
-        assert!(title.contains("main · 1 staged"), "{title}");
-        assert!(title.contains("error"), "{title}");
-        assert!(title.contains("warning"), "{title}");
     }
 
     #[test]
