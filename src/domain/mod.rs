@@ -7,6 +7,9 @@
 pub mod author;
 pub mod branch;
 pub mod commit;
+pub mod errors;
+pub mod history;
+pub mod ports;
 pub mod slug;
 pub mod ticket;
 pub mod validate;

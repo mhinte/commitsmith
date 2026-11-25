@@ -22,11 +22,45 @@ fn sources(dir: &Path) -> Vec<PathBuf> {
     found
 }
 
+/// Drop `//` and `/* */` comments: the rule is about what the code uses, and the
+/// doc comments name the very crates the layer must not import.
+fn code_only(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut depth = 0usize;
+    let mut chars = text.char_indices().peekable();
+    while let Some((index, c)) = chars.next() {
+        if depth == 0 && c == '/' && text[index..].starts_with("//") {
+            // Skip to the end of the line.
+            for (_, n) in chars.by_ref() {
+                if n == '\n' {
+                    out.push('\n');
+                    break;
+                }
+            }
+            continue;
+        }
+        if c == '/' && text[index..].starts_with("/*") {
+            depth += 1;
+            chars.next();
+            continue;
+        }
+        if depth > 0 {
+            if c == '*' && text[index..].starts_with("*/") {
+                depth -= 1;
+                chars.next();
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
 fn forbidden_hits(dir: &str, forbidden: &[&str]) -> Vec<String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(dir);
     let mut hits = Vec::new();
     for file in sources(&root) {
-        let text = fs::read_to_string(&file).unwrap_or_default();
+        let text = code_only(&fs::read_to_string(&file).unwrap_or_default());
         for needle in forbidden {
             if text.contains(needle) {
                 hits.push(format!("{} uses {needle}", file.display()));

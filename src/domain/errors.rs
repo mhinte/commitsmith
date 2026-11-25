@@ -58,15 +58,9 @@ pub enum GitError {
     /// A merge left these paths unresolved.
     Conflict { paths: Vec<String> },
     /// Talking to the remote failed; `operation` is `fetch`, `push`, `pull`, …
-    Remote {
-        operation: String,
-        message: String,
-    },
+    Remote { operation: String, message: String },
     /// Reading or writing inside the repository failed; `context` says where.
-    Io {
-        context: String,
-        source: io::Error,
-    },
+    Io { context: String, source: io::Error },
 }
 
 impl GitError {
@@ -154,15 +148,9 @@ pub enum ConfigError {
     NotFound { scope: ConfigScope },
     /// The file exists but does not parse; `context` is the location or key,
     /// `message` says what was expected.
-    Parse {
-        context: String,
-        message: String,
-    },
+    Parse { context: String, message: String },
     /// Reading or writing the file failed; `context` says where.
-    Io {
-        context: String,
-        source: io::Error,
-    },
+    Io { context: String, source: io::Error },
 }
 
 impl ConfigError {
@@ -265,9 +253,7 @@ mod tests {
     #[test]
     fn non_io_variants_have_no_source() {
         assert!(std::error::Error::source(&GitError::not_found("main")).is_none());
-        assert!(
-            std::error::Error::source(&ConfigError::not_found(ConfigScope::User)).is_none()
-        );
+        assert!(std::error::Error::source(&ConfigError::not_found(ConfigScope::User)).is_none());
     }
 
     #[test]
