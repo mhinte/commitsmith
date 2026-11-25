@@ -129,8 +129,9 @@ pub fn recent_commits(repo: &gix::Repository, depth: usize) -> Vec<PastCommit> {
             .unwrap_or_default();
         let date = date.split('T').next().unwrap_or(&date).to_string();
 
-        let files = commit_files(repo, info.id);
-
+        // File lists are not read here: one `git show` per commit is what made
+        // the start in a long history take seconds. They are fetched for the
+        // commit the picker highlights, on demand.
         commits.push(PastCommit {
             short_id: info.id.to_string()[..7].to_string(),
             id: info.id.to_string(),
@@ -140,7 +141,7 @@ pub fn recent_commits(repo: &gix::Repository, depth: usize) -> Vec<PastCommit> {
             body: clean_body(&full_message),
             kind,
             scope,
-            files,
+            files: Vec::new(),
         });
     }
 
@@ -205,7 +206,8 @@ fn is_footer_line(line: &str) -> bool {
 }
 
 /// Files touched by a commit, from `git show --name-status`.
-fn commit_files(repo: &gix::Repository, id: gix::ObjectId) -> Vec<String> {
+/// Files changed by one commit, read when someone looks at it.
+pub fn commit_files(repo: &gix::Repository, id: gix::ObjectId) -> Vec<String> {
     let Some(workdir) = repo.workdir() else {
         return Vec::new();
     };
@@ -369,9 +371,174 @@ pub fn file_state(code: char) -> FileState {
     }
 }
 
+/// Scopes and recent commits from a single walk.
+///
+/// Two walks (one for scopes, one for the picker) opened up to 700 commits at
+/// startup. One walk over the larger depth answers both questions.
+pub fn snapshot(
+    repo: &gix::Repository,
+    configured: &[String],
+    scope_depth: usize,
+    commit_limit: usize,
+) -> (ScopeInfo, Vec<PastCommit>) {
+    let mut scopes: Vec<String> = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut commits = Vec::new();
+    let depth = scope_depth.max(commit_limit);
+
+    if let Ok(head) = repo.head_id() {
+        if let Ok(walk) = repo
+            .rev_walk([head.detach()])
+            .sorting(gix::revision::walk::Sorting::ByCommitTime(
+                gix::traverse::commit::simple::CommitTimeOrder::NewestFirst,
+            ))
+            .all()
+        {
+            for (index, info) in walk.take(depth).flatten().enumerate() {
+                let Ok(commit) = repo.find_commit(info.id) else {
+                    continue;
+                };
+                let message = commit.message();
+                let title = match &message {
+                    Ok(message) => message.title.to_str_lossy().trim().to_string(),
+                    Err(_) => String::new(),
+                };
+
+                if let Some(scope) = parse_scope(&title) {
+                    if seen.insert(scope.clone()) {
+                        scopes.push(scope);
+                    }
+                }
+                if index >= commit_limit || title.is_empty() {
+                    continue;
+                }
+
+                let body = match &message {
+                    Ok(message) => message
+                        .body
+                        .map(|body| body.to_str_lossy().to_string())
+                        .unwrap_or_default(),
+                    Err(_) => String::new(),
+                };
+                let (kind, scope) = match parse_event(&title) {
+                    Some((kind, scope, _, _)) => (Some(kind), scope),
+                    None => (None, None),
+                };
+                let author = commit
+                    .author()
+                    .ok()
+                    .map(|author| author.name.to_str_lossy().to_string())
+                    .unwrap_or_default();
+                let date = commit
+                    .time()
+                    .ok()
+                    .map(|time| {
+                        time.format(gix::date::time::format::ISO8601)
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+                let date = date.split('T').next().unwrap_or(&date).to_string();
+
+                commits.push(PastCommit {
+                    short_id: info.id.to_string()[..7].to_string(),
+                    id: info.id.to_string(),
+                    author,
+                    date,
+                    summary: strip_header(&title),
+                    body: clean_body(&body),
+                    kind,
+                    scope,
+                    files: Vec::new(),
+                });
+            }
+        }
+    }
+
+    (
+        ScopeInfo {
+            history: scopes,
+            configured: configured.to_vec(),
+        },
+        commits,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_repo(name: &str) -> (std::path::PathBuf, gix::Repository) {
+        let dir = std::env::temp_dir().join(format!(
+            "commitsmith-snapshot-{name}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for args in [
+            vec!["init", "-q", "-b", "main"],
+            vec!["config", "user.email", "s@example.com"],
+            vec!["config", "user.name", "S"],
+        ] {
+            std::process::Command::new("git")
+                .args(&args)
+                .current_dir(&dir)
+                .status()
+                .unwrap();
+        }
+        for (subject, file) in [
+            ("feat(api): first", "a.txt"),
+            ("fix(ui): second", "b.txt"),
+            ("chore: third", "c.txt"),
+        ] {
+            std::fs::write(dir.join(file), subject).unwrap();
+            std::process::Command::new("git")
+                .args(["add", file])
+                .current_dir(&dir)
+                .status()
+                .unwrap();
+            std::process::Command::new("git")
+                .args(["commit", "-q", "-m", subject])
+                .current_dir(&dir)
+                .status()
+                .unwrap();
+        }
+        let repo = gix::discover(&dir).unwrap();
+        (dir, repo)
+    }
+
+    #[test]
+    fn one_walk_fills_scopes_and_history() {
+        let (dir, repo) = temp_repo("walk");
+        let (scopes, commits) = snapshot(&repo, &["configured".to_string()], 50, 10);
+        assert_eq!(commits.len(), 3);
+        assert_eq!(commits[0].summary, "third", "newest first");
+        assert!(scopes.all().contains(&"api".to_string()), "{:?}", scopes);
+        assert!(scopes.all().contains(&"ui".to_string()));
+        assert!(scopes.all().contains(&"configured".to_string()));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_snapshot_does_not_run_git_show_per_commit() {
+        // The old reader spawned `git show` once per commit, which is what made
+        // a long history slow to open. A snapshot must leave the lists empty.
+        let (dir, repo) = temp_repo("nofiles");
+        let (_, commits) = snapshot(&repo, &[], 50, 10);
+        assert!(commits.iter().all(|commit| commit.files.is_empty()));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn files_are_read_for_one_commit_on_demand() {
+        let (dir, repo) = temp_repo("files");
+        let (_, commits) = snapshot(&repo, &[], 50, 10);
+        let id = gix::ObjectId::from_hex(commits[0].id.as_bytes()).unwrap();
+        let files = commit_files(&repo, id);
+        assert_eq!(files.len(), 1, "{files:?}");
+        assert!(files[0].contains("c.txt"), "{files:?}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     fn sample() -> PastCommit {
         PastCommit {

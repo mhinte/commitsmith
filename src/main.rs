@@ -252,6 +252,18 @@ fn run_composer(commit: bool) -> ExitCode {
                 app.set_scopes(data.scopes);
                 app.set_repo_line(data.status);
                 app.set_history(data.history);
+                // The history preview reads a commit's files only when it is
+                // highlighted, instead of running `git show` 200 times up front.
+                let files_root = root.clone();
+                app.set_files_loader(Box::new(move |id: &str| {
+                    let Some(repo) = git::open(&files_root) else {
+                        return Vec::new();
+                    };
+                    let Ok(oid) = gix::ObjectId::from_hex(id.as_bytes()) else {
+                        return Vec::new();
+                    };
+                    git::commit_files(&repo, oid)
+                }));
             }
             Ok(None) => {}
             Err(_) => {
@@ -325,10 +337,12 @@ fn read_repository(
         .map(|name| name.shorten().to_string())
         .unwrap_or_else(|| "detached".to_string());
     let staged = git::staged_summary(root).len();
+    // One walk fills scopes and history; file lists are not read here.
+    let (scopes, history) = git::snapshot(&repo, configured, depth, history_depth);
     Some(RepoData {
-        scopes: git::scope_info(&repo, configured, depth),
+        scopes,
         status: format!("{branch} · {staged} staged"),
-        history: git::recent_commits(&repo, history_depth),
+        history,
     })
 }
 

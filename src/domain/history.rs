@@ -60,7 +60,7 @@ impl ScopeInfo {
 }
 
 /// A commit from history, offered as a template for the message being written.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PastCommit {
     /// Abbreviated hash, 7 characters.
     pub short_id: String,

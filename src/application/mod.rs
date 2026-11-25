@@ -7,7 +7,12 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 pub mod tabs;
 
+use std::collections::HashMap;
+
 use crate::commit::Commit;
+
+/// Reads a commit's file list when the history preview needs it.
+pub type FilesLoader = Box<dyn Fn(&str) -> Vec<String> + Send + Sync>;
 use crate::config::Config;
 use crate::git::{PastCommit, ScopeInfo};
 use crate::validate::{self, Issue, Rules, Severity};
@@ -161,6 +166,10 @@ pub struct App {
     pub setup_request: bool,
     /// Which of the three surfaces is showing.
     pub tab: tabs::Tab,
+    /// File lists are read on demand: one `git show` per commit at startup made
+    /// long histories slow.
+    files_loader: Option<FilesLoader>,
+    pub files_cache: HashMap<String, Vec<String>>,
     pub should_quit: bool,
     pub show_help: bool,
 }
@@ -199,6 +208,8 @@ impl App {
             commit_mode: false,
             setup_request: false,
             tab: tabs::Tab::Commit,
+            files_loader: None,
+            files_cache: HashMap::new(),
             should_quit: false,
             show_help: false,
         };
@@ -243,6 +254,47 @@ impl App {
     /// Replace the list of recent commits offered as templates.
     pub fn set_history(&mut self, history: Vec<PastCommit>) {
         self.history = history;
+    }
+
+    /// Hand the composer a way to read a commit's file list when it is needed.
+    pub fn set_files_loader(&mut self, loader: FilesLoader) {
+        self.files_loader = Some(loader);
+    }
+
+    /// Read the file list for the highlighted history entry, once.
+    fn refresh_history_preview(&mut self) {
+        let Some(picker) = self.picker.as_ref() else {
+            return;
+        };
+        if picker.kind != PickerKind::History {
+            return;
+        }
+        let visible = picker.filtered();
+        let Some(&index) = visible.get(picker.selected.min(visible.len().saturating_sub(1))) else {
+            return;
+        };
+        let Some(id) = picker.values.get(index).cloned() else {
+            return;
+        };
+
+        if !self.files_cache.contains_key(&id) {
+            let Some(loader) = self.files_loader.as_ref() else {
+                return;
+            };
+            let files = loader(&id);
+            self.files_cache.insert(id.clone(), files);
+        }
+        let files = self.files_cache.get(&id).cloned().unwrap_or_default();
+        let Some(commit) = self.history.iter().find(|commit| commit.id == id) else {
+            return;
+        };
+        let mut enriched = commit.clone();
+        enriched.files = files;
+        if let Some(picker) = self.picker.as_mut() {
+            if let Some(slot) = picker.previews.get_mut(index) {
+                *slot = enriched.preview();
+            }
+        }
     }
 
     /// Tell the UI whether Ctrl+S commits or only prints.
@@ -401,6 +453,9 @@ impl App {
             filter: String::new(),
             previews,
         });
+        // The preview for the highlighted commit gets its file list now; the
+        // rest is fetched when the selection moves there.
+        self.refresh_history_preview();
     }
 
     /// Take type, scope and body from a past commit, keeping what is already
@@ -529,6 +584,7 @@ impl App {
                 if let Some(picker) = self.picker.as_mut() {
                     picker.move_by(delta);
                 }
+                self.refresh_history_preview();
             }
             Some(PickerAction::Backspace) => {
                 if let Some(picker) = self.picker.as_mut() {
@@ -1253,6 +1309,71 @@ mod tests {
         press(&mut app, KeyCode::Char(' ')); // type picker
         press(&mut app, KeyCode::Char('2'));
         assert_eq!(app.tab, tabs::Tab::Commit);
+    }
+
+    #[test]
+    fn the_history_preview_loads_files_lazily_and_once() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let mut app = App::default();
+        app.set_files_loader(Box::new(move |id: &str| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            vec![format!("M {id}.rs")]
+        }));
+        app.set_history(vec![
+            PastCommit {
+                id: "aaaa111".into(),
+                short_id: "aaaa111".into(),
+                summary: "first".into(),
+                kind: Some("feat".into()),
+                ..Default::default()
+            },
+            PastCommit {
+                id: "bbbb222".into(),
+                short_id: "bbbb222".into(),
+                summary: "second".into(),
+                kind: Some("fix".into()),
+                ..Default::default()
+            },
+        ]);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "one commit read on open");
+        let preview = app.picker.as_ref().unwrap().preview().unwrap().to_string();
+        assert!(preview.contains("M aaaa111.rs"), "{preview}");
+
+        // Moving to the next commit reads exactly one more.
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let preview = app.picker.as_ref().unwrap().preview().unwrap().to_string();
+        assert!(preview.contains("M bbbb222.rs"), "{preview}");
+
+        // Coming back is a cache hit.
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "no second read for a cached commit"
+        );
+    }
+
+    #[test]
+    fn a_commit_without_files_still_previews() {
+        let mut app = App::default();
+        app.set_files_loader(Box::new(|_: &str| Vec::new()));
+        app.set_history(vec![PastCommit {
+            id: "cccc333".into(),
+            short_id: "cccc333".into(),
+            summary: "no files".into(),
+            kind: Some("docs".into()),
+            ..Default::default()
+        }]);
+        app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+        let preview = app.picker.as_ref().unwrap().preview().unwrap();
+        assert!(preview.contains("docs: no files"), "{preview}");
     }
 
     #[test]
