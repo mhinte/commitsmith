@@ -115,7 +115,7 @@ impl TicketId {
 }
 
 /// Prefixes start with a letter so a bare number is never mistaken for one.
-fn valid_prefix(prefix: &str) -> bool {
+pub fn valid_prefix(prefix: &str) -> bool {
     let mut chars = prefix.chars();
     match chars.next() {
         Some(first) if first.is_ascii_alphabetic() => {}

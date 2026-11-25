@@ -63,6 +63,14 @@ pub struct Config {
     pub user: Option<String>,
     /// Short handle derived from the name, e.g. `hima`.
     pub prefix: Option<String>,
+    /// Author shortcut for branch names, e.g. `mmu`.
+    pub author: Option<String>,
+    /// Prefix for ticket ids, e.g. `TICKET`.
+    pub ticket_prefix: String,
+    /// `Refs` or `Closes`, the keyword the footer uses.
+    pub reference: String,
+    /// Template for branch names.
+    pub branch_template: String,
     /// Where the values came from, for `commitsmith config`.
     pub sources: Vec<PathBuf>,
 }
@@ -206,6 +214,10 @@ impl Config {
             recommended_subject: 50,
             user: None,
             prefix: None,
+            author: None,
+            ticket_prefix: "TICKET".to_string(),
+            reference: "Refs".to_string(),
+            branch_template: "{type}/{author}/{ticket}/{slug}".to_string(),
             sources: Vec::new(),
         }
     }
@@ -313,6 +325,21 @@ impl Config {
         if let Some(user) = named_user.clone() {
             self.user = Some(user);
         }
+        if let Some(author) = file.author.filter(|value| !value.trim().is_empty()) {
+            self.author = Some(author.trim().to_lowercase());
+        }
+        if let Some(prefix) = file.ticket_prefix.filter(|value| !value.trim().is_empty()) {
+            self.ticket_prefix = prefix.trim().to_uppercase();
+        }
+        if let Some(reference) = file.reference.filter(|value| !value.trim().is_empty()) {
+            self.reference = reference.trim().to_string();
+        }
+        if let Some(template) = file
+            .branch_template
+            .filter(|value| !value.trim().is_empty())
+        {
+            self.branch_template = template.trim().to_string();
+        }
         if let Some(prefix) = explicit_prefix {
             self.prefix = Some(prefix);
         } else if named_user.is_some() {
@@ -386,6 +413,10 @@ impl Config {
             recommended_subject: Some(self.recommended_subject),
             user: self.user.clone(),
             prefix: self.prefix.clone(),
+            author: self.author.clone(),
+            ticket_prefix: Some(self.ticket_prefix.clone()),
+            reference: Some(self.reference.clone()),
+            branch_template: Some(self.branch_template.clone()),
         };
         toml::to_string_pretty(&file).unwrap_or_default()
     }
@@ -409,6 +440,10 @@ struct IdentityFile {
 struct ConfigFile {
     profile: Option<String>,
     profiles: Option<Vec<Profile>>,
+    author: Option<String>,
+    ticket_prefix: Option<String>,
+    reference: Option<String>,
+    branch_template: Option<String>,
     scopes: Option<Vec<String>>,
     emoji: Option<bool>,
     history_depth: Option<usize>,
@@ -487,6 +522,43 @@ impl TomlConfigStore {
         }
         Config::user_config_path().ok_or(ConfigError::not_found(ConfigScope::User))
     }
+}
+
+/// Store the wizard's answers, keeping whatever the file already had.
+///
+/// Written as TOML values rather than by formatting strings, so a key with a
+/// quote or a backslash in it cannot break the file.
+pub fn save_setup(
+    store: &dyn ConfigStore,
+    answers: &crate::domain::setup::SetupAnswers,
+) -> Result<PathBuf, ConfigError> {
+    let existing = store.user_document()?;
+    let mut table: toml::Table = match existing.as_ref().map(|doc| doc.text.trim()) {
+        Some(text) if !text.is_empty() => text.parse().map_err(|error| {
+            ConfigError::parse(
+                existing
+                    .as_ref()
+                    .map(|doc| doc.path.display().to_string())
+                    .unwrap_or_else(|| "user config".to_string()),
+                format!("{error}"),
+            )
+        })?,
+        _ => toml::Table::new(),
+    };
+
+    table.insert("author".into(), answers.author.as_str().into());
+    table.insert("ticket_prefix".into(), answers.ticket_prefix.clone().into());
+    table.insert("reference".into(), answers.reference.to_string().into());
+    table.insert(
+        "branch_template".into(),
+        answers.branch_template.as_str().to_string().into(),
+    );
+    table.insert("profile".into(), answers.profile.clone().into());
+    table.insert("emoji".into(), answers.emoji.into());
+
+    let text = toml::to_string_pretty(&table)
+        .map_err(|error| ConfigError::parse("user config", format!("{error}")))?;
+    store.write_user(&text)
 }
 
 impl Default for TomlConfigStore {
@@ -584,6 +656,28 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().contains("tmp"))
             .collect();
         assert!(leftovers.is_empty(), "{leftovers:?}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn save_setup_keeps_the_identity_that_is_already_there() {
+        let dir = temp("merge");
+        let store = TomlConfigStore::at(&dir);
+        store
+            .write_user("user = \"Marc Hinte\"\nprefix = \"himar\"\n")
+            .unwrap();
+        let answers = crate::domain::setup::SetupAnswers::defaults(&["conventional".to_string()])
+            .with_author("mhi")
+            .unwrap()
+            .with_ticket_prefix("abc")
+            .unwrap();
+        save_setup(&store, &answers).unwrap();
+
+        let text = store.user_document().unwrap().unwrap().text;
+        assert!(text.contains("Marc Hinte"), "{text}");
+        assert!(text.contains("himar"), "{text}");
+        assert!(text.contains("author = \"mhi\""), "{text}");
+        assert!(text.contains("ticket_prefix = \"ABC\""), "{text}");
         let _ = std::fs::remove_dir_all(dir);
     }
 

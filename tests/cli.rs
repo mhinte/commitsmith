@@ -31,6 +31,18 @@ fn bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_commitsmith"))
 }
 
+/// A command with `HOME` (and the XDG variables) pointed at `home`, so the test
+/// cannot read or write the developer's real config.
+fn bin_with_home(home: &Path) -> Command {
+    let mut command = bin();
+    command
+        .env("HOME", home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env_remove("APPDATA")
+        .env("GIT_CONFIG_GLOBAL", home.join("gitconfig"));
+    command
+}
+
 fn check(dir: &Path, message: &str) -> std::process::Output {
     bin()
         .args(["check", "--message", message])
@@ -42,6 +54,54 @@ fn check(dir: &Path, message: &str) -> std::process::Output {
 fn add_file(dir: &Path, name: &str) {
     std::fs::write(dir.join(name), "content\n").expect("write file");
     run(dir, "git", &["add", name]);
+}
+
+#[test]
+fn init_defaults_writes_a_usable_config_and_is_idempotent() {
+    let home = std::env::temp_dir().join(format!("commitsmith-init-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).unwrap();
+
+    let first = bin_with_home(&home)
+        .args(["init", "--defaults"])
+        .current_dir(&home)
+        .output()
+        .unwrap();
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let path = home.join(".config/commitsmith/config.toml");
+    let text = std::fs::read_to_string(&path).expect("config written");
+    assert!(text.contains("author = \"mmu\""), "{text}");
+    assert!(text.contains("ticket_prefix = \"TICKET\""), "{text}");
+    assert!(text.contains("reference = \"Refs\""), "{text}");
+    assert!(text.contains("branch_template"), "{text}");
+
+    // The values are readable again, and a second run asks for --force.
+    let config = bin_with_home(&home)
+        .args(["config"])
+        .current_dir(&home)
+        .output()
+        .unwrap();
+    assert!(config.status.success());
+    let shown = String::from_utf8_lossy(&config.stdout);
+    assert!(shown.contains("TICKET"), "{shown}");
+
+    let second = bin_with_home(&home)
+        .args(["init", "--defaults"])
+        .current_dir(&home)
+        .output()
+        .unwrap();
+    assert!(
+        !second.status.success(),
+        "second run must refuse without --force"
+    );
+    let after = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(text, after, "refused run must not touch the file");
+
+    let _ = std::fs::remove_dir_all(&home);
 }
 
 #[test]

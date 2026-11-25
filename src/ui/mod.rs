@@ -3,6 +3,7 @@
 //! Nothing here touches `gix` or spawns a process; the state comes from
 //! [`crate::application`] and is only read.
 
+pub mod init;
 pub mod setup;
 
 use std::io;

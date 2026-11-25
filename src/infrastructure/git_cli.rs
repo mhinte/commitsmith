@@ -149,6 +149,27 @@ impl GitRepository for GitBackend {
     }
 }
 
+/// Point a git alias at this binary: `git smith` then opens the composer.
+///
+/// `!` makes git run it through a shell, which is what an alias that is not a git
+/// subcommand needs.
+pub fn install_alias(name: &str, binary: &str) -> Result<(), GitError> {
+    let key = format!("alias.{name}");
+    let value = format!("!{binary}");
+    let output = Command::new("git")
+        .args(["config", "--global", &key, &value])
+        .output()
+        .map_err(|error| GitError::io("git config --global", error))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(GitError::remote(
+            "git config",
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ))
+    }
+}
+
 /// The `[main abc1234] subject` line, reduced to the id.
 ///
 /// A root commit prints `[main (root-commit) abc1234]`, so the id is the last

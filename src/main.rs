@@ -6,6 +6,8 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
+use commitsmith::domain::ports::ConfigStore as _;
+
 mod app;
 mod application;
 mod commit;
@@ -70,7 +72,10 @@ enum Command {
     },
     /// Write a starter .commitsmith.toml in the current directory
     Init {
-        /// Overwrite an existing file
+        /// Do not ask; take the defaults
+        #[arg(long)]
+        defaults: bool,
+        /// Overwrite the user config without asking
         #[arg(long)]
         force: bool,
     },
@@ -125,7 +130,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some(Command::Config { identity }) => show_config(identity),
-        Some(Command::Init { force }) => init_config(force),
+        Some(Command::Init { defaults, force }) => init_config(defaults, force),
         Some(Command::Hooks { action }) => run_hooks(action),
         Some(Command::Check {
             file,
@@ -360,6 +365,10 @@ fn show_config(identity: bool) -> ExitCode {
     }
     println!("profile: {}", config.profile);
     println!("user:    {}", config.user.as_deref().unwrap_or("-"));
+    println!("author:  {}", config.author.as_deref().unwrap_or("-"));
+    println!("tickets: {}-1234", config.ticket_prefix);
+    println!("footer:  {}", config.reference);
+    println!("branch:  {}", config.branch_template);
     println!("types:   {}", config.type_names().join(", "));
     println!("scopes:  {}", join_or_dash(&config.scopes));
     println!(
@@ -389,23 +398,72 @@ fn join_or_dash(items: &[String]) -> String {
     }
 }
 
-fn init_config(force: bool) -> ExitCode {
-    let path = cwd().join(".commitsmith.toml");
-    if path.exists() && !force {
+/// `commitsmith init`: ask the setup questions and store them for this user.
+///
+/// The project file is still written when one exists or `--force` is given, so
+/// the wizard can also provide a repository default without touching the user
+/// config.
+fn init_config(defaults: bool, force: bool) -> ExitCode {
+    let store = commitsmith::infrastructure::config_toml::TomlConfigStore::new();
+    let existing = store.user_document().ok().flatten();
+    // `--defaults` skips the questions, not the confirmation: an existing file
+    // is only replaced on request.
+    if existing.is_some() && !force {
         eprintln!(
             "commitsmith: {} exists, pass --force to overwrite",
-            path.display()
+            existing
+                .as_ref()
+                .map(|doc| doc.path.display().to_string())
+                .unwrap_or_default()
         );
         return ExitCode::FAILURE;
     }
+
     let (config, _) = load_config();
-    match std::fs::write(&path, config.to_toml()) {
-        Ok(()) => {
+    let profiles: Vec<String> = config.profiles.keys().cloned().collect();
+    let current = if existing.is_some() {
+        Some(
+            commitsmith::domain::setup::SetupAnswers::defaults(&profiles)
+                .with_author(config.author.as_deref().unwrap_or("mmu"))
+                .unwrap_or_else(|_| commitsmith::domain::setup::SetupAnswers::defaults(&profiles))
+                .with_ticket_prefix(&config.ticket_prefix)
+                .unwrap_or_else(|_| commitsmith::domain::setup::SetupAnswers::defaults(&profiles))
+                .with_reference(&config.reference)
+                .unwrap_or_else(|_| commitsmith::domain::setup::SetupAnswers::defaults(&profiles)),
+        )
+    } else {
+        None
+    };
+
+    let answers = match ui::init::ask(&ui::init::Options { defaults }, &profiles, current.as_ref())
+    {
+        Some(answers) => answers,
+        None => {
+            eprintln!("commitsmith: setup aborted, nothing written");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match commitsmith::infrastructure::config_toml::save_setup(&store, &answers) {
+        Ok(path) => {
             println!("wrote {}", path.display());
+            println!("author   {}", answers.author);
+            println!("tickets  {}-1234", answers.ticket_prefix);
+            println!("footer   {}", answers.reference);
+            println!("branches {}", answers.branch_template);
+            if answers.git_alias {
+                let binary = std::env::current_exe()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|_| "commitsmith".to_string());
+                match commitsmith::infrastructure::git_cli::install_alias("smith", &binary) {
+                    Ok(()) => println!("git alias: git smith"),
+                    Err(error) => eprintln!("commitsmith: alias not set: {error}"),
+                }
+            }
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("commitsmith: cannot write {}: {error}", path.display());
+            eprintln!("commitsmith: {error}");
             ExitCode::FAILURE
         }
     }
