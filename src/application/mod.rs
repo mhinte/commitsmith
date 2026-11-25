@@ -470,6 +470,35 @@ impl App {
         }
     }
 
+    /// `f` on tab 2: update the remote-tracking branches, then redraw the list so
+    /// the sync marks are right. Nothing in the work tree changes.
+    fn fetch_remote(&mut self) {
+        let Some(git) = self.git.as_deref() else {
+            self.status = "not a git repository · nothing to fetch".to_string();
+            return;
+        };
+        match git.fetch() {
+            Ok(()) => {
+                self.reload_branches();
+                self.refresh_sync();
+                let changed = self
+                    .branches
+                    .items
+                    .iter()
+                    .filter(|branch| !branch.is_remote)
+                    .filter(|branch| {
+                        matches!(self.branches.sync.get(&branch.name), Some((ahead, behind)) if *ahead > 0 || *behind > 0)
+                    })
+                    .count();
+                self.status = match changed {
+                    0 => "fetched · every branch is level with its upstream".to_string(),
+                    n => format!("fetched · {n} branch{} with commits to sync", plural(n)),
+                };
+            }
+            Err(error) => self.status = explain_sync_error(&error, true, &self.branch_label()),
+        }
+    }
+
     /// Re-read the changed files and the diff of the highlighted one.
     pub fn reload_staging(&mut self) {
         let (git, staging) = (&self.git, &mut self.staging);
@@ -616,6 +645,7 @@ impl App {
             KeyCode::Char('m') => self.merge_selected(),
             KeyCode::Char('d') => self.delete_selected(),
             KeyCode::Char('r') => self.reload_branches(),
+            KeyCode::Char('f') => self.fetch_remote(),
             KeyCode::Char('n') => self.wizard.start(),
             KeyCode::Esc => {
                 // Esc is the cancel key while a deletion waits for its second
@@ -2133,6 +2163,26 @@ mod tests {
         assert_eq!(app.sync_label().as_deref(), Some("in sync"));
         let (app, _) = app_with_remote(None);
         assert_eq!(app.sync_label().as_deref(), Some("no upstream"));
+    }
+
+    #[test]
+    fn fetch_is_a_tab_two_key_that_reloads_the_marks() {
+        use crate::application::test_support::RecordingGit;
+        let mut git = RecordingGit::new(&["main", "feature"], "main");
+        git.sync_map.insert("main".to_string(), (0, 2));
+        let calls = git.calls();
+        let mut app = App::with_config(Config::conventional(), Vec::new());
+        app.tab = tabs::Tab::Branches;
+        app.set_git(Box::new(git));
+
+        press(&mut app, KeyCode::Char('f'));
+        assert!(
+            calls.borrow().iter().any(|call| call == "fetch"),
+            "{:?}",
+            calls.borrow()
+        );
+        assert!(app.status.starts_with("fetched"), "{}", app.status);
+        assert!(app.status.contains("1 branch"), "{}", app.status);
     }
 
     fn type_text(app: &mut App, text: &str) {

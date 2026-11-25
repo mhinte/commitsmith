@@ -87,13 +87,18 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
                     theme::idle_row()
                 },
             ),
+            // The sync mark sits where the upstream name used to: the numbers
+            // say more than `origin/main` and fit in a narrow panel.
             Span::styled(
-                branch
-                    .upstream
-                    .as_ref()
-                    .map(|upstream| format!(" ↑{upstream}"))
+                app.branches
+                    .sync_label(branch)
+                    .map(|label| format!(" {label}"))
                     .unwrap_or_default(),
-                MUTED,
+                if selected {
+                    theme::focused_label()
+                } else {
+                    MUTED
+                },
             ),
         ]);
         // The selected branch is filled, like the focused field in the composer.

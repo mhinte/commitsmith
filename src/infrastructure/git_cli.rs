@@ -45,6 +45,23 @@ impl GitBackend {
 }
 
 /// Map git's answer onto the error the surface should show.
+/// `%(upstream:track)` says `[ahead 2, behind 1]`, `[ahead 3]`, `[behind 4]` or
+/// nothing at all. The numbers are all that matter here.
+fn parse_track(track: &str) -> (usize, usize) {
+    let body = track.trim_matches(|c| c == '[' || c == ']');
+    let mut ahead = 0;
+    let mut behind = 0;
+    for part in body.split(',') {
+        let mut words = part.split_whitespace();
+        match (words.next(), words.next()) {
+            (Some("ahead"), Some(count)) => ahead = count.parse().unwrap_or(0),
+            (Some("behind"), Some(count)) => behind = count.parse().unwrap_or(0),
+            _ => {}
+        }
+    }
+    (ahead, behind)
+}
+
 fn classify(args: &[&str], stderr: &str, workdir: &Path) -> GitError {
     let operation = args.join(" ");
     let lower = stderr.to_lowercase();
@@ -171,6 +188,30 @@ impl GitRepository for GitBackend {
 
     fn push(&self) -> Result<(), GitError> {
         self.git(&["push"]).map(|_| ())
+    }
+
+    fn branch_sync(&self) -> Result<Vec<(String, usize, usize)>, GitError> {
+        let output = self.git(&[
+            "for-each-ref",
+            "--format=%(refname:short)%00%(upstream:track)",
+            "refs/heads",
+        ])?;
+        Ok(output
+            .lines()
+            .filter_map(|line| {
+                let (name, track) = line.split_once('\0')?;
+                let track = track.trim();
+                if track.is_empty() || track == "[gone]" {
+                    return None;
+                }
+                let (ahead, behind) = parse_track(track);
+                Some((name.to_string(), ahead, behind))
+            })
+            .collect())
+    }
+
+    fn fetch(&self) -> Result<(), GitError> {
+        self.git(&["fetch", "--prune", "--quiet"]).map(|_| ())
     }
 
     /// `git rev-list --left-right --count HEAD...@{upstream}` answers both numbers
@@ -385,6 +426,15 @@ mod tests {
         assert_eq!(String::from_utf8_lossy(&log.stdout).trim(), "feat: first");
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_track_string_becomes_two_numbers() {
+        assert_eq!(parse_track("[ahead 2, behind 1]"), (2, 1));
+        assert_eq!(parse_track("[ahead 3]"), (3, 0));
+        assert_eq!(parse_track("[behind 4]"), (0, 4));
+        assert_eq!(parse_track(""), (0, 0));
+        assert_eq!(parse_track("[gone]"), (0, 0));
     }
 
     #[test]

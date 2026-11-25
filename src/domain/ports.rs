@@ -128,6 +128,11 @@ pub trait GitRepository {
     /// `(ahead, behind)` against the upstream. `None` means the branch has no
     /// upstream, which is a different state from being in sync.
     fn ahead_behind(&self) -> Result<Option<(usize, usize)>, GitError>;
+    /// Ahead/behind per local branch, against its upstream. Branches without an
+    /// upstream are not in the list — that is the caller's business to show.
+    fn branch_sync(&self) -> Result<Vec<(String, usize, usize)>, GitError>;
+    /// Updates the remote-tracking branches; nothing in the work tree changes.
+    fn fetch(&self) -> Result<(), GitError>;
 }
 
 /// The user-wide and the project config file.
@@ -254,6 +259,15 @@ mod tests {
 
         fn ahead_behind(&self) -> Result<Option<(usize, usize)>, GitError> {
             Ok(Some((0, 0)))
+        }
+
+        fn branch_sync(&self) -> Result<Vec<(String, usize, usize)>, GitError> {
+            Ok(Vec::new())
+        }
+
+        fn fetch(&self) -> Result<(), GitError> {
+            self.calls.borrow_mut().push("fetch".to_string());
+            Ok(())
         }
     }
 

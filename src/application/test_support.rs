@@ -22,6 +22,8 @@ pub struct RecordingGit {
     pub sync: Option<(usize, usize)>,
     /// When set, pull and push fail with this message.
     pub sync_error: Option<String>,
+    /// Per-branch ahead/behind, as `branch_sync` reports it.
+    pub sync_map: std::collections::HashMap<String, (usize, usize)>,
     /// Files the fake reports, with their real index/worktree state.
     pub files: RefCell<Vec<ChangedFile>>,
 }
@@ -40,6 +42,7 @@ impl RecordingGit {
             create_fails: false,
             sync: Some((0, 0)),
             sync_error: None,
+            sync_map: std::collections::HashMap::new(),
             files: RefCell::new(Vec::new()),
         }
     }
@@ -173,6 +176,19 @@ impl GitRepository for RecordingGit {
             Some(message) => Err(GitError::remote("push", message.clone())),
             None => Ok(()),
         }
+    }
+
+    fn branch_sync(&self) -> Result<Vec<(String, usize, usize)>, GitError> {
+        Ok(self
+            .sync_map
+            .iter()
+            .map(|(name, (ahead, behind))| (name.clone(), *ahead, *behind))
+            .collect())
+    }
+
+    fn fetch(&self) -> Result<(), GitError> {
+        self.calls.borrow_mut().push("fetch".to_string());
+        Ok(())
     }
 
     fn ahead_behind(&self) -> Result<Option<(usize, usize)>, GitError> {

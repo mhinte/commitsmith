@@ -81,6 +81,7 @@ impl Tab {
                 ("d", "delete"),
                 ("m", "merge"),
                 ("n", "new branch"),
+                ("f", "fetch"),
             ],
             Self::History => vec![
                 ("↓ ↑", "move"),
