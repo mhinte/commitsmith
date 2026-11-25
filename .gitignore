@@ -2,3 +2,6 @@
 **/*.rs.bk
 .commit-msg.tmp
 /dist
+
+# Dispatcher worktrees (kanban workers)
+.worktrees/
