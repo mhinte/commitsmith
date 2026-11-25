@@ -95,6 +95,9 @@ impl GitRepository for RecordingGit {
                 "a branch called `{name}` already exists"
             )));
         }
+        self.branches
+            .borrow_mut()
+            .push(BranchInfo::local(name, false));
         Ok(())
     }
 

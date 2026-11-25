@@ -71,6 +71,10 @@ pub struct Config {
     pub reference: String,
     /// Template for branch names.
     pub branch_template: String,
+    /// Add `Co-authored-by: <name>` to a new message's footer.
+    pub co_author: bool,
+    /// Text after `Co-authored-by: `; falls back to the handle from setup.
+    pub co_author_name: Option<String>,
     /// Where the values came from, for `commitsmith config`.
     pub sources: Vec<PathBuf>,
 }
@@ -217,6 +221,8 @@ impl Config {
             author: None,
             ticket_prefix: "TICKET".to_string(),
             reference: "Refs".to_string(),
+            co_author: true,
+            co_author_name: None,
             branch_template: "{type}/{author}/{ticket}/{slug}".to_string(),
             sources: Vec::new(),
         }
@@ -340,6 +346,13 @@ impl Config {
         {
             self.branch_template = template.trim().to_string();
         }
+        if let Some(co_author) = file.co_author {
+            self.co_author = co_author;
+        }
+        if let Some(name) = file.co_author_name {
+            // An empty string is a deliberate "no text beyond the keyword".
+            self.co_author_name = Some(name.trim().to_string()).filter(|value| !value.is_empty());
+        }
         if let Some(prefix) = explicit_prefix {
             self.prefix = Some(prefix);
         } else if named_user.is_some() {
@@ -417,6 +430,8 @@ impl Config {
             ticket_prefix: Some(self.ticket_prefix.clone()),
             reference: Some(self.reference.clone()),
             branch_template: Some(self.branch_template.clone()),
+            co_author: Some(self.co_author),
+            co_author_name: self.co_author_name.clone(),
         };
         toml::to_string_pretty(&file).unwrap_or_default()
     }
@@ -444,6 +459,8 @@ struct ConfigFile {
     ticket_prefix: Option<String>,
     reference: Option<String>,
     branch_template: Option<String>,
+    co_author: Option<bool>,
+    co_author_name: Option<String>,
     scopes: Option<Vec<String>>,
     emoji: Option<bool>,
     history_depth: Option<usize>,
@@ -631,6 +648,39 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn the_co_author_can_be_switched_off_in_the_file() {
+        let mut config = Config::conventional();
+        config.apply(toml::from_str("user = \"Marc Hinte\"\nco_author = false\n").unwrap());
+        assert!(!config.co_author, "false in the file must stay false");
+        assert_eq!(config.prefix.as_deref(), Some("himar"));
+    }
+
+    #[test]
+    fn a_co_author_name_replaces_the_handle() {
+        let mut config = Config::conventional();
+        config.apply(
+            toml::from_str(
+                "user = \"Marc Hinte\"\nco_author_name = \"Marc Hinte <marc@example.com>\"\n",
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            config.co_author_name.as_deref(),
+            Some("Marc Hinte <marc@example.com>")
+        );
+    }
+
+    #[test]
+    fn the_co_author_setting_survives_a_round_trip() {
+        let mut config = Config::conventional();
+        config.co_author = false;
+        config.co_author_name = Some("Nobody <nobody@example.com>".to_string());
+        let text = config.to_toml();
+        assert!(text.contains("co_author = false"), "{text}");
+        assert!(text.contains("nobody@example.com"), "{text}");
     }
 
     #[test]

@@ -511,6 +511,18 @@ fn show_config(identity: bool) -> ExitCode {
     println!("author:  {}", config.author.as_deref().unwrap_or("-"));
     println!("tickets: {}-1234", config.ticket_prefix);
     println!("footer:  {}", config.reference);
+    println!(
+        "co-author: {}",
+        if config.co_author {
+            config
+                .co_author_name
+                .clone()
+                .or_else(|| config.prefix.clone())
+                .unwrap_or_else(|| "on, but no handle yet".to_string())
+        } else {
+            "off".to_string()
+        }
+    );
     println!("branch:  {}", config.branch_template);
     println!("types:   {}", config.type_names().join(", "));
     println!("scopes:  {}", join_or_dash(&config.scopes));

@@ -209,6 +209,13 @@ max_subject = 72
 recommended_subject = 50
 scopes = ["api", "ui"]       # pinned scopes, listed before history
 
+author = "hima"              # short name in branch names
+ticket_prefix = "TICKET"     # TICKET-1234
+reference = "Refs"           # or "Closes", the keyword before the ticket
+branch_template = "{type}/{author}/{ticket}/{slug}"
+co_author = true             # add "Co-authored-by: <handle>" to a new footer
+co_author_name = "Marc Hinte <marc@example.com>"   # optional, replaces the handle
+
 [[profiles]]
 name = "work"
 description = "House types"
@@ -226,6 +233,11 @@ emoji = "🚀"
 
 A broken file never blocks the composer: the warning shows up in the status bar
 and the defaults stay active.
+
+The footer of a new message is filled while it is still empty, and only then: a
+branch that carries a ticket contributes `Refs TICKET-1234`, and `co_author`
+adds the co-author line. Text you type yourself is never replaced — not even
+when you switch branches. `co_author = false` leaves the line out.
 
 ## Keys
 

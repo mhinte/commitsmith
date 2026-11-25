@@ -22,6 +22,7 @@ use crate::git::{PastCommit, ScopeInfo};
 use crate::validate::{self, Issue, Rules, Severity};
 use branch_wizard::BranchWizard;
 use branches::BranchList;
+use commitsmith::domain::branch::ConventionalBranchName;
 use commitsmith::domain::ports::GitRepository;
 
 /// Order of the form fields, top to bottom.
@@ -177,6 +178,11 @@ pub struct App {
     pub git: Option<Box<dyn GitRepository>>,
     /// Branch explorer state.
     pub branches: BranchList,
+    /// Short name of the checked-out branch, for the context bridge.
+    pub branch_name: Option<String>,
+    /// What `seed_footer` last wrote, so a later suggestion may replace its own
+    /// text but never what the user typed.
+    footer_seed: Option<String>,
     /// The conventional branch wizard on tab 2.
     pub wizard: BranchWizard,
     /// False when the working directory is not inside a repository; the header
@@ -226,6 +232,8 @@ impl App {
             tab: tabs::Tab::Commit,
             git: None,
             branches: BranchList::default(),
+            branch_name: None,
+            footer_seed: None,
             wizard: BranchWizard::default(),
             in_repository: false,
             files_loader: None,
@@ -238,27 +246,69 @@ impl App {
         app
     }
 
-    /// Suggested footer for a new, empty message: the prefix identifies the
-    /// author in shared repositories.
-    pub fn suggested_footer(&self) -> Option<String> {
-        self.config
-            .prefix
-            .as_deref()
-            .map(|prefix| format!("Co-authored-by: {prefix}"))
+    /// The ticket of the branch we are on, when its name carries one.
+    pub fn branch_ticket(&self) -> Option<String> {
+        let name = self.branch_name.as_deref()?;
+        ConventionalBranchName::parse(name)
+            .ok()
+            .and_then(|parsed| parsed.ticket().map(|ticket| ticket.to_string()))
     }
 
-    /// Fill the footer with the suggestion while it is still untouched, so the
-    /// user can delete it like any other text.
+    /// Who the co-author line names: the configured text, else the handle.
+    pub fn co_author_name(&self) -> Option<String> {
+        self.config
+            .co_author_name
+            .clone()
+            .or_else(|| self.config.prefix.clone())
+            .filter(|name| !name.trim().is_empty())
+    }
+
+    /// Suggested footer for a new message: the branch's ticket as the reference
+    /// and — unless switched off — the co-author line.
+    pub fn suggested_footer(&self) -> Option<String> {
+        let mut lines = Vec::new();
+        if let Some(ticket) = self.branch_ticket() {
+            lines.push(format!("{} {ticket}", self.config.reference));
+        }
+        if self.config.co_author {
+            if let Some(name) = self.co_author_name() {
+                lines.push(format!("Co-authored-by: {name}"));
+            }
+        }
+        if lines.is_empty() {
+            None
+        } else {
+            Some(lines.join("\n"))
+        }
+    }
+
+    /// Fill the footer with the suggestion while it is still untouched.
+    ///
+    /// "Untouched" means empty or exactly what an earlier suggestion wrote, so
+    /// switching branches updates the reference but never overwrites typing.
     pub fn seed_footer(&mut self) {
-        if !self.commit.footer.trim().is_empty() {
+        let untouched = self.commit.footer.trim().is_empty()
+            || self.footer_seed.as_deref() == Some(self.commit.footer.as_str());
+        if !untouched {
             return;
         }
-        if let Some(footer) = self.suggested_footer() {
-            self.commit.footer = footer;
-            self.cursors[FIELDS.iter().position(|f| *f == Field::Footer).unwrap_or(0)] =
-                self.commit.footer.chars().count();
-            self.revalidate();
+        match self.suggested_footer() {
+            Some(footer) => {
+                self.commit.footer = footer.clone();
+                self.cursors[FIELDS.iter().position(|f| *f == Field::Footer).unwrap_or(0)] =
+                    self.commit.footer.chars().count();
+                self.footer_seed = Some(footer);
+            }
+            None => {
+                // The suggestion is gone (no ticket, no co-author): clear what it
+                // wrote, but only that.
+                if self.footer_seed.is_some() {
+                    self.commit.footer.clear();
+                    self.footer_seed = None;
+                }
+            }
         }
+        self.revalidate();
     }
 
     /// What the header shows about the repository on the right.
@@ -283,27 +333,37 @@ impl App {
         self.reload_branches();
     }
 
-    /// Re-read the branch list and the branch line in the footer.
+    /// Re-read the branch list, the branch line in the footer, and the context
+    /// the composer takes from the branch.
     pub fn reload_branches(&mut self) {
-        let (git, branches) = (&self.git, &mut self.branches);
-        let Some(git) = git.as_deref() else {
-            return;
+        let failure = {
+            let (git, branches) = (&self.git, &mut self.branches);
+            let Some(git) = git.as_deref() else {
+                return;
+            };
+            branches.reload(git).err()
         };
-        let failure = branches.reload(git).err();
-        let branch = git
-            .current_branch()
-            .ok()
-            .flatten()
-            .map(|info| info.name)
+        let (head, staged) = {
+            let Some(git) = self.git.as_deref() else {
+                return;
+            };
+            (
+                git.current_branch().ok().flatten(),
+                git.changes()
+                    .map(|files| files.iter().filter(|file| file.is_staged()).count())
+                    .unwrap_or(0),
+            )
+        };
+        self.branch_name = head.map(|info| info.name);
+        let branch = self
+            .branch_name
+            .clone()
             .unwrap_or_else(|| "detached".to_string());
-        let staged = git
-            .changes()
-            .map(|files| files.iter().filter(|file| file.is_staged()).count())
-            .unwrap_or(0);
         self.repo_line = format!("{branch} · {staged} staged");
         if let Some(error) = failure {
             self.status = error.to_string();
         }
+        self.seed_footer();
     }
 
     /// Keys of the second and third tab. The composer's keys must not fire here.
@@ -1870,6 +1930,89 @@ mod tests {
         config.prefix = Some("hima".into());
         let app = App::with_config(config, Vec::new());
         assert_eq!(app.commit.footer, "Co-authored-by: hima");
+    }
+
+    fn app_on_branch(config: Config, branch: &str) -> App {
+        let git = RecordingGit::new(&[branch], branch);
+        let mut app = App::with_config(config, Vec::new());
+        app.set_in_repository(true);
+        app.set_git(Box::new(git));
+        app
+    }
+
+    #[test]
+    fn the_branch_ticket_lands_in_the_footer() {
+        let mut config = Config::conventional();
+        config.prefix = Some("hima".into());
+        let app = app_on_branch(config, "feat/hima/TICKET-42/add-a-thing");
+        assert_eq!(app.commit.footer, "Refs TICKET-42\nCo-authored-by: hima");
+    }
+
+    #[test]
+    fn the_co_author_can_be_switched_off() {
+        let mut config = Config::conventional();
+        config.prefix = Some("hima".into());
+        config.co_author = false;
+        let app = app_on_branch(config, "feat/hima/TICKET-42/add-a-thing");
+        assert_eq!(app.commit.footer, "Refs TICKET-42");
+    }
+
+    #[test]
+    fn a_custom_co_author_name_is_used() {
+        let mut config = Config::conventional();
+        config.prefix = Some("hima".into());
+        config.co_author_name = Some("Marc Hinte <marc@example.com>".into());
+        let app = app_on_branch(config, "main");
+        assert_eq!(
+            app.commit.footer,
+            "Co-authored-by: Marc Hinte <marc@example.com>"
+        );
+    }
+
+    #[test]
+    fn a_branch_without_a_ticket_carries_no_reference() {
+        let mut config = Config::conventional();
+        config.prefix = Some("hima".into());
+        let app = app_on_branch(config, "fix/old");
+        assert_eq!(app.commit.footer, "Co-authored-by: hima");
+    }
+
+    #[test]
+    fn typing_in_the_footer_survives_a_branch_change() {
+        let mut config = Config::conventional();
+        config.prefix = Some("hima".into());
+        let git = RecordingGit::new(&["main", "feat/hima/TICKET-7/next"], "main");
+        let mut app = App::with_config(config, Vec::new());
+        app.set_in_repository(true);
+        app.set_git(Box::new(git));
+        app.commit.footer = "Closes OTHER-9".to_string();
+
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.commit.footer, "Closes OTHER-9", "typing wins");
+    }
+
+    #[test]
+    fn the_footer_follows_a_branch_the_wizard_created() {
+        let mut config = Config::conventional();
+        config.prefix = Some("hima".into());
+        config.author = Some("hima".into());
+        config.ticket_prefix = "TICKET".into();
+        let mut app = app_on_branch(config, "main");
+        assert_eq!(app.commit.footer, "Co-authored-by: hima");
+
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('n'));
+        press(&mut app, KeyCode::Tab);
+        type_text(&mut app, "42");
+        press(&mut app, KeyCode::Tab);
+        type_text(&mut app, "add a thing");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            app.commit.footer, "Refs TICKET-42\nCo-authored-by: hima",
+            "the branch's ticket and the co-author follow each other"
+        );
     }
 
     #[test]

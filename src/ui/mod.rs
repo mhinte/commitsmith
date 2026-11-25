@@ -116,12 +116,14 @@ fn draw_full(frame: &mut Frame, app: &App, area: Rect) {
 
 /// Staging, composer, preview and checks: the first tab.
 fn draw_commit_body(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
-    let multiline = 2 * (MULTILINE_ROWS - 1);
-    let [form, content] = Layout::vertical([
-        Constraint::Length(FIELDS.len() as u16 + 2 + multiline),
-        Constraint::Min(6),
-    ])
-    .areas(area);
+    // Body, breaking and footer all grow to MULTILINE_ROWS; counting only two of
+    // them cut the footer's last rows off.
+    let rows: u16 = FIELDS
+        .iter()
+        .map(|field| if field.multiline() { MULTILINE_ROWS } else { 1 })
+        .sum();
+    let [form, content] =
+        Layout::vertical([Constraint::Length(rows + 2), Constraint::Min(6)]).areas(area);
 
     let cursor = draw_form(frame, app, form);
     draw_content(frame, app, content);
@@ -1294,6 +1296,26 @@ mod tests {
         assert!(screen.contains("merge the selected branch"), "{screen}");
         assert!(!screen.contains("type picker"), "{screen}");
         assert!(!screen.contains("Ctrl+S"), "{screen}");
+    }
+
+    #[test]
+    fn every_field_and_the_whole_footer_fit() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.commit.footer = "Refs TICKET-42\nCo-authored-by: hima".to_string();
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+
+        for label in ["type", "scope", "subject", "body", "breaking", "footer"] {
+            assert!(screen.contains(label), "{label} missing: {screen}");
+        }
+        assert!(
+            screen.contains("Co-authored-by: hima"),
+            "the second footer line must be visible: {screen}"
+        );
     }
 
     #[test]
