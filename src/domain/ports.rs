@@ -128,6 +128,12 @@ pub trait GitRepository {
     /// `(ahead, behind)` against the upstream. `None` means the branch has no
     /// upstream, which is a different state from being in sync.
     fn ahead_behind(&self) -> Result<Option<(usize, usize)>, GitError>;
+    /// Commits since `since` (a tag), newest first. `None` means the whole window.
+    fn commits_since(
+        &self,
+        since: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<crate::domain::history::PastCommit>, GitError>;
     /// Ahead/behind per local branch, against its upstream. Branches without an
     /// upstream are not in the list — that is the caller's business to show.
     fn branch_sync(&self) -> Result<Vec<(String, usize, usize)>, GitError>;
@@ -262,6 +268,14 @@ mod tests {
         }
 
         fn branch_sync(&self) -> Result<Vec<(String, usize, usize)>, GitError> {
+            Ok(Vec::new())
+        }
+
+        fn commits_since(
+            &self,
+            _since: Option<&str>,
+            _limit: usize,
+        ) -> Result<Vec<crate::domain::history::PastCommit>, GitError> {
             Ok(Vec::new())
         }
 

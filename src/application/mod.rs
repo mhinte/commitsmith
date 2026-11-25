@@ -229,6 +229,8 @@ pub struct App {
     pub branches: BranchList,
     /// Log state of tab 3.
     pub log: LogState,
+    /// What the next release would be, from the last tag to `HEAD`.
+    pub plan: Option<commitsmith::domain::release::ReleasePlan>,
     /// Staging list of tab 1.
     pub staging: Staging,
     /// Short name of the checked-out branch, for the context bridge.
@@ -300,6 +302,7 @@ impl App {
             git: None,
             branches: BranchList::default(),
             log: LogState::default(),
+            plan: None,
             staging: Staging::default(),
             branch_name: None,
             type_touched: false,
@@ -403,6 +406,26 @@ impl App {
         self.reload_branches();
         self.reload_staging();
         self.refresh_sync();
+        self.refresh_plan();
+    }
+
+    /// Rebuild the release plan: last version tag, the commits since it, and what
+    /// they demand. Reading only — nothing is written until the user asks.
+    pub fn refresh_plan(&mut self) {
+        let Some(git) = self.git.as_deref() else {
+            self.plan = None;
+            return;
+        };
+        let tags = git.tags().unwrap_or_default();
+        let last = commitsmith::domain::release::ReleasePlan::latest_tag(&tags);
+        let limit = self.config.history_depth.min(2000);
+        let commits = git
+            .commits_since(last.as_deref(), limit)
+            .unwrap_or_default();
+        self.plan = Some(commitsmith::domain::release::ReleasePlan::build(
+            last.as_deref(),
+            commits,
+        ));
     }
 
     /// Read `(ahead, behind)` once, for the footer and for the wording of the
@@ -1305,6 +1328,11 @@ impl App {
             KeyCode::Char(digit @ '1'..='3') if !ctrl && !typing => {
                 if let Some(tab) = tabs::Tab::from_digit(digit) {
                     self.tab = tab;
+                    if tab == tabs::Tab::History {
+                        // The plan is about the current HEAD, so it is read when
+                        // the tab is opened, not once at startup.
+                        self.refresh_plan();
+                    }
                     return true;
                 }
             }
@@ -2233,6 +2261,32 @@ mod tests {
         assert_eq!(app.sync_label().as_deref(), Some("in sync"));
         let (app, _) = app_with_remote(None);
         assert_eq!(app.sync_label().as_deref(), Some("no upstream"));
+    }
+
+    #[test]
+    fn the_plan_names_the_next_version() {
+        use crate::application::test_support::RecordingGit;
+        let git = RecordingGit::new(&["main"], "main");
+        git.commits
+            .borrow_mut()
+            .push(commitsmith::domain::history::PastCommit {
+                short_id: "abc1234".to_string(),
+                id: "abc1234".to_string(),
+                author: "Marc".to_string(),
+                date: "today".to_string(),
+                summary: "add a button".to_string(),
+                body: String::new(),
+                kind: Some("feat".to_string()),
+                scope: Some("ui".to_string()),
+                files: Vec::new(),
+            });
+        let mut app = App::with_config(Config::conventional(), Vec::new());
+        app.set_git(Box::new(git));
+        app.refresh_plan();
+
+        let plan = app.plan.as_ref().expect("a plan without tags");
+        assert_eq!(plan.next.to_string(), "0.1.0", "no tag: the first release");
+        assert_eq!(plan.commits.len(), 1);
     }
 
     #[test]

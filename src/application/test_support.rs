@@ -24,6 +24,8 @@ pub struct RecordingGit {
     pub sync_error: Option<String>,
     /// Per-branch ahead/behind, as `branch_sync` reports it.
     pub sync_map: std::collections::HashMap<String, (usize, usize)>,
+    /// What `commits_since` hands out.
+    pub commits: RefCell<Vec<PastCommit>>,
     /// Files the fake reports, with their real index/worktree state.
     pub files: RefCell<Vec<ChangedFile>>,
 }
@@ -43,6 +45,7 @@ impl RecordingGit {
             sync: Some((0, 0)),
             sync_error: None,
             sync_map: std::collections::HashMap::new(),
+            commits: RefCell::new(Vec::new()),
             files: RefCell::new(Vec::new()),
         }
     }
@@ -176,6 +179,14 @@ impl GitRepository for RecordingGit {
             Some(message) => Err(GitError::remote("push", message.clone())),
             None => Ok(()),
         }
+    }
+
+    fn commits_since(
+        &self,
+        _since: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<PastCommit>, GitError> {
+        Ok(self.commits.borrow().iter().take(limit).cloned().collect())
     }
 
     fn branch_sync(&self) -> Result<Vec<(String, usize, usize)>, GitError> {

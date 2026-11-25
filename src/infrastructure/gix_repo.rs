@@ -73,6 +73,25 @@ pub fn scope_info(repo: &gix::Repository, configured: &[String], depth: usize) -
 }
 
 /// The last `depth` commits, newest first, as templates.
+/// Commits since a tag, so the changelog does not repeat history.
+///
+/// The tag is resolved to a commit and the walk stops right before it; an unknown
+/// tag (or none) yields the whole window instead of nothing.
+pub fn commits_since(repo: &gix::Repository, since: Option<&str>, limit: usize) -> Vec<PastCommit> {
+    let all = recent_commits(repo, limit);
+    let Some(tag) = since else {
+        return all;
+    };
+    let Ok(id) = repo.rev_parse_single(format!("{tag}^{{commit}}").as_str()) else {
+        return all;
+    };
+    let wanted = id.detach().to_string();
+    match all.iter().position(|commit| commit.id == wanted) {
+        Some(position) => all[..position].to_vec(),
+        None => all,
+    }
+}
+
 pub fn recent_commits(repo: &gix::Repository, depth: usize) -> Vec<PastCommit> {
     let mut commits = Vec::new();
     let Ok(head) = repo.head_id() else {
@@ -335,6 +354,14 @@ impl GixRepo {
 
     pub fn scopes(&self, configured: &[String], depth: usize) -> Result<ScopeInfo, GitError> {
         Ok(scope_info(&self.repo, configured, depth))
+    }
+
+    pub fn commits_since(
+        &self,
+        since: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<PastCommit>, GitError> {
+        Ok(commits_since(&self.repo, since, limit))
     }
 
     /// Tags, newest first is not guaranteed: git sorts them by name here.

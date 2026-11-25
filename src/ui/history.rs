@@ -15,11 +15,14 @@ const HINT: Style = Style::new().fg(Color::Gray);
 
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let visible = app.log.visible(&app.history);
-    let [list_area, detail_area] =
-        Layout::horizontal([Constraint::Percentage(58), Constraint::Min(36)]).areas(area);
+    let [list_area, right] =
+        Layout::horizontal([Constraint::Percentage(52), Constraint::Min(42)]).areas(area);
+    let [detail_area, release_area] =
+        Layout::vertical([Constraint::Percentage(45), Constraint::Min(8)]).areas(right);
 
     draw_list(frame, app, list_area, visible.len());
     draw_detail(frame, app, detail_area);
+    draw_release(frame, app, release_area);
 }
 
 fn draw_list(frame: &mut Frame, app: &App, area: Rect, matches: usize) {
@@ -160,6 +163,43 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
                 for file in commit.files.iter().take(8) {
                     lines.push(Line::styled(format!("  {file}"), MUTED));
                 }
+            }
+        }
+    }
+
+    frame.render_widget(Paragraph::new(Text::from(lines)).block(block), area);
+}
+
+/// The next release: what it would be called, why, and the section that would be
+/// written. Nothing here writes anything.
+fn draw_release(frame: &mut Frame, app: &App, area: Rect) {
+    let title = match &app.plan {
+        Some(plan) => format!(" release · {} ", plan.next),
+        None => " release ".to_string(),
+    };
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(theme::idle_panel())
+        .title(Line::from(Span::styled(title, theme::idle_title())));
+
+    let height = area.height.saturating_sub(2) as usize;
+    let mut lines: Vec<Line> = Vec::new();
+    match &app.plan {
+        None => lines.push(Line::styled("  no repository", MUTED)),
+        Some(plan) => {
+            lines.push(Line::styled(format!("  {}", plan.headline()), HINT));
+            lines.push(Line::raw(""));
+            for line in commitsmith::domain::release::render_section(plan).lines() {
+                if lines.len() >= height {
+                    lines.push(Line::styled("  …", MUTED));
+                    break;
+                }
+                let style = if line.starts_with('#') {
+                    Style::default().fg(Color::Cyan)
+                } else {
+                    HINT
+                };
+                lines.push(Line::styled(format!("  {line}"), style));
             }
         }
     }

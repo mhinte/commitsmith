@@ -135,6 +135,14 @@ impl GitRepository for GitBackend {
         self.reader.scopes(configured, depth)
     }
 
+    fn commits_since(
+        &self,
+        since: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<crate::domain::history::PastCommit>, GitError> {
+        self.reader.commits_since(since, limit)
+    }
+
     fn diff(&self, path: &str, staged: bool) -> Result<String, GitError> {
         // No pager, no colour: the pane decides how to paint the hunks.
         let args: Vec<&str> = if staged {
