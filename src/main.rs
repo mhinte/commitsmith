@@ -184,55 +184,70 @@ fn install_panic_hook() {
 fn run_composer(commit: bool) -> ExitCode {
     install_panic_hook();
 
-    // First start: ask once for the name, then never again.
-    if Config::needs_setup() {
+    loop {
+        // First start: ask once for the name, then never again.
+        if Config::needs_setup() {
+            let mut terminal = ratatui::init();
+            let first_run = ui::setup::run(&mut terminal);
+            ratatui::restore();
+            match first_run {
+                Ok(ui::setup::Outcome::Saved(path)) => {
+                    eprintln!("commitsmith: wrote {}", path.display())
+                }
+                Ok(ui::setup::Outcome::Skipped) => {
+                    eprintln!(
+                        "commitsmith: no name set, run `commitsmith --user \"Firstname Lastname\"` later"
+                    )
+                }
+                Err(error) => {
+                    eprintln!("commitsmith: {error}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+
+        let (config, warnings) = load_config();
+        let mut app = app::App::with_config(config, warnings);
+        app.set_commit_mode(commit);
+
+        // Scope suggestions come from history; a missing repository is fine.
+        let root = cwd();
+        if let Some(repo) = git::open(&root) {
+            let depth = app.config.history_depth;
+            let configured = app.config.scopes.clone();
+            app.set_scopes(git::scope_info(&repo, &configured, depth));
+            let branch = repo
+                .head_name()
+                .ok()
+                .flatten()
+                .map(|name| name.shorten().to_string())
+                .unwrap_or_else(|| "detached".to_string());
+            let staged = git::staged_summary(&root).len();
+            app.set_repo_line(format!("{branch} · {staged} staged"));
+            let depth = app.config.history_depth.min(200);
+            app.set_history(git::recent_commits(&repo, depth));
+        }
+
         let mut terminal = ratatui::init();
-        let first_run = ui::setup::run(&mut terminal);
+        let result = ui::run(&mut terminal, &mut app);
         ratatui::restore();
-        match first_run {
-            Ok(ui::setup::Outcome::Saved(path)) => {
-                eprintln!("commitsmith: wrote {}", path.display())
-            }
-            Ok(ui::setup::Outcome::Skipped) => {
-                eprintln!(
-                    "commitsmith: no name set, run `commitsmith --user \"Firstname Lastname\"` later"
-                )
-            }
-            Err(error) => {
+
+        if let Err(error) = result {
+            eprintln!("commitsmith: {error}");
+            return ExitCode::FAILURE;
+        }
+
+        // `S` asked for the setup dialog: run it, then start the composer again
+        // so the new values are in effect without a restart.
+        if app.setup_request {
+            if let Err(error) = run_setup_dialog(&app.config) {
                 eprintln!("commitsmith: {error}");
                 return ExitCode::FAILURE;
             }
+            continue;
         }
-    }
 
-    let (config, warnings) = load_config();
-    let mut app = app::App::with_config(config, warnings);
-    app.set_commit_mode(commit);
-
-    // Scope suggestions come from history; a missing repository is fine.
-    let root = cwd();
-    if let Some(repo) = git::open(&root) {
-        let depth = app.config.history_depth;
-        let configured = app.config.scopes.clone();
-        app.set_scopes(git::scope_info(&repo, &configured, depth));
-        let branch = repo
-            .head_name()
-            .ok()
-            .flatten()
-            .map(|name| name.shorten().to_string())
-            .unwrap_or_else(|| "detached".to_string());
-        let staged = git::staged_summary(&root).len();
-        app.set_repo_line(format!("{branch} · {staged} staged"));
-        let depth = app.config.history_depth.min(200);
-        app.set_history(git::recent_commits(&repo, depth));
-    }
-
-    let mut terminal = ratatui::init();
-    let result = ui::run(&mut terminal, &mut app);
-    ratatui::restore();
-
-    match result {
-        Ok(()) => match app.output {
+        return match app.output {
             Some(message) if commit => commit_with_git(&message),
             Some(message) => {
                 println!("{message}");
@@ -244,10 +259,46 @@ fn run_composer(commit: bool) -> ExitCode {
                 ExitCode::SUCCESS
             }
             None => ExitCode::SUCCESS,
-        },
-        Err(error) => {
-            eprintln!("commitsmith: {error}");
-            ExitCode::FAILURE
+        };
+    }
+}
+
+/// The setup dialog from inside the composer: ask, then store.
+fn run_setup_dialog(config: &Config) -> Result<(), String> {
+    let profiles: Vec<String> = config.profiles.keys().cloned().collect();
+    let current = commitsmith::domain::setup::SetupAnswers::defaults(&profiles)
+        .with_author(config.author.as_deref().unwrap_or("mmu"))
+        .unwrap_or_else(|_| commitsmith::domain::setup::SetupAnswers::defaults(&profiles))
+        .with_ticket_prefix(&config.ticket_prefix)
+        .unwrap_or_else(|_| commitsmith::domain::setup::SetupAnswers::defaults(&profiles))
+        .with_reference(&config.reference)
+        .unwrap_or_else(|_| commitsmith::domain::setup::SetupAnswers::defaults(&profiles))
+        .with_template(&config.branch_template)
+        .unwrap_or_else(|_| commitsmith::domain::setup::SetupAnswers::defaults(&profiles));
+
+    let mut wizard = ui::wizard::Wizard::new(current, profiles);
+    let mut terminal = ratatui::init();
+    let outcome = ui::wizard::run(&mut terminal, &mut wizard);
+    ratatui::restore();
+
+    match outcome.map_err(|error| error.to_string())? {
+        ui::wizard::Outcome::Cancelled => Ok(()),
+        ui::wizard::Outcome::Saved(answers) => {
+            let store = commitsmith::infrastructure::config_toml::TomlConfigStore::new();
+            let path = commitsmith::infrastructure::config_toml::save_setup(&store, &answers)
+                .map_err(|error| error.to_string())?;
+            eprintln!("commitsmith: saved {}", path.display());
+            if answers.git_alias {
+                let binary = std::env::current_exe()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|_| "commitsmith".to_string());
+                if let Err(error) =
+                    commitsmith::infrastructure::git_cli::install_alias("smith", &binary)
+                {
+                    eprintln!("commitsmith: alias not set: {error}");
+                }
+            }
+            Ok(())
         }
     }
 }

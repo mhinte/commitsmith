@@ -156,6 +156,9 @@ pub struct App {
     /// True when the program was started with `--commit`, so Ctrl+S really
     /// commits. The footer says which of the two happens.
     pub commit_mode: bool,
+    /// Set by `S`: the caller runs the setup dialog and starts over with the
+    /// new config, which is what makes the change take effect immediately.
+    pub setup_request: bool,
     pub should_quit: bool,
     pub show_help: bool,
 }
@@ -192,6 +195,7 @@ impl App {
             status: warnings.join(" · "),
             output: None,
             commit_mode: false,
+            setup_request: false,
             should_quit: false,
             show_help: false,
         };
@@ -790,6 +794,10 @@ impl App {
         match key.code {
             KeyCode::Esc => self.should_quit = true,
             KeyCode::Char('?') => self.show_help = true,
+            KeyCode::Char('S') => {
+                self.setup_request = true;
+                self.should_quit = true;
+            }
             KeyCode::Char('c') | KeyCode::Char('q') if ctrl => self.should_quit = true,
             KeyCode::Char('s') if ctrl => self.finish(),
             KeyCode::Char('k') if ctrl => self.clear_field(),

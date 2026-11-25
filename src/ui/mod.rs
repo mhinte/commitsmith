@@ -5,6 +5,7 @@
 
 pub mod init;
 pub mod setup;
+pub mod wizard;
 
 use std::io;
 use std::time::Duration;
@@ -672,6 +673,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         ("Ctrl+R", "reuse a recent commit's type, scope and body"),
         ("← →", "previous/next type"),
         ("Ctrl+K", "clear this field (the type stays)"),
+        ("S", "setup: author, ticket prefix, template, profile"),
         ("Ctrl+S", "render the message and exit, or commit"),
         ("Esc, Ctrl+Q", "quit without output"),
         ("?", "this help"),
@@ -709,10 +711,11 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let commit_label = if app.commit_mode { "commit" } else { "message" };
     // Essentials stay, the rest is dropped from the right until the line fits;
     // everything dropped here is still listed in the help overlay.
-    let essentials: [(&str, &str); 4] = [
+    let essentials: [(&str, &str); 5] = [
         ("Tab", "next"),
         ("C-k", "clear"),
         ("C-s", commit_label),
+        ("S", "setup"),
         ("?", "help"),
     ];
     let optional: [(&str, &str); 4] = [
