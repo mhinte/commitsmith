@@ -135,11 +135,14 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
         )
     });
 
-    frame.render_widget(Paragraph::new(Text::from(lines)).block(block(wizard)), area);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).block(block(wizard, area.width)),
+        area,
+    );
     caret
 }
 
-fn block(wizard: &crate::application::branch_wizard::BranchWizard) -> Block<'static> {
+fn block(wizard: &crate::application::branch_wizard::BranchWizard, width: u16) -> Block<'static> {
     // The panel that has the keyboard has the bright border.
     let (border, title) = if wizard.open {
         (theme::focused_panel(), theme::focused_panel())
@@ -150,6 +153,19 @@ fn block(wizard: &crate::application::branch_wizard::BranchWizard) -> Block<'sta
         .border_type(BorderType::Rounded)
         .border_style(border)
         .title(Line::from(Span::styled(" new branch ", title)))
+        // Same place as the type description on tab 1: top right, where the eye
+        // already looks for it.
+        .title_top(
+            Line::from(Span::styled(
+                if width >= 56 {
+                    format!(" {} · {} ", wizard.kind.as_str(), wizard.kind.description())
+                } else {
+                    String::new()
+                },
+                title,
+            ))
+            .right_aligned(),
+        )
 }
 
 fn shorten(name: &str, width: usize) -> String {

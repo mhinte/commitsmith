@@ -1,7 +1,7 @@
 //! Tab 1, left side: what changed, what is staged, and the diff on demand.
 
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Paragraph};
@@ -37,21 +37,35 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             },
         )));
 
+    // With the diff open the list gets a fixed share. Both panes are shorter then,
+    // so the list has to scroll to keep the cursor on screen.
+    let [list_area, diff_area] = if staging.show_diff {
+        Layout::vertical([Constraint::Min(4), Constraint::Percentage(45)]).areas(area)
+    } else {
+        [area, Rect::default()]
+    };
+
+    let visible = list_area.height.saturating_sub(2) as usize;
+    let name_width = list_area.width.saturating_sub(7) as usize;
     let mut lines: Vec<Line> = Vec::new();
+
     if staging.items.is_empty() {
         lines.push(Line::raw(""));
         lines.push(Line::styled("  nothing changed", MUTED));
         lines.push(Line::styled("  edit a file to see it here", MUTED));
     } else {
-        for (index, file) in staging.items.iter().enumerate() {
+        let offset = scroll_offset(staging.selected, visible);
+        for (index, file) in staging.items.iter().enumerate().skip(offset) {
+            if lines.len() >= visible {
+                break;
+            }
             let selected = index == staging.selected;
             let code = file
                 .index
                 .map(|state| state.code().to_string())
                 .or_else(|| file.worktree.map(|state| state.code().to_string()))
                 .unwrap_or_else(|| "?".to_string());
-            let staged = file.is_staged();
-            let row = Line::from(vec![
+            let mut spans = vec![
                 Span::styled(
                     if selected { " ▌" } else { "  " },
                     if selected {
@@ -62,21 +76,15 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
                 ),
                 Span::styled(
                     format!(" {code} "),
-                    if staged {
+                    if file.is_staged() {
                         Style::default().fg(Color::Green)
                     } else {
                         Style::default().fg(Color::Yellow)
                     },
                 ),
-                Span::styled(
-                    file.path.clone(),
-                    if selected {
-                        theme::focused_value()
-                    } else {
-                        theme::idle_row()
-                    },
-                ),
-            ]);
+            ];
+            spans.extend(path_spans(&file.path, name_width, selected));
+            let row = Line::from(spans);
             lines.push(if selected {
                 row.style(theme::focused_row())
             } else {
@@ -85,46 +93,143 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
 
-    let [list_area, diff_area] = if staging.show_diff {
-        ratatui::layout::Layout::vertical([
-            ratatui::layout::Constraint::Min(4),
-            ratatui::layout::Constraint::Percentage(45),
-        ])
-        .areas(area)
-    } else {
-        [area, Rect::default()]
-    };
-
     frame.render_widget(Paragraph::new(Text::from(lines)).block(block), list_area);
     if staging.show_diff {
         draw_diff(frame, app, diff_area);
     }
 }
 
+/// First row to draw so the selection stays inside the pane.
+fn scroll_offset(selected: usize, visible: usize) -> usize {
+    if visible == 0 {
+        return 0;
+    }
+    selected.saturating_sub(visible.saturating_sub(1))
+}
+
+/// Directory dimmed, file name bright — shortened from the left, because the end
+/// of a path is the part that identifies the file.
+fn path_spans(path: &str, width: usize, selected: bool) -> Vec<Span<'static>> {
+    let (dir, name) = match path.rfind('/') {
+        Some(index) => (&path[..index], &path[index + 1..]),
+        None => ("", path),
+    };
+    let name_style = if selected {
+        theme::focused_value()
+    } else {
+        theme::idle_row()
+    };
+    if dir.is_empty() || width <= name.chars().count() + 2 {
+        return vec![Span::styled(truncate_left(path, width), name_style)];
+    }
+    let room = width - name.chars().count() - 1;
+    let mut dir_text = truncate_left(dir, room);
+    if dir_text.chars().count() == dir.chars().count() {
+        dir_text.push('/');
+    }
+    vec![
+        Span::styled(dir_text, MUTED),
+        Span::styled(name.to_string(), name_style),
+    ]
+}
+
+/// Cut a path from the left, keeping the end where the file name lives.
+fn truncate_left(text: &str, width: usize) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= width {
+        return text.to_string();
+    }
+    if width < 4 {
+        return chars[chars.len() - width..].iter().collect();
+    }
+    let keep = width - 1;
+    let tail: String = chars[chars.len() - keep..].iter().collect();
+    format!("…{tail}")
+}
+
 fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
+    // The list shows a shortened name; the diff names the file in full, so the
+    // complete path is always on screen somewhere.
+    let title = match app.staging.selected_path() {
+        Some(path) => format!(" diff · {path} "),
+        None => " diff ".to_string(),
+    };
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(theme::idle_panel())
-        .title(Line::from(Span::styled(" diff ", theme::idle_title())));
+        .title(Line::from(Span::styled(title, theme::idle_title())));
 
-    let mut lines = Vec::new();
-    for raw in app.staging.diff.lines() {
-        let style = if raw.starts_with('+') && !raw.starts_with("+++") {
-            Style::default().fg(Color::Green)
-        } else if raw.starts_with('-') && !raw.starts_with("---") {
-            Style::default().fg(Color::Red)
-        } else if raw.starts_with("@@") {
-            Style::default().fg(Color::Cyan)
-        } else if raw.starts_with("diff --git") || raw.starts_with("index ") {
-            MUTED
-        } else {
-            HINT
-        };
-        lines.push(Line::styled(raw.to_string(), style));
-    }
+    let height = area.height.saturating_sub(2) as usize;
+    let mut lines: Vec<Line> = app
+        .staging
+        .diff
+        .lines()
+        .map(|raw| {
+            let style = if raw.starts_with('+') && !raw.starts_with("+++") {
+                Style::default().fg(Color::Green)
+            } else if raw.starts_with('-') && !raw.starts_with("---") {
+                Style::default().fg(Color::Red)
+            } else if raw.starts_with("@@") {
+                Style::default().fg(Color::Cyan)
+            } else if raw.starts_with("diff --git") || raw.starts_with("index ") {
+                MUTED
+            } else {
+                HINT
+            };
+            Line::styled(raw.to_string(), style)
+        })
+        .collect();
     if lines.is_empty() {
         lines.push(Line::styled("  no diff for this file", MUTED));
     }
+    lines.truncate(height.max(1));
 
     frame.render_widget(Paragraph::new(Text::from(lines)).block(block), area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_scroll_offset_keeps_the_selection_visible() {
+        assert_eq!(scroll_offset(0, 10), 0);
+        assert_eq!(scroll_offset(9, 10), 0, "still on the first page");
+        assert_eq!(scroll_offset(10, 10), 1, "scrolls by one");
+        assert_eq!(scroll_offset(30, 10), 21);
+        assert_eq!(scroll_offset(5, 0), 0, "no division by zero");
+    }
+
+    #[test]
+    fn a_short_path_keeps_its_directory() {
+        let text: String = path_spans("src/ui/mod.rs", 30, false)
+            .iter()
+            .map(|span| span.content.to_string())
+            .collect();
+        assert_eq!(text, "src/ui/mod.rs");
+    }
+
+    #[test]
+    fn a_long_path_keeps_the_file_name() {
+        let text: String = path_spans(
+            "a/very/deeply/nested/directory/structure/file.rs",
+            18,
+            false,
+        )
+        .iter()
+        .map(|span| span.content.to_string())
+        .collect();
+        assert!(text.ends_with("file.rs"), "{text}");
+        assert!(text.starts_with('…'), "{text}");
+        assert!(text.chars().count() <= 18, "{text}");
+    }
+
+    #[test]
+    fn a_narrow_pane_still_shows_the_end_of_the_name() {
+        let text: String = path_spans("README.md", 4, false)
+            .iter()
+            .map(|span| span.content.to_string())
+            .collect();
+        assert!(text.ends_with("md"), "{text}");
+    }
 }

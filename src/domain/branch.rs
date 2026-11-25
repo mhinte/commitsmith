@@ -43,6 +43,19 @@ impl BranchKind {
         }
     }
 
+    /// What this kind of branch is for, one line. Shown in the wizard so one does
+    /// not have to remember what `hotfix` means as opposed to `fix`.
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Feat => "new functionality",
+            Self::Fix => "a bug fix on develop",
+            Self::Hotfix => "an urgent fix on a release",
+            Self::Release => "prepare a version",
+            Self::Chore => "housekeeping",
+            Self::Docs => "documentation only",
+        }
+    }
+
     /// The commit type this branch maps to, for the context bridge into the
     /// composer. A hotfix is still a fix, and a release branch carries chores.
     pub fn commit_type(self) -> &'static str {

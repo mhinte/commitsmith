@@ -306,12 +306,23 @@ fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
 
     // The compose panel has the keyboard, so it carries the same bright border
     // as the wizard on tab 2; preview and checks stay quiet.
+    // Only the side that has the keyboard is lit; `Ctrl+L` moves that mark with
+    // the focus.
+    let compose_focused = app.staging.side == crate::application::staging::Side::Composer;
     let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(theme::focused_panel())
+        .border_style(if compose_focused {
+            theme::focused_panel()
+        } else {
+            theme::idle_panel()
+        })
         .title(Line::from(Span::styled(
             " compose ",
-            theme::focused_panel(),
+            if compose_focused {
+                theme::focused_panel()
+            } else {
+                theme::idle_title()
+            },
         )));
     if area.width >= 46 {
         block = block.title_top(
@@ -1055,6 +1066,10 @@ mod tests {
         app.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
     }
 
+    fn press_mod(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+        app.handle_key(KeyEvent::new(code, modifiers));
+    }
+
     /// Position of the first cell of `needle` in the rendered buffer.
     fn find(
         terminal: &ratatui::Terminal<ratatui::backend::TestBackend>,
@@ -1747,6 +1762,130 @@ mod tests {
     fn wrap_field_splits_on_newlines_and_width() {
         assert_eq!(wrap_field("abc\ndef", 10), vec!["abc", "def"]);
         assert_eq!(wrap_field("abcdef", 3), vec!["abc", "def"]);
+    }
+
+    /// Style of the cell at the first character of `needle`.
+    fn style_of(
+        terminal: &ratatui::Terminal<ratatui::backend::TestBackend>,
+        needle: &str,
+    ) -> Style {
+        let (x, y) = find(terminal, needle).expect("text on screen");
+        // Only the colour matters; the buffer fills in explicit defaults that a
+        // hand-built style leaves unset.
+        Style::new().fg(terminal.backend().buffer()[(x, y)]
+            .style()
+            .fg
+            .unwrap_or(Color::Reset))
+    }
+
+    fn staging_item(path: &str) -> commitsmith::domain::ports::ChangedFile {
+        commitsmith::domain::ports::ChangedFile {
+            path: path.to_string(),
+            index: None,
+            worktree: Some(commitsmith::domain::ports::FileState::Modified),
+        }
+    }
+
+    #[test]
+    fn the_bright_border_follows_the_keyboard_to_the_file_list() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.staging.items = vec![staging_item("src/main.rs")];
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let compose_before = style_of(&terminal, "compose");
+        let staging_before = style_of(&terminal, "staging");
+
+        press_mod(&mut app, KeyCode::Char('l'), KeyModifiers::CONTROL);
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let compose_after = style_of(&terminal, "compose");
+        let staging_after = style_of(&terminal, "staging");
+
+        // Before: the composer is lit and the list is not. After `Ctrl+L` the two
+        // styles have swapped — the lit border moved with the keyboard.
+        assert_eq!(compose_before, theme::focused_panel());
+        assert_eq!(staging_before, theme::idle_title());
+        assert_eq!(staging_after, theme::focused_panel());
+        assert_eq!(compose_after, theme::idle_title());
+    }
+
+    #[test]
+    fn the_file_list_scrolls_to_keep_the_cursor_visible() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.staging.items = (0..30)
+            .map(|index| staging_item(&format!("src/file{index:02}.rs")))
+            .collect();
+        press_mod(&mut app, KeyCode::Char('l'), KeyModifiers::CONTROL);
+        // There is no repository here, so the list cannot load a diff; the cursor
+        // position is what the renderer has to follow.
+        app.staging.selected = 25;
+
+        // The diff halves the list; the cursor must stay inside that half.
+        app.staging.show_diff = true;
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+        assert!(screen.contains("file25.rs"), "the selected file is visible");
+        assert!(
+            !screen.contains("file00.rs"),
+            "the list scrolled instead of clipping the cursor"
+        );
+        assert!(screen.contains("▌"), "the cursor marker is on screen");
+    }
+
+    #[test]
+    fn a_long_path_is_shortened_but_named_in_full_in_the_diff() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let path = "src/infrastructure/very/long/directory/chain/file_name.rs";
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.staging.items = vec![staging_item(path)];
+        app.staging.show_diff = true;
+        app.staging.diff = String::new();
+
+        // Narrow enough that the full path cannot fit next to the status code.
+        let mut terminal = Terminal::new(TestBackend::new(80, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+
+        assert!(screen.contains("file_name.rs"), "the file name survives");
+        assert!(
+            !screen.contains(path),
+            "the list does not print the whole path"
+        );
+        // The diff title names the file in full, so nothing is lost.
+        assert!(screen.contains("file_name.rs"), "{screen}");
+    }
+
+    #[test]
+    fn the_branch_wizard_explains_the_selected_type() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.tab = crate::application::tabs::Tab::Branches;
+        press(&mut app, KeyCode::Char('n'));
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        assert!(
+            rows(&terminal).join("\n").contains("new functionality"),
+            "the feat description sits in the panel title"
+        );
+
+        // The description follows the kind.
+        press(&mut app, KeyCode::Right);
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+        assert!(screen.contains("a bug fix on develop"), "{screen}");
+        assert!(!screen.contains("new functionality"), "{screen}");
     }
 
     #[test]
