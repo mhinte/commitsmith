@@ -73,6 +73,8 @@ pub struct Config {
     pub branch_template: String,
     /// Add `Co-authored-by: <name>` to a new message's footer.
     pub co_author: bool,
+    /// Hide body, breaking and footer until they are needed.
+    pub compact_form: bool,
     /// Text after `Co-authored-by: `; falls back to the handle from setup.
     pub co_author_name: Option<String>,
     /// Where the values came from, for `commitsmith config`.
@@ -222,6 +224,7 @@ impl Config {
             ticket_prefix: "TICKET".to_string(),
             reference: "Refs".to_string(),
             co_author: true,
+            compact_form: false,
             co_author_name: None,
             branch_template: "{type}/{author}/{ticket}/{slug}".to_string(),
             sources: Vec::new(),
@@ -349,6 +352,9 @@ impl Config {
         if let Some(co_author) = file.co_author {
             self.co_author = co_author;
         }
+        if let Some(compact) = file.compact_form {
+            self.compact_form = compact;
+        }
         if let Some(name) = file.co_author_name {
             // An empty string is a deliberate "no text beyond the keyword".
             self.co_author_name = Some(name.trim().to_string()).filter(|value| !value.is_empty());
@@ -431,6 +437,7 @@ impl Config {
             reference: Some(self.reference.clone()),
             branch_template: Some(self.branch_template.clone()),
             co_author: Some(self.co_author),
+            compact_form: Some(self.compact_form),
             co_author_name: self.co_author_name.clone(),
         };
         toml::to_string_pretty(&file).unwrap_or_default()
@@ -460,6 +467,7 @@ struct ConfigFile {
     reference: Option<String>,
     branch_template: Option<String>,
     co_author: Option<bool>,
+    compact_form: Option<bool>,
     co_author_name: Option<String>,
     scopes: Option<Vec<String>>,
     emoji: Option<bool>,
@@ -671,6 +679,19 @@ mod tests {
             config.co_author_name.as_deref(),
             Some("Marc Hinte <marc@example.com>")
         );
+    }
+
+    #[test]
+    fn the_compact_form_setting_survives_a_round_trip() {
+        let mut config = Config::conventional();
+        assert!(!config.compact_form, "off by default");
+        config.compact_form = true;
+        let text = config.to_toml();
+        assert!(text.contains("compact_form = true"), "{text}");
+
+        let mut reloaded = Config::conventional();
+        reloaded.apply(toml::from_str(&text).unwrap());
+        assert!(reloaded.compact_form, "the file wins over the default");
     }
 
     #[test]

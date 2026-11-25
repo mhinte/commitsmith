@@ -127,6 +127,7 @@ fn draw_commit_body(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u1
     // them cut the footer's last rows off.
     let rows: u16 = FIELDS
         .iter()
+        .filter(|field| app.field_visible(**field))
         .map(|field| if field.multiline() { MULTILINE_ROWS } else { 1 })
         .sum();
     let [form, content] =
@@ -198,6 +199,11 @@ fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
     let width = area.width.saturating_sub(LABEL_WIDTH as u16 + 4) as usize;
 
     for (idx, field) in FIELDS.iter().enumerate() {
+        // Folded fields keep their text and are still validated; they are just
+        // not drawn.
+        if !app.field_visible(*field) {
+            continue;
+        }
         let active = idx == app.field && app.picker.is_none() && !app.show_help;
         let label_style = if active {
             Style::default()
@@ -1901,6 +1907,28 @@ mod tests {
         );
         // The diff title names the file in full, so nothing is lost.
         assert!(screen.contains("file_name.rs"), "{screen}");
+    }
+
+    #[test]
+    fn folding_takes_body_breaking_and_footer_off_the_screen() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let full = rows(&terminal).join("\n");
+        assert!(full.contains("breaking"), "{full}");
+
+        press_mod(&mut app, KeyCode::Char('o'), KeyModifiers::CONTROL);
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let folded = rows(&terminal).join("\n");
+        // The labels leave the form; the help text and the field list may still
+        // name them, so look for the row, not the word.
+        assert!(!folded.contains("breaking   "), "{folded}");
+        assert!(folded.contains("subject"), "{folded}");
+        // The preview still shows the message that would be committed.
+        assert!(folded.contains("preview"), "{folded}");
     }
 
     #[test]

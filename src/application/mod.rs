@@ -25,7 +25,7 @@ use crate::validate::{self, Issue, Rules, Severity};
 use branch_wizard::BranchWizard;
 use branches::BranchList;
 use commitsmith::domain::branch::ConventionalBranchName;
-use commitsmith::domain::ports::GitRepository;
+use commitsmith::domain::ports::{ConfigStore, GitRepository};
 use staging::{Side, Staging};
 
 /// Order of the form fields, top to bottom.
@@ -49,6 +49,12 @@ pub enum Field {
 }
 
 impl Field {
+    /// Body, breaking and footer can be folded away; type, scope and subject
+    /// carry the commit and are always on screen.
+    pub fn optional(self) -> bool {
+        matches!(self, Field::Body | Field::Breaking | Field::Footer)
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Field::Type => "type",
@@ -190,6 +196,11 @@ pub struct App {
     /// What `seed_footer` last wrote, so a later suggestion may replace its own
     /// text but never what the user typed.
     footer_seed: Option<String>,
+    /// Body, breaking and footer folded away. Read from the config, written back
+    /// when `Ctrl+O` toggles it.
+    pub compact: bool,
+    /// Where the toggle is written, once the caller supplied one.
+    config_store: Option<Box<dyn ConfigStore>>,
     /// The conventional branch wizard on tab 2.
     pub wizard: BranchWizard,
     /// False when the working directory is not inside a repository; the header
@@ -211,6 +222,8 @@ impl Default for App {
 
 impl App {
     pub fn with_config(config: Config, warnings: Vec<String>) -> Self {
+        let compact = config.compact_form;
+        let config_compact = compact;
         let rules = crate::validate::rules_from_config(&config);
         let scopes = crate::git::empty_scope_info(&config.scopes);
         let kind = config
@@ -229,6 +242,8 @@ impl App {
             scopes,
             field: 0,
             cursors: [0; FIELDS.len()],
+            compact: config_compact,
+            config_store: None,
             issues: Vec::new(),
             picker: None,
             history: Vec::new(),
@@ -1011,12 +1026,64 @@ impl App {
         self.cursors[self.field] = self.cursors[self.field].min(len);
     }
 
+    /// A field is on screen unless it is optional and the form is compact.
+    pub fn field_visible(&self, field: Field) -> bool {
+        !self.compact || !field.optional()
+    }
+
     fn next_field(&mut self) {
-        self.focus(self.field + 1);
+        self.step_field(1);
     }
 
     fn previous_field(&mut self) {
-        self.focus((self.field + FIELDS.len() - 1) % FIELDS.len());
+        self.step_field(-1);
+    }
+
+    /// Move to the next field that is actually on screen. Hidden fields keep
+    /// their content, so walking past them must not clear or skip anything else.
+    fn step_field(&mut self, delta: isize) {
+        let len = FIELDS.len() as isize;
+        let mut index = self.field as isize;
+        for _ in 0..len {
+            index = (index + delta).rem_euclid(len);
+            if self.field_visible(FIELDS[index as usize]) {
+                self.focus(index as usize);
+                return;
+            }
+        }
+    }
+
+    /// `Ctrl+O`: fold the optional fields away, or bring them back. The choice is
+    /// written to the user config right away, so it survives the restart.
+    fn toggle_compact_form(&mut self) {
+        self.compact = !self.compact;
+        self.config.compact_form = self.compact;
+        if !self.field_visible(self.active_field()) {
+            // The subject stays visible in both states; it is where typing
+            // continues after folding.
+            let subject = FIELDS
+                .iter()
+                .position(|field| self.field_visible(*field) && *field == Field::Subject)
+                .unwrap_or(0);
+            self.focus(subject);
+        }
+        let saved = match &self.config_store {
+            Some(store) => store
+                .write_user(&self.config.to_toml())
+                .map(|_| ())
+                .map_err(|error| error.to_string()),
+            None => Ok(()),
+        };
+        self.status = match (self.compact, saved) {
+            (true, Ok(())) => "compact form · Ctrl+O shows body, breaking and footer".to_string(),
+            (false, Ok(())) => "full form · Ctrl+O folds it back".to_string(),
+            (_, Err(error)) => format!("compact form not saved: {error}"),
+        };
+    }
+
+    /// The caller hands in the store that writes the user config.
+    pub fn set_config_store(&mut self, store: Box<dyn ConfigStore>) {
+        self.config_store = Some(store);
     }
 
     /// Digits switch tabs, but not while a text field is taking characters:
@@ -1285,6 +1352,17 @@ impl App {
 
     pub fn handle_key(&mut self, key: KeyEvent) {
         if key.kind != KeyEventKind::Press {
+            return;
+        }
+        // Ctrl+O folds the optional fields away, wherever the keyboard is — the
+        // form and its visibility are a property of the tab, not of a field.
+        if key.code == KeyCode::Char('o')
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && !self.show_help
+            && self.picker.is_none()
+            && self.tab == tabs::Tab::Commit
+        {
+            self.toggle_compact_form();
             return;
         }
         if self.picker_key(key) {
@@ -1755,6 +1833,82 @@ mod tests {
 
     fn ctrl(app: &mut App, c: char) {
         app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL));
+    }
+
+    #[test]
+    fn ctrl_o_folds_the_optional_fields_and_keeps_their_text() {
+        let mut app = App::with_config(Config::conventional(), Vec::new());
+        // Body is field 3.
+        while app.active_field() != Field::Body {
+            app.next_field();
+        }
+        app.handle_paste("body text");
+
+        ctrl(&mut app, 'o');
+        assert!(app.compact, "Ctrl+O folds");
+        assert_eq!(app.value(Field::Body), "body text");
+        assert_ne!(
+            app.active_field(),
+            Field::Body,
+            "the focus leaves a field that is no longer drawn"
+        );
+
+        // The folded text is still part of the message and still validated.
+        app.commit.subject = "add a thing".to_string();
+        let rendered = app.commit.render();
+        assert!(
+            rendered.contains("body text"),
+            "a folded body still goes into the commit: {rendered}"
+        );
+
+        ctrl(&mut app, 'o');
+        assert!(!app.compact, "Ctrl+O unfolds again");
+        assert_eq!(app.value(Field::Body), "body text");
+    }
+
+    #[test]
+    fn tab_skips_folded_fields_in_both_directions() {
+        let mut app = App::with_config(Config::conventional(), Vec::new());
+        ctrl(&mut app, 'o');
+        assert!(app.compact);
+
+        let order: Vec<Field> = (0..4)
+            .map(|_| {
+                let field = app.active_field();
+                app.next_field();
+                field
+            })
+            .collect();
+        assert_eq!(
+            order,
+            vec![Field::Type, Field::Scope, Field::Subject, Field::Type],
+            "forward: only the three visible fields"
+        );
+
+        let back: Vec<Field> = (0..3)
+            .map(|_| {
+                app.previous_field();
+                app.active_field()
+            })
+            .collect();
+        assert_eq!(
+            back,
+            vec![Field::Type, Field::Subject, Field::Scope],
+            "backward: the same three, in reverse"
+        );
+    }
+
+    #[test]
+    fn the_compact_choice_is_written_to_the_config() {
+        let mut app = App::with_config(Config::conventional(), Vec::new());
+        let store = crate::application::test_support::RecordingConfig::default();
+        let written = store.written.clone();
+        app.set_config_store(Box::new(store));
+
+        ctrl(&mut app, 'o');
+        let text = written.borrow().clone();
+        assert!(text.contains("compact_form = true"), "{text}");
+        assert!(app.status.contains("compact"), "{}", app.status);
     }
 
     fn type_text(app: &mut App, text: &str) {

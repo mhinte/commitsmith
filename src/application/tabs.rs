@@ -68,6 +68,8 @@ impl Tab {
                 ("C-n", "scope"),
                 ("C-p", "profile"),
                 ("C-r", "reuse"),
+                // Folding is a convenience; it yields to the keys people need.
+                ("C-o", "fold"),
             ],
             // The first four are always shown; `d` and `m` are the actions
             // people look for, so they come before the wizard.

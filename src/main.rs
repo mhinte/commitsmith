@@ -237,6 +237,10 @@ fn run_composer(commit: bool) -> ExitCode {
         let (config, warnings) = load_config();
         let mut app = app::App::with_config(config, warnings);
         app.set_commit_mode(commit);
+        // Ctrl+O writes the folded/unfolded choice into the user config.
+        app.set_config_store(Box::new(
+            commitsmith::infrastructure::config_toml::TomlConfigStore::new(),
+        ));
 
         // Scope suggestions come from history; a missing repository is fine, and
         // so is one that cannot be read: the composer still opens.

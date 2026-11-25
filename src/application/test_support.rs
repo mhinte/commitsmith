@@ -5,7 +5,12 @@ use std::rc::Rc;
 
 use commitsmith::domain::errors::GitError;
 use commitsmith::domain::history::{PastCommit, ScopeInfo};
-use commitsmith::domain::ports::{BranchInfo, ChangedFile, FileState, GitRepository};
+use std::path::{Path, PathBuf};
+
+use commitsmith::domain::errors::ConfigError;
+use commitsmith::domain::ports::{
+    BranchInfo, ChangedFile, ConfigDocument, ConfigStore, FileState, GitRepository,
+};
 
 /// A repository that records what the surface asked it to do.
 pub struct RecordingGit {
@@ -156,5 +161,27 @@ impl GitRepository for RecordingGit {
     fn push(&self) -> Result<(), GitError> {
         self.calls.borrow_mut().push("push".to_string());
         Ok(())
+    }
+}
+
+/// A config store that keeps what was written, so tests can read the file text
+/// without touching the disk.
+#[derive(Default)]
+pub struct RecordingConfig {
+    pub written: Rc<RefCell<String>>,
+}
+
+impl ConfigStore for RecordingConfig {
+    fn user_document(&self) -> Result<Option<ConfigDocument>, ConfigError> {
+        Ok(None)
+    }
+
+    fn project_document(&self, _start: &Path) -> Result<Option<ConfigDocument>, ConfigError> {
+        Ok(None)
+    }
+
+    fn write_user(&self, text: &str) -> Result<PathBuf, ConfigError> {
+        *self.written.borrow_mut() = text.to_string();
+        Ok(PathBuf::from("/tmp/commitsmith-test-config.toml"))
     }
 }
