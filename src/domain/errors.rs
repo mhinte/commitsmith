@@ -14,35 +14,6 @@
 use std::fmt;
 use std::io;
 
-/// Which config file a lookup was about.
-///
-/// The user file is the one written on first start, the project file sits in the
-/// repository and wins over the user file. The scope is part of the error so a
-/// caller can say which of the two is missing without guessing from a path.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ConfigScope {
-    /// The user-wide file, e.g. `~/.config/commitsmith/config.toml`.
-    User,
-    /// The file in the repository root, e.g. `.commitsmith.toml`.
-    Project,
-}
-
-impl ConfigScope {
-    /// Lower-case name, as used in messages and log lines.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::User => "user",
-            Self::Project => "project",
-        }
-    }
-}
-
-impl fmt::Display for ConfigScope {
-    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        out.write_str(self.as_str())
-    }
-}
-
 /// Everything that can go wrong in the repository.
 ///
 /// Variants carry context rather than a pre-formatted message: a reference, the
@@ -145,7 +116,7 @@ impl std::error::Error for GitError {
 #[derive(Debug)]
 pub enum ConfigError {
     /// The file for this scope does not exist.
-    NotFound { scope: ConfigScope },
+    NotFound { context: String },
     /// The file exists but does not parse; `context` is the location or key,
     /// `message` says what was expected.
     Parse { context: String, message: String },
@@ -154,9 +125,11 @@ pub enum ConfigError {
 }
 
 impl ConfigError {
-    /// No config file for `scope`.
-    pub fn not_found(scope: ConfigScope) -> Self {
-        Self::NotFound { scope }
+    /// No config file for `context`, e.g. "user" or "project".
+    pub fn not_found(context: impl Into<String>) -> Self {
+        Self::NotFound {
+            context: context.into(),
+        }
     }
 
     /// The file did not parse; `context` names the file or key.
@@ -182,7 +155,7 @@ impl ConfigError {
 impl fmt::Display for ConfigError {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotFound { scope } => write!(out, "no {scope} config found"),
+            Self::NotFound { context } => write!(out, "no {context} config found"),
             Self::Parse { context, message } => write!(out, "cannot parse {context}: {message}"),
             Self::Io { context, source } => write!(out, "{context}: {source}"),
         }
@@ -253,23 +226,19 @@ mod tests {
     #[test]
     fn non_io_variants_have_no_source() {
         assert!(std::error::Error::source(&GitError::not_found("main")).is_none());
-        assert!(std::error::Error::source(&ConfigError::not_found(ConfigScope::User)).is_none());
+        assert!(std::error::Error::source(&ConfigError::not_found("user")).is_none());
     }
 
     #[test]
     fn config_errors_name_their_scope_and_location() {
         assert_eq!(
-            ConfigError::NotFound {
-                scope: ConfigScope::Project
-            }
-            .to_string(),
+            ConfigError::not_found("project").to_string(),
             "no project config found"
         );
         assert_eq!(
             ConfigError::parse(".commitsmith.toml, key `profile`", "expected a string").to_string(),
             "cannot parse .commitsmith.toml, key `profile`: expected a string"
         );
-        assert_eq!(ConfigScope::User.to_string(), "user");
     }
 
     #[test]
@@ -277,6 +246,5 @@ mod tests {
         fn assert_send_sync<T: Send + Sync + 'static>() {}
         assert_send_sync::<GitError>();
         assert_send_sync::<ConfigError>();
-        assert_send_sync::<ConfigScope>();
     }
 }

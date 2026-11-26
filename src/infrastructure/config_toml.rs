@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::errors::{ConfigError, ConfigScope};
+use crate::domain::errors::ConfigError;
 use crate::domain::ports::{ConfigDocument, ConfigStore};
 
 /// A commit type: the short name and the one-line explanation shown next to it.
@@ -545,7 +545,7 @@ impl TomlConfigStore {
         if let Some(dir) = &self.user_dir {
             return Ok(dir.join("commitsmith").join("config.toml"));
         }
-        Config::user_config_path().ok_or(ConfigError::not_found(ConfigScope::User))
+        Config::user_config_path().ok_or(ConfigError::not_found("user"))
     }
 }
 
