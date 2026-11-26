@@ -4,6 +4,7 @@
 //! maths for that lives here, next to the drawing that needs it.
 
 use super::*;
+use crate::ui::theme;
 
 /// Draws the form and returns the terminal cursor position, if any.
 pub(crate) fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
@@ -29,11 +30,7 @@ pub(crate) fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16
             HINT
         };
         let marker = if active { "▌ " } else { "  " };
-        let value_style = if active {
-            Style::default().fg(Color::White)
-        } else {
-            HINT
-        };
+        let value_style = if active { theme::bright() } else { HINT };
         let value = app.value(*field);
 
         if field.multiline() {
@@ -46,9 +43,9 @@ pub(crate) fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16
                     " ".repeat(LABEL_WIDTH + 1)
                 };
                 let leading = if line_idx == 0 {
-                    Span::styled(marker, Style::default().fg(Color::Cyan))
+                    Span::styled(marker, theme::accent())
                 } else {
-                    Span::styled("  ", Style::default().fg(Color::Cyan))
+                    Span::styled("  ", theme::accent())
                 };
                 let mut spans = vec![Span::styled(label, label_style), leading];
                 if line_idx == 0 && value.is_empty() {
@@ -97,7 +94,7 @@ pub(crate) fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16
 
         let row = Line::from(vec![
             Span::styled(format!(" {:<LABEL_WIDTH$}", field.label()), label_style),
-            Span::styled(marker, Style::default().fg(Color::Cyan)),
+            Span::styled(marker, theme::accent()),
             Span::styled(display, value_style),
             Span::styled(hint, MUTED),
         ]);

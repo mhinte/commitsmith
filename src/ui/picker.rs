@@ -1,6 +1,7 @@
 //! The pickers as the eye sees them: the overlay list and the commit preview.
 
 use super::*;
+use crate::ui::theme;
 
 /// Overlay list with a filter line. Pickers that carry previews (history) get a
 /// pane on the right showing the highlighted entry in full.
@@ -68,8 +69,8 @@ pub(crate) fn draw_list(
 ) {
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::Cyan))
-        .title(Span::styled(title, Style::default().fg(Color::Cyan)));
+        .border_style(theme::accent())
+        .title(Span::styled(title, theme::accent()));
 
     let inner_height = area.height.saturating_sub(2) as usize;
     let offset = if picker.selected >= inner_height && inner_height > 0 {

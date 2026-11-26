@@ -2,15 +2,15 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Paragraph, Wrap};
 
 use crate::app::App;
 use crate::ui::theme;
 
-const MUTED: Style = Style::new().fg(Color::DarkGray);
-const HINT: Style = Style::new().fg(Color::Gray);
+const MUTED: Style = theme::muted();
+const HINT: Style = theme::hint();
 
 pub fn draw(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
     let staging = &app.staging;
@@ -69,9 +69,9 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
                 Span::styled(
                     format!(" {code} "),
                     if file.is_staged() {
-                        Style::default().fg(Color::Green)
+                        theme::ok()
                     } else {
-                        Style::default().fg(Color::Yellow)
+                        theme::warn()
                     },
                 ),
             ];
@@ -178,11 +178,11 @@ pub fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
         .skip(offset)
         .map(|raw| {
             let style = if raw.starts_with('+') && !raw.starts_with("+++") {
-                Style::default().fg(Color::Green)
+                theme::ok()
             } else if raw.starts_with('-') && !raw.starts_with("---") {
-                Style::default().fg(Color::Red)
+                theme::bad()
             } else if raw.starts_with("@@") {
-                Style::default().fg(Color::Cyan)
+                theme::accent()
             } else if raw.starts_with("diff --git") || raw.starts_with("index ") {
                 MUTED
             } else {
@@ -229,7 +229,7 @@ pub fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
             let y = area.y + 1 + start + step;
             if y < area.y + 1 + track {
                 frame.render_widget(
-                    Paragraph::new("▐").style(Style::default().fg(Color::Cyan)),
+                    Paragraph::new("▐").style(theme::accent()),
                     Rect {
                         x: area.x + area.width - 1,
                         y,

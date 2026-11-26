@@ -4,6 +4,7 @@
 //! some terminals (notably Windows) a box placed in the middle left the hardware
 //! cursor a character or two off, and it also avoids the layout work.
 
+use crate::ui::theme;
 use std::io;
 use std::time::Duration;
 
@@ -174,7 +175,7 @@ fn draw(frame: &mut ratatui::Frame, setup: &Setup) {
 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::Cyan))
+        .border_style(theme::accent())
         .title(Span::styled(
             " commitsmith · first start ",
             Style::default()
@@ -193,7 +194,7 @@ fn draw(frame: &mut ratatui::Frame, setup: &Setup) {
 
     let prefix_line = match setup.prefix() {
         Some(prefix) => Line::from(vec![
-            Span::styled("  handle   ", Style::default().fg(Color::DarkGray)),
+            Span::styled("  handle   ", theme::muted()),
             Span::styled(
                 prefix,
                 Style::default()
@@ -203,7 +204,7 @@ fn draw(frame: &mut ratatui::Frame, setup: &Setup) {
         ]),
         None => Line::from(Span::styled(
             "  handle   two letters of the surname, three of the given name",
-            Style::default().fg(Color::DarkGray),
+            theme::muted(),
         )),
     };
 
@@ -216,19 +217,16 @@ fn draw(frame: &mut ratatui::Frame, setup: &Setup) {
         Line::from(vec![
             Span::raw("  "),
             if setup.name.is_empty() {
-                Span::styled("Firstname Lastname", Style::default().fg(Color::DarkGray))
+                Span::styled("Firstname Lastname", theme::muted())
             } else {
-                Span::styled(setup.name.clone(), Style::default().fg(Color::White))
+                Span::styled(setup.name.clone(), theme::bright())
             },
         ]),
         Line::raw(""),
         prefix_line,
     ];
     if let Some(error) = &setup.error {
-        lines.push(Line::styled(
-            format!("  {error}"),
-            Style::default().fg(Color::Red),
-        ));
+        lines.push(Line::styled(format!("  {error}"), theme::bad()));
     }
 
     frame.render_widget(
@@ -240,11 +238,11 @@ fn draw(frame: &mut ratatui::Frame, setup: &Setup) {
         Paragraph::new(Text::from(vec![
             Line::styled(
                 "  Enter save · Esc skip · name and handle stay editable in the file",
-                Style::default().fg(Color::Gray),
+                theme::hint(),
             ),
             Line::styled(
                 "  written to the user config, not to this repository",
-                Style::default().fg(Color::DarkGray),
+                theme::muted(),
             ),
         ])),
         hint_area,

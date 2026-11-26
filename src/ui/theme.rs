@@ -14,6 +14,41 @@ pub const FOCUS_FG: Color = Color::White;
 /// The marker that also survives a terminal without background colours.
 pub const FOCUS_MARKER: &str = "▌ ";
 
+/// Something is fine: a green tick, a clean lint, an added line.
+pub const fn ok() -> Style {
+    Style::new().fg(Color::Green)
+}
+
+/// Something needs a look: a warning, a long subject, an unstaged file.
+pub const fn warn() -> Style {
+    Style::new().fg(Color::Yellow)
+}
+
+/// Something is wrong: a lint error, a removed line, a failed command.
+pub const fn bad() -> Style {
+    Style::new().fg(Color::Red)
+}
+
+/// Keys, counts and the markers the eye follows.
+pub const fn accent() -> Style {
+    Style::new().fg(Color::Cyan)
+}
+
+/// Ordinary text that should not compete for attention.
+pub const fn hint() -> Style {
+    Style::new().fg(Color::Gray)
+}
+
+/// Rules, borders and details that are there when looked for.
+pub const fn muted() -> Style {
+    Style::new().fg(Color::DarkGray)
+}
+
+/// Text on a filled background.
+pub const fn bright() -> Style {
+    Style::new().fg(Color::White)
+}
+
 /// The row the user is working in.
 pub fn focused_row() -> Style {
     Style::default()
@@ -31,27 +66,27 @@ pub fn focused_label() -> Style {
 
 /// A field or row that is not focused.
 pub fn idle_row() -> Style {
-    Style::default().fg(Color::Gray)
+    Style::new().fg(Color::Gray)
 }
 
 /// The title of a panel that does not have the keyboard.
 pub fn idle_title() -> Style {
-    Style::default().fg(Color::Gray)
+    Style::new().fg(Color::Gray)
 }
 
 /// Border and title of the panel that has the keyboard.
 pub fn focused_panel() -> Style {
-    Style::default().fg(Color::Cyan)
+    Style::new().fg(Color::Cyan)
 }
 
 /// Border and title of every other panel.
 pub fn idle_panel() -> Style {
-    Style::default().fg(Color::DarkGray)
+    Style::new().fg(Color::DarkGray)
 }
 
 /// The value inside a focused field, once the row background is set.
 pub fn focused_value() -> Style {
-    Style::default().fg(FOCUS_FG)
+    Style::new().fg(FOCUS_FG)
 }
 
 #[cfg(test)]

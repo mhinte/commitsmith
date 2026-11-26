@@ -5,15 +5,15 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Paragraph};
 
 use crate::app::App;
 use crate::ui::theme;
 
-const MUTED: Style = Style::new().fg(Color::DarkGray);
-const HINT: Style = Style::new().fg(Color::Gray);
+const MUTED: Style = theme::muted();
+const HINT: Style = theme::hint();
 
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
@@ -21,7 +21,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     if app.git.is_none() {
         lines.push(Line::raw(""));
         lines.push(Line::from(vec![
-            Span::styled("  no repository ", Style::default().fg(Color::Yellow)),
+            Span::styled("  no repository ", theme::warn()),
             Span::styled("· open commitsmith inside a checkout", MUTED),
         ]));
         lines.push(Line::raw(""));
@@ -69,14 +69,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
                     MUTED
                 },
             ),
-            Span::styled(
-                head,
-                if branch.is_head {
-                    Style::default().fg(Color::Green)
-                } else {
-                    MUTED
-                },
-            ),
+            Span::styled(head, if branch.is_head { theme::ok() } else { MUTED }),
             Span::styled(
                 format!("{name:<width$}"),
                 if selected {
@@ -112,7 +105,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     if let Some(name) = &app.branches.confirming {
         lines.push(Line::raw(""));
         lines.push(Line::from(vec![
-            Span::styled(" delete ", Style::default().fg(Color::Yellow)),
+            Span::styled(" delete ", theme::warn()),
             Span::styled(format!("{name} · press d again, Esc keeps it "), HINT),
         ]));
     }

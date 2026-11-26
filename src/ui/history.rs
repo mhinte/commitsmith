@@ -10,8 +10,8 @@ use crate::app::App;
 use crate::application::log::type_counts;
 use crate::ui::theme;
 
-const MUTED: Style = Style::new().fg(Color::DarkGray);
-const HINT: Style = Style::new().fg(Color::Gray);
+const MUTED: Style = theme::muted();
+const HINT: Style = theme::hint();
 
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let visible = app.log.visible(&app.history);
@@ -69,9 +69,9 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect, matches: usize) {
             }
             let selected = index == app.log.selected;
             let (mark, mark_style) = match app.log_mark(commit) {
-                crate::validate::Severity::Error => ("✗", Style::default().fg(Color::Red)),
-                crate::validate::Severity::Warning => ("▲", Style::default().fg(Color::Yellow)),
-                _ => ("✓", Style::default().fg(Color::Green)),
+                crate::validate::Severity::Error => ("✗", theme::bad()),
+                crate::validate::Severity::Warning => ("▲", theme::warn()),
+                _ => ("✓", theme::ok()),
             };
             let kind = match (&commit.kind, &commit.scope) {
                 (Some(kind), Some(scope)) => format!("{kind}({scope})"),
@@ -159,16 +159,14 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
             if findings.is_empty() {
                 lines.push(Line::styled(
                     "  ✓ lint: clean · would pass the hook today",
-                    Style::default().fg(Color::Green),
+                    theme::ok(),
                 ));
             } else {
                 for issue in findings.iter().take(6) {
                     let (mark, style) = match issue.severity {
-                        crate::validate::Severity::Error => ("✗", Style::default().fg(Color::Red)),
-                        crate::validate::Severity::Warning => {
-                            ("▲", Style::default().fg(Color::Yellow))
-                        }
-                        _ => ("✓", Style::default().fg(Color::Green)),
+                        crate::validate::Severity::Error => ("✗", theme::bad()),
+                        crate::validate::Severity::Warning => ("▲", theme::warn()),
+                        _ => ("✓", theme::ok()),
                     };
                     lines.push(Line::from(vec![
                         Span::styled(format!("  {mark} "), style),
@@ -225,7 +223,7 @@ fn draw_release(frame: &mut Frame, app: &App, area: Rect) {
                     break;
                 }
                 let style = if line.starts_with('#') {
-                    Style::default().fg(Color::Cyan)
+                    theme::accent()
                 } else {
                     HINT
                 };

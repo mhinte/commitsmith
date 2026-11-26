@@ -5,6 +5,7 @@
 //! questions with one field each. Every answer is validated by
 //! [`SetupAnswers`], so a typo keeps you on the question instead of writing junk.
 
+use crate::ui::theme;
 use std::io;
 use std::time::Duration;
 
@@ -221,7 +222,7 @@ fn draw(frame: &mut ratatui::Frame, wizard: &Wizard) {
 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::Cyan))
+        .border_style(theme::accent())
         .title(Span::styled(
             format!(" commitsmith · setup {}/{} ", wizard.step + 1, STEPS.len()),
             Style::default()
@@ -242,26 +243,23 @@ fn draw(frame: &mut ratatui::Frame, wizard: &Wizard) {
         Line::raw(""),
         Line::from(vec![
             Span::raw("  "),
-            Span::styled(wizard.input.clone(), Style::default().fg(Color::White)),
+            Span::styled(wizard.input.clone(), theme::bright()),
         ]),
     ];
     if let Some(error) = &wizard.error {
         lines.push(Line::raw(""));
-        lines.push(Line::styled(
-            format!("  {error}"),
-            Style::default().fg(Color::Red),
-        ));
+        lines.push(Line::styled(format!("  {error}"), theme::bad()));
     }
     frame.render_widget(Paragraph::new(Text::from(lines)), form);
     frame.render_widget(
         Paragraph::new(Text::from(vec![
             Line::styled(
                 "  Enter next · Ctrl+U clear the line · Esc cancel without saving",
-                Style::default().fg(Color::Gray),
+                theme::hint(),
             ),
             Line::styled(
                 "  written to the user config, not to this repository",
-                Style::default().fg(Color::DarkGray),
+                theme::muted(),
             ),
         ])),
         hint,

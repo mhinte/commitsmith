@@ -46,8 +46,8 @@ const KEY: Style = Style::new().fg(Color::Black).bg(Color::DarkGray);
 fn plural(count: usize, word: &str) -> String {
     commitsmith::domain::text::plural(count, word)
 }
-const HINT: Style = Style::new().fg(Color::Gray);
-const MUTED: Style = Style::new().fg(Color::DarkGray);
+const HINT: Style = theme::hint();
+const MUTED: Style = theme::muted();
 
 pub mod branch_wizard;
 pub mod branches;
@@ -248,8 +248,8 @@ fn draw_content(frame: &mut Frame, app: &App, area: Rect) {
     lines.push(Line::raw(""));
     if app.issues.is_empty() {
         lines.push(Line::from(vec![
-            Span::styled(" ✓ ", Style::default().fg(Color::Green)),
-            Span::styled("ready to commit", Style::default().fg(Color::Green)),
+            Span::styled(" ✓ ", theme::ok()),
+            Span::styled("ready to commit", theme::ok()),
         ]));
     } else {
         for issue in &app.issues {
@@ -303,17 +303,14 @@ fn draw_compact(frame: &mut Frame, app: &App, area: Rect) {
         // No program name here any more: it lives in the corner.
         .title(Line::from(Span::styled(
             format!(" {step} "),
-            Style::default().fg(Color::Cyan),
+            theme::accent(),
         )))
         .title_top(
             Line::from(Span::styled(format!(" {errors}✗ {warnings}! "), MUTED)).right_aligned(),
         );
 
     let header_line = Line::from(vec![
-        Span::styled(
-            format!(" {} ", app.commit.kind),
-            Style::default().fg(Color::Cyan),
-        ),
+        Span::styled(format!(" {} ", app.commit.kind), theme::accent()),
         Span::styled(
             format!(
                 "{} chars · {}",
@@ -358,7 +355,7 @@ fn draw_compact(frame: &mut Frame, app: &App, area: Rect) {
             .block(
                 Block::bordered()
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Cyan)),
+                    .border_style(theme::accent()),
             )
             .wrap(Wrap { trim: false }),
         body,
@@ -433,7 +430,7 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
                 return Line::styled(format!(" {text}"), MUTED);
             }
             Line::from(vec![
-                Span::styled(format!(" {key:<16}"), Style::default().fg(Color::Cyan)),
+                Span::styled(format!(" {key:<16}"), theme::accent()),
                 Span::styled(*text, HINT),
             ])
         })
@@ -441,10 +438,10 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::Cyan))
+        .border_style(theme::accent())
         .title(Span::styled(
             format!(" keys · {} ", app.tab.label()),
-            Style::default().fg(Color::Cyan),
+            theme::accent(),
         ));
 
     frame.render_widget(Paragraph::new(Text::from(lines)).block(block), popup);
@@ -524,7 +521,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             if app.in_repository {
                 MUTED
             } else {
-                Style::default().fg(Color::Yellow)
+                theme::warn()
             },
         )))
         .right_aligned(),
@@ -559,7 +556,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     if !app.status.is_empty() {
         // The status must not run under the context: it is cut, not overwritten.
         let status = fit(&app.status, room.saturating_sub(used));
-        left.push(Span::styled(status, Style::default().fg(Color::Cyan)));
+        left.push(Span::styled(status, theme::accent()));
     }
     if !left.is_empty() {
         frame.render_widget(
@@ -600,8 +597,6 @@ fn highlighted_file(app: &App) -> Option<String> {
         .then(|| app.staging.selected_path())
         .flatten()
 }
-
-
 
 /// Run the TUI until the user quits or hands the message over.
 pub fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {

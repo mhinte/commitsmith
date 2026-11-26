@@ -10,8 +10,8 @@ use crate::app::App;
 use crate::application::branch_wizard::WizardField;
 use crate::ui::theme;
 
-const MUTED: Style = Style::new().fg(Color::DarkGray);
-const HINT: Style = Style::new().fg(Color::Gray);
+const MUTED: Style = theme::muted();
+const HINT: Style = theme::hint();
 
 /// Columns from the panel's left edge to the first character of a value: the
 /// border, one leading space, the padded label, then the `▌ ` marker. The caret
@@ -97,25 +97,19 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
             if !preview.is_complete {
                 lines.push(Line::styled(
                     "  add a description to make it real",
-                    Style::default().fg(Color::Yellow),
+                    theme::warn(),
                 ));
             }
         }
         Err(error) => {
             lines.push(Line::styled(" branch", MUTED));
-            lines.push(Line::styled(
-                format!("  {error}"),
-                Style::default().fg(Color::Yellow),
-            ));
+            lines.push(Line::styled(format!("  {error}"), theme::warn()));
         }
     }
 
     if let Some(error) = &wizard.error {
         lines.push(Line::raw(""));
-        lines.push(Line::styled(
-            format!(" {error}"),
-            Style::default().fg(Color::Red),
-        ));
+        lines.push(Line::styled(format!(" {error}"), theme::bad()));
     }
 
     lines.push(Line::raw(""));
