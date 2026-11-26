@@ -127,11 +127,13 @@ fn block(app: &App) -> Block<'static> {
     } else {
         format!(" branches · {count} ")
     };
-    // The wizard takes the bright border when it is open; the list steps back.
-    let (border, title_style) = if app.wizard.open {
-        (theme::idle_panel(), theme::idle_title())
-    } else {
+    // The wizard and the other panes take the bright border when they have the
+    // keyboard; the list is only lit while it is the one being used.
+    let lit = !app.wizard.open && app.panel == crate::application::Panel::Branches;
+    let (border, title_style) = if lit {
         (theme::focused_panel(), theme::focused_panel())
+    } else {
+        (theme::idle_panel(), theme::idle_title())
     };
     Block::bordered()
         .border_type(BorderType::Rounded)

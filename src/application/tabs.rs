@@ -80,6 +80,9 @@ impl Tab {
                 ("Enter", "checkout"),
                 ("d", "delete"),
                 ("m", "merge"),
+                // Pane switching and the file keys yield to the branch actions.
+                ("Tab", "pane"),
+                ("Space", "stage"),
                 ("n", "new branch"),
                 ("f", "fetch"),
             ],

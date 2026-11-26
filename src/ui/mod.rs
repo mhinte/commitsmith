@@ -96,7 +96,25 @@ fn draw_full(frame: &mut Frame, app: &App, area: Rect) {
                 branches::draw(frame, app, list);
                 branch_wizard::draw(frame, app, wizard)
             } else {
-                branches::draw(frame, app, body);
+                // Same shape as the other tabs: one main pane, two support panes.
+                let [tree, right] =
+                    Layout::horizontal([Constraint::Percentage(46), Constraint::Min(34)])
+                        .areas(body);
+                let [files, diff] = if app.staging.show_diff {
+                    Layout::vertical([Constraint::Percentage(50), Constraint::Min(6)]).areas(right)
+                } else {
+                    [right, Rect::default()]
+                };
+                branches::draw(frame, app, tree);
+                staging::draw(
+                    frame,
+                    app,
+                    files,
+                    app.panel == crate::application::Panel::Files,
+                );
+                if app.staging.show_diff {
+                    staging::draw_diff(frame, app, diff);
+                }
                 None
             }
         }
@@ -114,11 +132,8 @@ fn draw_full(frame: &mut Frame, app: &App, area: Rect) {
 
 /// Staging, composer, preview and checks: the first tab.
 fn draw_commit_body(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
-    // The staging list sits left of the composer, as wide as its names need.
-    let list_width = (area.width / 3).clamp(24, 40);
-    let [list, right] =
-        Layout::horizontal([Constraint::Length(list_width), Constraint::Min(30)]).areas(area);
-    staging::draw(frame, app, list);
+    // The files moved to tab 2; here the composer gets the width it earns.
+    let right = area;
     // Body, breaking and footer all grow to MULTILINE_ROWS; counting only two of
     // them cut the footer's last rows off.
     let rows: u16 = FIELDS
@@ -1475,17 +1490,19 @@ mod tests {
     }
 
     #[test]
-    fn tab_one_lists_the_changed_files_left_of_the_composer() {
+    fn tab_two_lists_the_changed_files_beside_the_branches() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
-        let (app, _) = staging_app_in_ui();
+        let (mut app, _) = staging_app_in_ui();
+        app.tab = crate::application::tabs::Tab::Branches;
         let mut terminal = Terminal::new(TestBackend::new(110, 30)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let screen = rows(&terminal).join("\n");
+        // The files live on tab 2 now, next to the branches.
         assert!(screen.contains("staging · 1"), "{screen}");
         assert!(screen.contains("a.txt"), "{screen}");
-        assert!(screen.contains("compose"), "the composer stays: {screen}");
+        assert!(screen.contains("staging"), "{screen}");
     }
 
     fn staging_app_in_ui() -> (App, ()) {
@@ -1824,24 +1841,25 @@ mod tests {
         use ratatui::backend::TestBackend;
 
         let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.tab = crate::application::tabs::Tab::Branches;
         app.staging.items = vec![staging_item("src/main.rs")];
 
         let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
-        let compose_before = style_of(&terminal, "compose");
+        let branches_before = style_of(&terminal, "branches");
         let staging_before = style_of(&terminal, "staging");
 
-        press_mod(&mut app, KeyCode::Char('l'), KeyModifiers::CONTROL);
+        // Tab walks the panes; the bright border walks with it.
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.panel, crate::application::Panel::Files);
         terminal.draw(|frame| draw(frame, &app)).unwrap();
-        let compose_after = style_of(&terminal, "compose");
+        let branches_after = style_of(&terminal, "branches");
         let staging_after = style_of(&terminal, "staging");
 
-        // Before: the composer is lit and the list is not. After `Ctrl+L` the two
-        // styles have swapped — the lit border moved with the keyboard.
-        assert_eq!(compose_before, theme::focused_panel());
+        assert_eq!(branches_before, theme::focused_panel());
         assert_eq!(staging_before, theme::idle_title());
         assert_eq!(staging_after, theme::focused_panel());
-        assert_eq!(compose_after, theme::idle_title());
+        assert_eq!(branches_after, theme::idle_title());
     }
 
     #[test]
@@ -1988,6 +2006,7 @@ mod tests {
         use ratatui::backend::TestBackend;
 
         let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.tab = crate::application::tabs::Tab::Branches;
         app.staging.items = vec![
             commitsmith::domain::ports::ChangedFile {
                 path: "src/a.rs".to_string(),

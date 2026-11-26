@@ -7,15 +7,13 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Paragraph};
 
 use crate::app::App;
-use crate::application::staging::Side;
 use crate::ui::theme;
 
 const MUTED: Style = Style::new().fg(Color::DarkGray);
 const HINT: Style = Style::new().fg(Color::Gray);
 
-pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
+pub fn draw(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
     let staging = &app.staging;
-    let focused = staging.side == Side::Staging;
 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
@@ -149,7 +147,7 @@ fn truncate_left(text: &str, width: usize) -> String {
     format!("…{tail}")
 }
 
-fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
+pub fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
     // The list shows a shortened name; the diff names the file in full, so the
     // complete path is always on screen somewhere.
     let title = match app.staging.selected_path() {

@@ -198,6 +198,15 @@ fn explain_sync_error(
     format!("{} failed · {first}", if pull { "pull" } else { "push" })
 }
 
+/// Which pane has the keyboard on tab 2: branches, the file list, or the diff.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Panel {
+    #[default]
+    Branches,
+    Files,
+    Diff,
+}
+
 pub struct App {
     pub config: Config,
     /// Branch and staged file summary of the repository, when there is one.
@@ -227,6 +236,8 @@ pub struct App {
     pub git: Option<Box<dyn GitRepository>>,
     /// Branch explorer state.
     pub branches: BranchList,
+    /// Which pane has the keyboard on tab 2.
+    pub panel: Panel,
     /// Log state of tab 3.
     pub log: LogState,
     /// What the next release would be, from the last tag to `HEAD`.
@@ -306,6 +317,7 @@ impl App {
             tab: tabs::Tab::Commit,
             git: None,
             branches: BranchList::default(),
+            panel: Panel::default(),
             log: LogState::default(),
             plan: None,
             release_confirm: false,
@@ -663,6 +675,43 @@ impl App {
         }
     }
 
+    /// Keys of the file list on tab 2: the same Space stages, the same arrows move.
+    fn files_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Down => {
+                if let Some(git) = self.git.as_deref() {
+                    self.staging.move_by(1, git);
+                }
+            }
+            KeyCode::Up => {
+                if let Some(git) = self.git.as_deref() {
+                    self.staging.move_by(-1, git);
+                }
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                let Some(git) = self.git.as_deref() else {
+                    return;
+                };
+                match self.staging.toggle(git) {
+                    Ok(message) => {
+                        self.status = message;
+                        self.refresh_sync();
+                    }
+                    Err(error) => self.status = error.to_string(),
+                }
+            }
+            KeyCode::Char('v') => {
+                self.staging.show_diff = true;
+                self.panel = Panel::Diff;
+                if let Some(git) = self.git.as_deref() {
+                    let _ = self.staging.refresh_diff(git);
+                }
+            }
+            KeyCode::Esc => self.panel = Panel::Branches,
+            _ => {}
+        }
+    }
+
     /// Re-read the changed files and the diff of the highlighted one.
     pub fn reload_staging(&mut self) {
         let (git, staging) = (&self.git, &mut self.staging);
@@ -782,6 +831,46 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if self.wizard.open {
             self.wizard_key(key);
+            return;
+        }
+        // Tab and Shift+Tab walk the panes: branches, files, diff. The same key on
+        // every tab, so the hand learns one gesture.
+        if key.code == KeyCode::Tab || key.code == KeyCode::BackTab {
+            let back = key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
+            self.panel = match (self.panel, back) {
+                (Panel::Branches, false) => Panel::Files,
+                (Panel::Files, false) => {
+                    if self.staging.show_diff {
+                        Panel::Diff
+                    } else {
+                        Panel::Branches
+                    }
+                }
+                (Panel::Diff, false) => Panel::Branches,
+                (Panel::Branches, true) => {
+                    if self.staging.show_diff {
+                        Panel::Diff
+                    } else {
+                        Panel::Files
+                    }
+                }
+                (Panel::Files, true) => Panel::Branches,
+                (Panel::Diff, true) => Panel::Files,
+            };
+            return;
+        }
+        if self.panel == Panel::Files {
+            self.files_key(key);
+            return;
+        }
+        if self.panel == Panel::Diff {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('v') => {
+                    self.staging.show_diff = false;
+                    self.panel = Panel::Files;
+                }
+                _ => {}
+            }
             return;
         }
         match key.code {
