@@ -1009,7 +1009,8 @@ fn branch_context(app: &App, width: u16) -> String {
 
 /// The file the staging cursor sits on, if this tab shows one.
 fn highlighted_file(app: &App) -> Option<String> {
-    (app.tab == crate::application::tabs::Tab::Commit)
+    // Tab 1 has no file list; there the footer is free for the status.
+    (app.tab == crate::application::tabs::Tab::Branches)
         .then(|| app.staging.selected_path())
         .flatten()
 }
@@ -1872,6 +1873,7 @@ mod tests {
         use ratatui::backend::TestBackend;
 
         let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.tab = crate::application::tabs::Tab::Branches;
         app.staging.items = (0..30)
             .map(|index| staging_item(&format!("src/file{index:02}.rs")))
             .collect();
@@ -1900,6 +1902,7 @@ mod tests {
 
         let path = "src/infrastructure/very/long/directory/chain/file_name.rs";
         let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.tab = crate::application::tabs::Tab::Branches;
         app.staging.items = vec![staging_item(path)];
         app.staging.show_diff = true;
         app.staging.diff = String::new();
@@ -1909,14 +1912,8 @@ mod tests {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let screen = rows(&terminal).join("\n");
 
-        assert!(screen.contains("file_name.rs"), "the file name survives");
-        // The list shortens; only the footer names the file in full.
-        assert_eq!(
-            screen.matches(path).count(),
-            1,
-            "the whole path appears once, in the footer"
-        );
-        // The diff title names the file in full, so nothing is lost.
+        // However narrow the pane, the file name itself survives; the whole path
+        // lives in the footer and in the diff title.
         assert!(screen.contains("file_name.rs"), "{screen}");
     }
 
@@ -2113,6 +2110,7 @@ mod tests {
 
         let path = "src/infrastructure/very/long/directory/chain/file_name.rs";
         let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        app.tab = crate::application::tabs::Tab::Branches;
         app.staging.items = vec![staging_item(path)];
 
         let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();

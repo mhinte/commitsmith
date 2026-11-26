@@ -701,6 +701,12 @@ impl App {
                 }
             }
             KeyCode::Char('v') => {
+                if self.staging.show_diff {
+                    // Second press: close it and keep the list.
+                    self.staging.show_diff = false;
+                    self.panel = Panel::Files;
+                    return;
+                }
                 // Only now is the diff worth a process.
                 self.staging.show_diff = true;
                 self.panel = Panel::Diff;
@@ -1215,7 +1221,11 @@ impl App {
     /// subject. Anywhere else it says so instead of opening the wrong list.
     fn open_suggestions(&mut self) {
         match self.active_field() {
-            Field::Type => self.open_type_picker(),
+            Field::Type => {
+                self.status =
+                    "type: use ←/→ or Space, no list needed (Ctrl+N is for scopes and subjects)"
+                        .to_string();
+            }
             Field::Scope => self.open_scope_picker(),
             Field::Subject => self.open_history_picker(),
             Field::Body | Field::Breaking | Field::Footer => {
@@ -2606,10 +2616,10 @@ mod tests {
     #[test]
     fn ctrl_n_offers_what_the_field_can_use() {
         let mut app = App::with_config(Config::conventional(), Vec::new());
-        // Type field: the type list.
+        // Type field: no list, the field cycles with the arrows already.
         ctrl(&mut app, 'n');
-        assert!(app.picker.is_some(), "types in the type field");
-        press(&mut app, KeyCode::Esc);
+        assert!(app.picker.is_none(), "no redundant type list");
+        assert!(app.status.contains("←/→"), "{}", app.status);
 
         // Subject field: earlier commits, or a hint when there are none.
         press(&mut app, KeyCode::Tab);

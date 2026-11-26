@@ -143,10 +143,22 @@ pub fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
         Some(path) => format!(" diff · {path} "),
         None => " diff ".to_string(),
     };
+    let lit = app.panel == crate::application::Panel::Diff;
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(theme::idle_panel())
-        .title(Line::from(Span::styled(title, theme::idle_title())));
+        .border_style(if lit {
+            theme::focused_panel()
+        } else {
+            theme::idle_panel()
+        })
+        .title(Line::from(Span::styled(
+            title,
+            if lit {
+                theme::focused_panel()
+            } else {
+                theme::idle_title()
+            },
+        )));
 
     let height = area.height.saturating_sub(2) as usize;
     let offset = app.staging.diff_offset;
