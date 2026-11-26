@@ -1846,7 +1846,8 @@ mod tests {
         ctrl(&mut app, 'l');
         press(&mut app, KeyCode::Char(' '));
         assert!(log.borrow().iter().any(|call| call == "stage a.txt"));
-        assert_eq!(app.status, "staged a.txt");
+        // The footer names the file; the status only says what happened.
+        assert_eq!(app.status, "staged");
 
         press(&mut app, KeyCode::Char('v'));
         assert!(app.staging.show_diff);

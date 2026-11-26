@@ -66,14 +66,16 @@ impl Staging {
         let Some(file) = self.selected_file().cloned() else {
             return Ok("nothing selected".to_string());
         };
+        // The footer already names the file in full; the status only says what
+        // happened to it.
         if file.is_staged() {
             repo.unstage(&file.path)?;
             let _ = self.reload(repo);
-            Ok(format!("unstaged {}", file.path))
+            Ok("unstaged".to_string())
         } else {
             repo.stage(&file.path)?;
             let _ = self.reload(repo);
-            Ok(format!("staged {}", file.path))
+            Ok("staged".to_string())
         }
     }
 
