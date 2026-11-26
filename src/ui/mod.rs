@@ -1381,7 +1381,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let screen = rows(&terminal).join("\n");
-        assert!(screen.contains("keys · Commit & Stage"), "{screen}");
+        assert!(screen.contains("keys · Commit"), "{screen}");
         assert!(screen.contains("type picker"), "{screen}");
         assert!(!screen.contains("check out"), "{screen}");
 

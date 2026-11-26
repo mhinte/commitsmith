@@ -1516,6 +1516,9 @@ impl App {
                         // whenever it comes into view.
                         self.reload_staging();
                         self.refresh_sync();
+                        // Every tab opens on its main pane, never on whatever was
+                        // focused the last time it was looked at.
+                        self.panel = Panel::Branches;
                     }
                     return true;
                 }
