@@ -210,14 +210,34 @@ pub fn bump_for(commits: &[PastCommit]) -> Bump {
     bump
 }
 
-/// The markdown section for a plan: `## 0.16.0`, then one block per type.
-pub fn render_section(plan: &ReleasePlan) -> String {
-    let mut out = format!("## {}\n", plan.next);
+/// The markdown section for a plan: `## 0.16.0 — 2026-11-26`, then one block per
+/// type. A line that would appear twice (same type, scope and subject) is listed
+/// once: squashed and cherry-picked commits repeat each other.
+pub fn render_section(plan: &ReleasePlan, date: Option<&str>) -> String {
+    let heading = match date {
+        Some(date) => format!("## {} — {date}\n", plan.next),
+        None => format!("## {}\n", plan.next),
+    };
+    let mut out = heading;
+    let mut seen: Vec<String> = Vec::new();
+    let mut emitted = |out: &mut String, commit: &PastCommit| {
+        let key = format!(
+            "{}|{}|{}",
+            commit.kind.as_deref().unwrap_or(""),
+            commit.scope.as_deref().unwrap_or(""),
+            commit.summary.trim().to_lowercase()
+        );
+        if seen.contains(&key) {
+            return;
+        }
+        seen.push(key);
+        out.push_str(&format!("- {}\n", entry(commit)));
+    };
     let breaking = plan.breaking();
     if !breaking.is_empty() {
         out.push_str("\n### Breaking changes\n\n");
         for commit in breaking {
-            out.push_str(&format!("- {}\n", entry(commit)));
+            emitted(&mut out, commit);
         }
     }
     for kind in GROUPS {
@@ -227,7 +247,7 @@ pub fn render_section(plan: &ReleasePlan) -> String {
         }
         out.push_str(&format!("\n### {}\n\n", title_for(kind)));
         for commit in commits {
-            out.push_str(&format!("- {}\n", entry(commit)));
+            emitted(&mut out, commit);
         }
     }
     out
@@ -355,7 +375,7 @@ mod tests {
                 commit("chore", None, "bump", ""),
             ],
         );
-        let text = render_section(&plan);
+        let text = render_section(&plan, None);
         assert!(text.starts_with("## 0.16.0"), "{text}");
         assert!(text.contains("### Features"), "{text}");
         // The subject already names the ticket; it is not repeated.
@@ -369,6 +389,29 @@ mod tests {
     }
 
     #[test]
+    fn the_heading_carries_the_date() {
+        let plan = ReleasePlan::build(Some("v0.15.0"), vec![commit("fix", None, "a", "")]);
+        let text = render_section(&plan, Some("2026-11-26"));
+        // A fix on v0.15.0 is a patch; the date rides in the heading.
+        assert!(text.starts_with("## 0.15.1 — 2026-11-26"), "{text}");
+    }
+
+    #[test]
+    fn a_commit_that_appears_twice_is_listed_once() {
+        let plan = ReleasePlan::build(
+            Some("v0.15.0"),
+            vec![
+                commit("feat", Some("ui"), "add the button", ""),
+                commit("feat", Some("ui"), "Add the button", ""),
+                commit("fix", None, "repair it", ""),
+            ],
+        );
+        let text = render_section(&plan, None);
+        assert_eq!(text.matches("add the button").count(), 1, "{text}");
+        assert!(text.contains("repair it"), "{text}");
+    }
+
+    #[test]
     fn breaking_changes_get_their_own_section() {
         let plan = ReleasePlan::build(
             Some("v0.15.0"),
@@ -379,7 +422,7 @@ mod tests {
                 "BREAKING CHANGE: renamed",
             )],
         );
-        let text = render_section(&plan);
+        let text = render_section(&plan, None);
         assert!(text.contains("### Breaking changes"), "{text}");
         let breaking_at = text.find("### Breaking changes").unwrap();
         let features_at = text.find("### Features").unwrap();

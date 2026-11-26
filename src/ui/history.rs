@@ -219,7 +219,7 @@ fn draw_release(frame: &mut Frame, app: &App, area: Rect) {
                 ));
             }
             lines.push(Line::raw(""));
-            for line in commitsmith::domain::release::render_section(plan).lines() {
+            for line in commitsmith::domain::release::render_section(plan, None).lines() {
                 if lines.len() >= height {
                     lines.push(Line::styled("  …", MUTED));
                     break;

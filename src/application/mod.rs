@@ -432,7 +432,10 @@ impl App {
             self.status = "no repository · nowhere to write CHANGELOG.md".to_string();
             return;
         };
-        let section = commitsmith::domain::release::render_section(&plan);
+        let section = commitsmith::domain::release::render_section(
+            &plan,
+            Some(&commitsmith::infrastructure::clock::today()),
+        );
         match commitsmith::infrastructure::changelog::write_section(&root, &plan.next, &section) {
             Ok(path) => {
                 let tag = format!("v{}", plan.next);
