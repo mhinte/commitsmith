@@ -438,24 +438,13 @@ impl App {
         );
         match commitsmith::infrastructure::changelog::write_section(&root, &plan.next, &section) {
             Ok(path) => {
-                let tag = format!("v{}", plan.next);
-                let message = format!("Release {}", plan.next);
-                match self
-                    .git
-                    .as_deref()
-                    .map(|git| git.create_tag(&tag, &message))
-                {
-                    Some(Ok(())) => {
-                        self.status = format!("wrote {} · tagged {tag}", path.display());
-                        self.refresh_plan();
-                    }
-                    // The file is written; saying so is more useful than hiding it.
-                    Some(Err(error)) => {
-                        self.status =
-                            format!("wrote {} · tag {tag} failed: {error}", path.display());
-                    }
-                    None => self.status = format!("wrote {}", path.display()),
-                }
+                // No tag: the project does not use them yet, and inventing one
+                // would be a promise nobody made. The file is the release note.
+                self.status = format!(
+                    "wrote {} · no tag set (git tag v{})",
+                    path.display(),
+                    plan.next
+                );
             }
             Err(error) => self.status = format!("changelog not written: {error}"),
         }
@@ -612,7 +601,7 @@ impl App {
                     .map(|plan| plan.next.to_string())
                     .unwrap_or_default();
                 self.status =
-                    format!("write CHANGELOG.md and tag v{next}? Enter confirms · Esc cancels");
+                    format!("write CHANGELOG.md for {next}? Enter confirms · Esc cancels");
             }
             _ => {}
         }
@@ -2385,7 +2374,7 @@ mod tests {
     }
 
     #[test]
-    fn a_confirmed_release_writes_the_file_and_tags_it() {
+    fn a_confirmed_release_writes_the_file_and_no_tag() {
         let dir = std::env::temp_dir().join(format!("commitsmith-write-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -2418,12 +2407,13 @@ mod tests {
         let text = std::fs::read_to_string(dir.join("CHANGELOG.md")).unwrap();
         assert!(text.contains("## 0.1.0"), "{text}");
         assert!(text.contains("**ui**: add a button"), "{text}");
+        // No tags until the project decides to use them.
         assert!(
-            calls.borrow().iter().any(|call| call == "tag v0.1.0"),
-            "annotated tag created: {:?}",
+            calls.borrow().iter().all(|call| !call.starts_with("tag ")),
+            "no tag created: {:?}",
             calls.borrow()
         );
-        assert!(app.status.contains("tagged v0.1.0"), "{}", app.status);
+        assert!(app.status.contains("no tag set"), "{}", app.status);
         let _ = std::fs::remove_dir_all(dir);
     }
 

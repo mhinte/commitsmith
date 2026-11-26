@@ -210,7 +210,7 @@ fn draw_release(frame: &mut Frame, app: &App, area: Rect) {
             if app.release_confirm {
                 lines.push(Line::styled(
                     format!(
-                        "  Enter writes CHANGELOG.md and tags v{} · Esc cancels",
+                        "  Enter writes CHANGELOG.md for {} · Esc cancels",
                         plan.next
                     ),
                     Style::default()
