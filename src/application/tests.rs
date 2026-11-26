@@ -158,8 +158,14 @@ fn the_actions_go_through_the_repository_port() {
     // into the current branch is the normal direction.
     press(&mut app, KeyCode::Down);
     press(&mut app, KeyCode::Char('m'));
+    let actions: Vec<String> = log
+        .borrow()
+        .iter()
+        .filter(|call| call.as_str() != "branch_overview")
+        .cloned()
+        .collect();
     assert_eq!(
-        log.borrow().as_slice(),
+        actions,
         ["checkout feature", "merge main"],
         "git must be told about both, in that order"
     );
@@ -199,8 +205,14 @@ fn enter_creates_the_branch_and_checks_it_out() {
 
     assert_eq!(app.status, "created and checked out feat/hima/add-a-thing");
     assert!(!app.branches.wizard.open, "the wizard closes on success");
+    let actions: Vec<String> = log
+        .borrow()
+        .iter()
+        .filter(|call| call.as_str() != "branch_overview")
+        .cloned()
+        .collect();
     assert_eq!(
-        log.borrow().as_slice(),
+        actions,
         [
             "create feat/hima/add-a-thing",
             "checkout feat/hima/add-a-thing"
@@ -1496,10 +1508,10 @@ fn custom_profile_types_are_accepted() {
 }
 
 #[test]
-fn switching_to_the_branches_tab_costs_two_git_commands() {
-    // The tab needs the branch list and `git status`; nothing else. A switch used
-    // to probe ahead/behind as well, which was two more processes for arrows that
-    // were not on screen yet.
+fn switching_to_the_branches_tab_costs_no_branch_read() {
+    // The list is loaded when it changes, not when a tab is looked at, and the
+    // ahead/behind arrows were two extra processes per switch. A switch reads
+    // `git status` and nothing else.
     let (mut app, log) = staging_app();
     log.borrow_mut().clear();
     app.tab = tabs::Tab::Commit;
@@ -1507,12 +1519,10 @@ fn switching_to_the_branches_tab_costs_two_git_commands() {
     press(&mut app, KeyCode::Char('2'));
     assert_eq!(app.tab, tabs::Tab::Branches, "2 goes to the branches");
     let calls = log.borrow().clone();
-    let expensive: Vec<&String> = calls
-        .iter()
-        .filter(|call| call.as_str() != "changes" && call.as_str() != "branches")
-        .collect();
-    assert!(expensive.is_empty(), "unexpected git calls: {expensive:?}");
-    assert!(calls.len() <= 2, "more than two calls: {calls:?}");
+    assert!(
+        calls.is_empty(),
+        "unexpected git calls on a switch: {calls:?}"
+    );
 }
 
 #[test]

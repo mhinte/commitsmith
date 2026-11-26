@@ -9,7 +9,7 @@ use std::process::Command;
 
 use crate::domain::errors::GitError;
 use crate::domain::history::{PastCommit, ScopeInfo};
-use crate::domain::ports::{BranchInfo, ChangedFile, GitRepository};
+use crate::domain::ports::{BranchInfo, BranchOverview, ChangedFile, GitRepository};
 use crate::infrastructure::gix_repo::{GixRepo, file_state};
 
 /// A repository that reads with `gix` and writes with `git`.
@@ -119,6 +119,47 @@ fn parse_status(output: &str) -> Vec<ChangedFile> {
     changes
 }
 
+/// Parse one `for-each-ref` line per branch into the list and its sync marks.
+fn parse_branch_overview(output: &str) -> BranchOverview {
+    let mut branches: Vec<BranchInfo> = Vec::new();
+    let mut sync: Vec<(String, usize, usize)> = Vec::new();
+    for line in output.lines() {
+        let mut fields = line.split('\0');
+        let (Some(reference), Some(short), Some(head), upstream, track) = (
+            fields.next(),
+            fields.next(),
+            fields.next(),
+            fields.next(),
+            fields.next(),
+        ) else {
+            continue;
+        };
+        // `refs/remotes/origin/HEAD` is a symbolic alias, not a branch.
+        if short.ends_with("/HEAD") {
+            continue;
+        }
+        let is_remote = reference.starts_with("refs/remotes/");
+        branches.push(BranchInfo {
+            name: short.to_string(),
+            is_head: head.trim() == "*",
+            is_remote,
+            upstream: upstream
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+        });
+        // Only local branches carry a meaningful ahead/behind here, and `[gone]`
+        // says the upstream was deleted: neither number exists then.
+        if !is_remote {
+            let track = track.unwrap_or_default().trim();
+            if !track.is_empty() && track != "[gone]" {
+                let (ahead, behind) = parse_track(track);
+                sync.push((short.to_string(), ahead, behind));
+            }
+        }
+    }
+    BranchOverview { branches, sync }
+}
+
 fn classify(args: &[&str], stderr: &str, workdir: &Path) -> GitError {
     let operation = args.join(" ");
     let lower = stderr.to_lowercase();
@@ -146,34 +187,19 @@ impl GitRepository for GitBackend {
     /// checkout rewrites `HEAD` behind that snapshot, which is why a freshly
     /// created branch used to stay grey until the program was restarted.
     fn branches(&self) -> Result<Vec<BranchInfo>, GitError> {
+        Ok(self.branch_overview()?.branches)
+    }
+
+    /// One `for-each-ref` answers both questions: the branches and how far each
+    /// one is from its upstream.
+    fn branch_overview(&self) -> Result<BranchOverview, GitError> {
         let output = self.git(&[
             "for-each-ref",
-            "--format=%(refname)%00%(refname:short)%00%(HEAD)%00%(upstream:short)",
+            "--format=%(refname)%00%(refname:short)%00%(HEAD)%00%(upstream:short)%00%(upstream:track)",
             "refs/heads",
             "refs/remotes",
         ])?;
-        let mut branches: Vec<BranchInfo> = Vec::new();
-        for line in output.lines() {
-            let mut fields = line.split('\0');
-            let (Some(reference), Some(short), Some(head), upstream) =
-                (fields.next(), fields.next(), fields.next(), fields.next())
-            else {
-                continue;
-            };
-            // `refs/remotes/origin/HEAD` is a symbolic alias, not a branch.
-            if short.ends_with("/HEAD") {
-                continue;
-            }
-            branches.push(BranchInfo {
-                name: short.to_string(),
-                is_head: head.trim() == "*",
-                is_remote: reference.starts_with("refs/remotes/"),
-                upstream: upstream
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty()),
-            });
-        }
-        Ok(branches)
+        Ok(parse_branch_overview(&output))
     }
 
     fn changes(&self) -> Result<Vec<ChangedFile>, GitError> {
@@ -316,23 +342,7 @@ impl GitRepository for GitBackend {
     }
 
     fn branch_sync(&self) -> Result<Vec<(String, usize, usize)>, GitError> {
-        let output = self.git(&[
-            "for-each-ref",
-            "--format=%(refname:short)%00%(upstream:track)",
-            "refs/heads",
-        ])?;
-        Ok(output
-            .lines()
-            .filter_map(|line| {
-                let (name, track) = line.split_once('\0')?;
-                let track = track.trim();
-                if track.is_empty() || track == "[gone]" {
-                    return None;
-                }
-                let (ahead, behind) = parse_track(track);
-                Some((name.to_string(), ahead, behind))
-            })
-            .collect())
+        Ok(self.branch_overview()?.sync)
     }
 
     fn fetch(&self) -> Result<(), GitError> {
@@ -345,20 +355,16 @@ impl GitRepository for GitBackend {
 
     /// `git rev-list --left-right --count HEAD...@{upstream}` answers both numbers
     /// in one call: left is ahead, right is behind. A missing upstream is not an
-    /// error — it is a state the caller has to explain to the user.
+    /// error — it is a state the caller has to explain to the user — and git
+    /// says so itself ("no upstream configured"), so there is no probing call
+    /// in front of this one.
     fn ahead_behind(&self) -> Result<Option<(usize, usize)>, GitError> {
-        let has_upstream = self
-            .git(&[
-                "rev-parse",
-                "--abbrev-ref",
-                "--symbolic-full-name",
-                "@{upstream}",
-            ])
-            .is_ok();
-        if !has_upstream {
-            return Ok(None);
-        }
-        let output = self.git(&["rev-list", "--left-right", "--count", "HEAD...@{upstream}"])?;
+        let output = match self.git(&["rev-list", "--left-right", "--count", "HEAD...@{upstream}"])
+        {
+            Ok(output) => output,
+            Err(GitError::InvalidState { .. }) => return Ok(None),
+            Err(error) => return Err(error),
+        };
         let mut parts = output.split_whitespace();
         let ahead: usize = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0);
         let behind: usize = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0);
@@ -506,6 +512,42 @@ mod tests {
         fs::write(dir.join("a.txt"), "hello\n").unwrap();
         let backend = GitBackend::open(&dir).unwrap();
         (dir, backend)
+    }
+
+    #[test]
+    fn one_for_each_ref_line_answers_branches_and_sync() {
+        // `%(HEAD)` is `*` on the current branch; `%(upstream:track)` is empty
+        // without an upstream and `[gone]` when it was deleted.
+        let output = "refs/heads/main\0main\0*\0origin/main\0[ahead 2, behind 1]\n\
+                      refs/heads/local\0local\0 \0\0\n\
+                      refs/heads/stale\0stale\0 \0origin/stale\0[gone]\n\
+                      refs/remotes/origin/main\0origin/main\0 \0\0\n\
+                      refs/remotes/origin/HEAD\0origin/HEAD\0 \0\0\n";
+        let overview = parse_branch_overview(output);
+        let names: Vec<&str> = overview
+            .branches
+            .iter()
+            .map(|branch| branch.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            ["main", "local", "stale", "origin/main"],
+            "{names:?}"
+        );
+        assert!(overview.branches[0].is_head);
+        assert_eq!(
+            overview.branches[0].upstream.as_deref(),
+            Some("origin/main")
+        );
+        assert!(
+            overview.branches.iter().all(|b| b.name != "origin/HEAD"),
+            "the symbolic alias is not a branch"
+        );
+        assert_eq!(
+            overview.sync,
+            vec![("main".to_string(), 2, 1)],
+            "only a live upstream on a local branch has numbers"
+        );
     }
 
     #[test]

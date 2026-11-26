@@ -586,18 +586,25 @@ impl App {
             };
             branches.reload(git).err()
         };
+        // The list just loaded already knows where `HEAD` is; asking the
+        // repository again was a second walk over every reference.
         let (head, staged) = {
             let Some(git) = self.repo.git.as_deref() else {
                 return;
             };
             (
-                git.current_branch().ok().flatten(),
+                self.branches
+                    .list
+                    .items
+                    .iter()
+                    .find(|branch| branch.is_head)
+                    .map(|branch| branch.name.clone()),
                 git.changes()
                     .map(|files| files.iter().filter(|file| file.is_staged()).count())
                     .unwrap_or(0),
             )
         };
-        self.repo.branch_name = head.map(|info| info.name);
+        self.repo.branch_name = head;
         self.set_repo_summary(staged);
         if let Some(error) = failure {
             self.status = error.to_string();

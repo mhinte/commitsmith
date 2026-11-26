@@ -232,6 +232,14 @@ impl GitRepository for RecordingGit {
         Ok(self.commits.borrow().iter().take(limit).cloned().collect())
     }
 
+    fn branch_overview(&self) -> Result<commitsmith::domain::ports::BranchOverview, GitError> {
+        self.calls.borrow_mut().push("branch_overview".to_string());
+        Ok(commitsmith::domain::ports::BranchOverview {
+            branches: self.branches.borrow().clone(),
+            sync: self.branch_sync()?,
+        })
+    }
+
     fn branch_sync(&self) -> Result<Vec<(String, usize, usize)>, GitError> {
         Ok(self
             .sync_map

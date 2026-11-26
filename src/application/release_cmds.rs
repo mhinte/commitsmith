@@ -174,10 +174,17 @@ impl App {
     /// The branch this one was forked from: `main`, `master` or their remote
     /// counterparts, in that order. `Some` even when `HEAD` *is* that branch —
     /// the plan then simply has no commits, which is truthful.
-    fn main_branch(&self, git: &dyn GitRepository) -> Option<String> {
-        let branches = git.branches().ok()?;
+    fn main_branch(&self, _git: &dyn GitRepository) -> Option<String> {
+        // The branch list is already loaded for tab 2; reading it again spawned
+        // a `for-each-ref` for an answer that is on screen.
         for candidate in ["main", "master", "origin/main", "origin/master"] {
-            if branches.iter().any(|branch| branch.name == candidate) {
+            if self
+                .branches
+                .list
+                .items
+                .iter()
+                .any(|branch| branch.name == candidate)
+            {
                 return Some(candidate.to_string());
             }
         }

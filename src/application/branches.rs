@@ -25,14 +25,15 @@ impl BranchList {
     /// the old index would feel like the list scrolled on its own.
     pub fn reload(&mut self, repo: &dyn GitRepository) -> Result<(), GitError> {
         let keep = self.current().map(|branch| branch.name.clone());
-        // A repository that cannot answer this is not a reason to lose the list.
-        self.sync = repo
-            .branch_sync()
-            .unwrap_or_default()
+        // One read answers both: the list and how far each branch is from its
+        // upstream. Two `for-each-ref` processes per reload were felt.
+        let overview = repo.branch_overview()?;
+        self.sync = overview
+            .sync
             .into_iter()
             .map(|(name, ahead, behind)| (name, (ahead, behind)))
             .collect();
-        let mut items = repo.branches()?;
+        let mut items = overview.branches;
         items.sort_by(|a, b| {
             (a.is_remote, !a.is_head, a.name.as_str()).cmp(&(
                 b.is_remote,

@@ -128,6 +128,14 @@ impl ChangedFile {
     }
 }
 
+/// What tab 2 needs about the branches, from one read.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct BranchOverview {
+    pub branches: Vec<BranchInfo>,
+    /// `(name, ahead, behind)` per branch with an upstream that still exists.
+    pub sync: Vec<(String, usize, usize)>,
+}
+
 /// A config file as text plus where it came from.
 ///
 /// The store does not parse: reading and writing a document is infrastructure,
@@ -145,6 +153,15 @@ pub struct ConfigDocument {
 pub trait GitRepository {
     fn current_branch(&self) -> Result<Option<BranchInfo>, GitError>;
     fn branches(&self) -> Result<Vec<BranchInfo>, GitError>;
+    /// Branches and their sync marks together. A reload needs both, and two
+    /// `for-each-ref` processes per reload are two too many; an implementation
+    /// that cannot answer in one read falls back to the two calls.
+    fn branch_overview(&self) -> Result<BranchOverview, GitError> {
+        Ok(BranchOverview {
+            branches: self.branches()?,
+            sync: self.branch_sync()?,
+        })
+    }
     fn changes(&self) -> Result<Vec<ChangedFile>, GitError>;
     fn recent_commits(&self, limit: usize) -> Result<Vec<PastCommit>, GitError>;
     fn tags(&self) -> Result<Vec<String>, GitError>;
