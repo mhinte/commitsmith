@@ -91,6 +91,10 @@ impl Tab {
                 ("Space", "stage"),
                 ("n", "new branch"),
                 ("f", "fetch"),
+                // File actions: they belong to the files pane, so they come last.
+                ("r", "unstage"),
+                ("x", "discard"),
+                ("z", "stash"),
             ],
             Self::History => vec![
                 ("↓ ↑", "move"),

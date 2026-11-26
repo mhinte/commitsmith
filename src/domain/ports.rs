@@ -117,6 +117,12 @@ pub trait GitRepository {
 
     fn stage(&self, path: &str) -> Result<(), GitError>;
     fn unstage(&self, path: &str) -> Result<(), GitError>;
+    /// Throw away the working-tree changes of one path. Destructive: the caller
+    /// asks first.
+    fn discard(&self, path: &str) -> Result<(), GitError>;
+    /// Park every change in a stash entry and take it back.
+    fn stash(&self, message: &str) -> Result<(), GitError>;
+    fn stash_pop(&self) -> Result<(), GitError>;
     /// Commit what is staged; returns the short id git printed.
     fn commit(&self, message: &str) -> Result<String, GitError>;
     fn checkout(&self, branch: &str) -> Result<(), GitError>;
@@ -222,6 +228,21 @@ mod tests {
 
         fn stage(&self, path: &str) -> Result<(), GitError> {
             self.calls.borrow_mut().push(format!("stage {path}"));
+            Ok(())
+        }
+
+        fn discard(&self, path: &str) -> Result<(), GitError> {
+            self.calls.borrow_mut().push(format!("discard {path}"));
+            Ok(())
+        }
+
+        fn stash(&self, message: &str) -> Result<(), GitError> {
+            self.calls.borrow_mut().push(format!("stash {message}"));
+            Ok(())
+        }
+
+        fn stash_pop(&self) -> Result<(), GitError> {
+            self.calls.borrow_mut().push("stash pop".to_string());
             Ok(())
         }
 

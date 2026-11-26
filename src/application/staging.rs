@@ -6,6 +6,15 @@
 use commitsmith::domain::errors::GitError;
 use commitsmith::domain::ports::{ChangedFile, GitRepository};
 
+/// A destructive action waiting for a second keypress.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Confirm {
+    /// Throw away the changes of this path.
+    Discard(String),
+    /// Take the newest stash entry back.
+    StashPop,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct Staging {
     pub items: Vec<ChangedFile>,
@@ -15,6 +24,8 @@ pub struct Staging {
     pub show_diff: bool,
     /// First diff line on screen; reset whenever another file is shown.
     pub diff_offset: usize,
+    /// Set when the next keypress has to confirm a destructive action.
+    pub confirm: Option<Confirm>,
     /// True when the selected file is staged (the diff then shows the index).
     pub selected_staged: bool,
 }
@@ -46,6 +57,22 @@ impl Staging {
         let max = total.saturating_sub(height.max(1));
         let next = self.diff_offset as isize + delta;
         self.diff_offset = next.clamp(0, max as isize) as usize;
+    }
+
+    /// True when the selected file has something in the index.
+    pub fn selected_is_staged(&self) -> bool {
+        self.items
+            .get(self.selected)
+            .map(|file| file.is_staged())
+            .unwrap_or(false)
+    }
+
+    /// True when the selected file has changes in the working tree.
+    pub fn selected_has_worktree_changes(&self) -> bool {
+        self.items
+            .get(self.selected)
+            .map(|file| file.worktree.is_some())
+            .unwrap_or(false)
     }
 
     pub fn selected_path(&self) -> Option<String> {

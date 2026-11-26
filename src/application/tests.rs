@@ -1493,3 +1493,94 @@ fn ctrl_space_opens_the_suggestions_for_the_field() {
         app.status
     );
 }
+
+fn file_app(
+    index: Option<commitsmith::domain::ports::FileState>,
+    worktree: Option<commitsmith::domain::ports::FileState>,
+) -> (App, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
+    let git = RecordingGit::new(&["main"], "main");
+    git.files
+        .borrow_mut()
+        .push(commitsmith::domain::ports::ChangedFile {
+            path: "a.txt".to_string(),
+            index,
+            worktree,
+        });
+    let log = git.calls();
+    let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+    app.set_in_repository(true);
+    app.set_git(Box::new(git));
+    app.reload_staging();
+    app.tab = tabs::Tab::Branches;
+    app.branches.panel = Panel::Files;
+    (app, log)
+}
+
+#[test]
+fn r_takes_the_file_out_of_the_index_and_keeps_the_changes() {
+    let (mut app, log) = file_app(
+        Some(commitsmith::domain::ports::FileState::Modified),
+        Some(commitsmith::domain::ports::FileState::Modified),
+    );
+    press(&mut app, KeyCode::Char('r'));
+    assert!(
+        log.borrow().iter().any(|call| call == "unstage a.txt"),
+        "{:?}",
+        log.borrow()
+    );
+    assert!(app.status.contains("left the index"), "{}", app.status);
+}
+
+#[test]
+fn x_asks_before_it_throws_changes_away() {
+    let (mut app, log) = file_app(None, Some(commitsmith::domain::ports::FileState::Modified));
+    press(&mut app, KeyCode::Char('x'));
+    assert!(app.branches.files.confirm.is_some(), "the question is open");
+    assert!(
+        !log.borrow().iter().any(|call| call.starts_with("discard")),
+        "nothing happens on the first press"
+    );
+
+    press(&mut app, KeyCode::Char('n'));
+    assert!(
+        app.branches.files.confirm.is_none(),
+        "any other key cancels"
+    );
+    assert!(!log.borrow().iter().any(|call| call.starts_with("discard")));
+}
+
+#[test]
+fn y_after_the_question_discards_the_changes() {
+    let (mut app, log) = file_app(None, Some(commitsmith::domain::ports::FileState::Modified));
+    press(&mut app, KeyCode::Char('x'));
+    press(&mut app, KeyCode::Char('y'));
+    assert!(
+        log.borrow().iter().any(|call| call == "discard a.txt"),
+        "{:?}",
+        log.borrow()
+    );
+    assert!(app.status.contains("discarded"));
+}
+
+#[test]
+fn z_parks_the_changes_and_shift_z_asks_before_taking_them_back() {
+    let (mut app, log) = file_app(None, Some(commitsmith::domain::ports::FileState::Modified));
+    press(&mut app, KeyCode::Char('z'));
+    assert!(
+        log.borrow().iter().any(|call| call.starts_with("stash")),
+        "{:?}",
+        log.borrow()
+    );
+
+    press(&mut app, KeyCode::Char('Z'));
+    assert!(
+        app.branches.files.confirm.is_some(),
+        "taking it back asks first"
+    );
+    press(&mut app, KeyCode::Char('y'));
+    assert!(
+        log.borrow().iter().any(|call| call == "stash pop"),
+        "{:?}",
+        log.borrow()
+    );
+}

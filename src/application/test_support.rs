@@ -114,6 +114,26 @@ impl GitRepository for RecordingGit {
         Ok(())
     }
 
+    fn discard(&self, path: &str) -> Result<(), GitError> {
+        self.calls.borrow_mut().push(format!("discard {path}"));
+        let mut files = self.files.borrow_mut();
+        if let Some(file) = files.iter_mut().find(|file| file.path == path) {
+            file.worktree = None;
+            file.index = None;
+        }
+        Ok(())
+    }
+
+    fn stash(&self, message: &str) -> Result<(), GitError> {
+        self.calls.borrow_mut().push(format!("stash {message}"));
+        Ok(())
+    }
+
+    fn stash_pop(&self) -> Result<(), GitError> {
+        self.calls.borrow_mut().push("stash pop".to_string());
+        Ok(())
+    }
+
     fn unstage(&self, path: &str) -> Result<(), GitError> {
         self.calls.borrow_mut().push(format!("unstage {path}"));
         let mut files = self.files.borrow_mut();

@@ -199,6 +199,21 @@ impl GitRepository for GitBackend {
         self.git(&["restore", "--staged", "--", path]).map(|_| ())
     }
 
+    fn discard(&self, path: &str) -> Result<(), GitError> {
+        // `restore` without `--staged` rewrites the file from the index; that is
+        // what "discard my changes" means and it cannot be undone.
+        self.git(&["restore", "--", path]).map(|_| ())
+    }
+
+    fn stash(&self, message: &str) -> Result<(), GitError> {
+        self.git(&["stash", "push", "-u", "-m", message])
+            .map(|_| ())
+    }
+
+    fn stash_pop(&self) -> Result<(), GitError> {
+        self.git(&["stash", "pop"]).map(|_| ())
+    }
+
     fn commit(&self, message: &str) -> Result<String, GitError> {
         let output = self.git(&["commit", "-m", message])?;
         short_id(&output).ok_or_else(|| GitError::invalid_state("git printed no commit id"))

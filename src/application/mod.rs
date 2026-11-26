@@ -43,7 +43,7 @@ use branches::BranchList;
 use commitsmith::domain::branch::ConventionalBranchName;
 use commitsmith::domain::ports::{ConfigStore, GitRepository};
 use log::LogState;
-use staging::Staging;
+use staging::{Confirm, Staging};
 
 /// Order of the form fields, top to bottom.
 pub const FIELDS: [Field; 6] = [
@@ -400,6 +400,11 @@ impl App {
 
     /// Keys of the file list on tab 2: the same Space stages, the same arrows move.
     fn files_key(&mut self, key: KeyEvent) {
+        // A destructive action asks first: `y` does it, anything else drops it.
+        if let Some(pending) = self.branches.files.confirm.take() {
+            self.answer_confirm(pending, key);
+            return;
+        }
         match key.code {
             KeyCode::Down | KeyCode::Up => {
                 // A message about the last action must not follow the cursor.
@@ -449,7 +454,100 @@ impl App {
                 }
             }
             KeyCode::Esc => self.branches.panel = Panel::Branches,
+            // `r` takes the file out of the index, `x` throws its changes away,
+            // `z` parks everything and `Z` takes the newest stash back.
+            KeyCode::Char('r') => self.unstage_selected(),
+            KeyCode::Char('x') => self.ask_confirm(),
+            KeyCode::Char('z') => self.stash_now(),
+            KeyCode::Char('Z') => {
+                self.branches.files.confirm = Some(Confirm::StashPop);
+                self.status = "take the newest stash back? y confirms".to_string();
+            }
             _ => {}
+        }
+    }
+
+    /// `r`: the file leaves the index, the working tree keeps its changes.
+    fn unstage_selected(&mut self) {
+        let Some(git) = self.repo.git.as_deref() else {
+            return;
+        };
+        let Some(path) = self.branches.files.selected_path() else {
+            self.status = "nothing selected".to_string();
+            return;
+        };
+        if !self.branches.files.selected_is_staged() {
+            self.status = format!("{path} is not staged");
+            return;
+        }
+        if let Err(error) = git.unstage(&path) {
+            self.status = error.to_string();
+            return;
+        }
+        self.status = format!("{path} left the index, the changes stayed");
+        self.reload_staging();
+        self.refresh_sync();
+        self.refresh_repo_line();
+    }
+
+    /// `x`: ask before the working-tree changes of the file are thrown away.
+    fn ask_confirm(&mut self) {
+        let Some(path) = self.branches.files.selected_path() else {
+            self.status = "nothing selected".to_string();
+            return;
+        };
+        if !self.branches.files.selected_has_worktree_changes() {
+            self.status = format!("{path} has no unstaged changes to throw away");
+            return;
+        }
+        self.status = format!("throw away the changes in {path}? y confirms");
+        self.branches.files.confirm = Some(Confirm::Discard(path));
+    }
+
+    fn answer_confirm(&mut self, pending: Confirm, key: KeyEvent) {
+        if key.code != KeyCode::Char('y') {
+            self.status = "cancelled".to_string();
+            return;
+        }
+        let Some(git) = self.repo.git.as_deref() else {
+            return;
+        };
+        let outcome = match pending {
+            Confirm::Discard(path) => git.discard(&path).map(|_| format!("discarded {path}")),
+            Confirm::StashPop => git
+                .stash_pop()
+                .map(|_| "took the newest stash back".to_string()),
+        };
+        match outcome {
+            Ok(message) => {
+                self.status = message;
+                self.reload_staging();
+                self.refresh_sync();
+                self.refresh_repo_line();
+            }
+            Err(error) => self.status = error.to_string(),
+        }
+    }
+
+    /// `z`: park every change, tracked or not, in one stash entry.
+    fn stash_now(&mut self) {
+        let branch = self
+            .repo
+            .branch_name
+            .clone()
+            .unwrap_or_else(|| "detached".to_string());
+        let message = format!("commitsmith {branch}");
+        let Some(git) = self.repo.git.as_deref() else {
+            return;
+        };
+        match git.stash(&message) {
+            Ok(()) => {
+                self.status = "parked in a stash · Z takes it back".to_string();
+                self.reload_staging();
+                self.refresh_sync();
+                self.refresh_repo_line();
+            }
+            Err(error) => self.status = error.to_string(),
         }
     }
 
