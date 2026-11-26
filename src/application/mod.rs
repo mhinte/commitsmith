@@ -837,6 +837,10 @@ impl App {
         // every tab, so the hand learns one gesture.
         if key.code == KeyCode::Tab || key.code == KeyCode::BackTab {
             let back = key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
+            if self.panel == Panel::Branches {
+                // Coming back to the files: they may have changed in the editor.
+                self.reload_staging();
+            }
             self.panel = match (self.panel, back) {
                 (Panel::Branches, false) => Panel::Files,
                 (Panel::Files, false) => {
@@ -864,11 +868,18 @@ impl App {
             return;
         }
         if self.panel == Panel::Diff {
+            let page = 10usize;
             match key.code {
                 KeyCode::Esc | KeyCode::Char('v') => {
                     self.staging.show_diff = false;
                     self.panel = Panel::Files;
                 }
+                KeyCode::Down => self.staging.scroll_diff(1, page),
+                KeyCode::Up => self.staging.scroll_diff(-1, page),
+                KeyCode::PageDown => self.staging.scroll_diff(page as isize, page),
+                KeyCode::PageUp => self.staging.scroll_diff(-(page as isize), page),
+                KeyCode::Home => self.staging.diff_offset = 0,
+                KeyCode::End => self.staging.scroll_diff(isize::MAX / 2, page),
                 _ => {}
             }
             return;
@@ -1499,6 +1510,12 @@ impl App {
                         // The plan is about the current HEAD, so it is read when
                         // the tab is opened, not once at startup.
                         self.refresh_plan();
+                    }
+                    if tab == tabs::Tab::Branches {
+                        // Files change outside the program; the list is read again
+                        // whenever it comes into view.
+                        self.reload_staging();
+                        self.refresh_sync();
                     }
                     return true;
                 }

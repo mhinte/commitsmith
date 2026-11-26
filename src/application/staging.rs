@@ -21,6 +21,8 @@ pub struct Staging {
     /// Unified diff of the selected file, loaded on demand.
     pub diff: String,
     pub show_diff: bool,
+    /// First diff line on screen; reset whenever another file is shown.
+    pub diff_offset: usize,
     pub side: Side,
     /// True when the selected file is staged (the diff then shows the index).
     pub selected_staged: bool,
@@ -42,6 +44,14 @@ impl Staging {
     /// How many files are fully staged — the number the pane title shows.
     pub fn staged_count(&self) -> usize {
         self.items.iter().filter(|file| file.is_staged()).count()
+    }
+
+    /// Move the diff window; `height` is what the pane can show.
+    pub fn scroll_diff(&mut self, delta: isize, height: usize) {
+        let total = self.diff.lines().count();
+        let max = total.saturating_sub(height.max(1));
+        let next = self.diff_offset as isize + delta;
+        self.diff_offset = next.clamp(0, max as isize) as usize;
     }
 
     pub fn selected_path(&self) -> Option<String> {
@@ -81,6 +91,7 @@ impl Staging {
 
     /// Read the diff for the highlighted file; the index if it is staged.
     pub fn refresh_diff(&mut self, repo: &dyn GitRepository) -> Result<(), GitError> {
+        self.diff_offset = 0;
         let Some(file) = self.selected_file().cloned() else {
             self.diff.clear();
             self.selected_staged = false;
@@ -174,5 +185,38 @@ mod tests {
             ["diff a.txt staged=false"],
             "one file, working-tree view for an unstaged file"
         );
+    }
+}
+
+#[cfg(test)]
+mod scroll_tests {
+    use super::*;
+
+    fn staging_with_diff(lines: usize) -> Staging {
+        Staging {
+            diff: (0..lines)
+                .map(|i| format!("line {i}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            ..Staging::default()
+        }
+    }
+
+    #[test]
+    fn the_diff_window_moves_within_its_bounds() {
+        let mut staging = staging_with_diff(50);
+        staging.scroll_diff(3, 10);
+        assert_eq!(staging.diff_offset, 3);
+        staging.scroll_diff(-10, 10);
+        assert_eq!(staging.diff_offset, 0, "never before the first line");
+        staging.scroll_diff(isize::MAX / 2, 10);
+        assert_eq!(staging.diff_offset, 40, "stops where the last page ends");
+    }
+
+    #[test]
+    fn a_shorter_diff_than_the_window_does_not_scroll() {
+        let mut staging = staging_with_diff(3);
+        staging.scroll_diff(5, 10);
+        assert_eq!(staging.diff_offset, 0);
     }
 }

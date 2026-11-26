@@ -149,10 +149,12 @@ pub fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
         .title(Line::from(Span::styled(title, theme::idle_title())));
 
     let height = area.height.saturating_sub(2) as usize;
+    let offset = app.staging.diff_offset;
     let mut lines: Vec<Line> = app
         .staging
         .diff
         .lines()
+        .skip(offset)
         .map(|raw| {
             let style = if raw.starts_with('+') && !raw.starts_with("+++") {
                 Style::default().fg(Color::Green)
