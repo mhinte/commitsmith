@@ -779,6 +779,13 @@ impl App {
     /// Re-read the branch list, the branch line in the footer, and the context
     /// the composer takes from the branch.
     pub fn reload_branches(&mut self) {
+        if let Some(branch) = self.branches.items.iter().find(|branch| branch.is_head) {
+            let name = Some(branch.name.clone());
+            if self.branch_name != name {
+                self.branch_name = name;
+                self.seed_footer();
+            }
+        }
         let failure = {
             let (git, branches) = (&self.git, &mut self.branches);
             let Some(git) = git.as_deref() else {
@@ -1251,10 +1258,19 @@ impl App {
             values.push(scope);
         }
         if values.is_empty() {
-            self.status = "no scopes yet: type one, it is remembered per project".into();
+            self.status = match typed.is_empty() {
+                true => "no scopes yet: type one, it is remembered per project".to_string(),
+                false => format!("no scope matches {typed}"),
+            };
             return;
         }
+        // Say what the list is filtered by, so a short list is not mistaken for
+        // the whole set.
+        let count = values.len();
         self.open_picker(PickerKind::Scope, items, values);
+        if !typed.is_empty() {
+            self.status = format!("scopes matching {typed} · {count}");
+        }
     }
 
     /// Choose a profile by name, which also swaps the type list.
@@ -2653,6 +2669,26 @@ mod tests {
             app.status.contains("no suggestions for body"),
             "{}",
             app.status
+        );
+    }
+
+    #[test]
+    fn the_footer_takes_its_ticket_from_the_branch() {
+        use crate::application::test_support::RecordingGit;
+        let git = RecordingGit::new(
+            &["feat/hima/TICKET-42/add-a-thing", "main"],
+            "feat/hima/TICKET-42/add-a-thing",
+        );
+        let mut app = App::with_config(Config::conventional(), Vec::new());
+        app.set_git(Box::new(git));
+        assert_eq!(
+            app.branch_name.as_deref(),
+            Some("feat/hima/TICKET-42/add-a-thing")
+        );
+        assert!(
+            app.commit.footer.contains("Refs TICKET-42"),
+            "footer: {:?}",
+            app.commit.footer
         );
     }
 
