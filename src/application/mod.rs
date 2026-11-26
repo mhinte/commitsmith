@@ -7,6 +7,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 pub mod branch_wizard;
 pub mod branches;
+pub mod composer;
 pub mod log;
 pub mod navigation;
 pub mod picker;
@@ -913,11 +914,6 @@ impl App {
         self.commit_mode = commit;
     }
 
-    /// True while the active field takes typed characters.
-    pub fn is_editing(&self) -> bool {
-        self.picker.is_none() && !self.show_help && self.active_field() != Field::Type
-    }
-
     pub fn active_field(&self) -> Field {
         FIELDS[self.field.min(FIELDS.len() - 1)]
     }
@@ -973,22 +969,6 @@ impl App {
         self.active_field().hint()
     }
 
-    fn cycle_type(&mut self, forward: bool) {
-        let types = self.config.type_names();
-        if types.is_empty() {
-            return;
-        }
-        let current = types.iter().position(|kind| *kind == self.commit.kind);
-        let idx = match current {
-            Some(idx) if forward => (idx + 1) % types.len(),
-            Some(idx) => (idx + types.len() - 1) % types.len(),
-            None => 0,
-        };
-        self.commit.kind = types[idx].clone();
-        self.type_touched = true;
-        self.revalidate();
-    }
-
     /// Ctrl+N asks the field that has the keyboard what it has to offer: types
     /// in the type field, scopes in the scope field, earlier commits in the
     /// subject. Anywhere else it says so instead of opening the wrong list.
@@ -1018,39 +998,6 @@ impl App {
             return;
         };
         self.apply_picker_choice(picker.kind, choice);
-    }
-
-    fn focus(&mut self, index: usize) {
-        self.field = index % FIELDS.len();
-        let len = self.value(self.active_field()).chars().count();
-        self.cursors[self.field] = self.cursors[self.field].min(len);
-    }
-
-    /// A field is on screen unless it is optional and the form is compact.
-    pub fn field_visible(&self, field: Field) -> bool {
-        !self.compact || !field.optional()
-    }
-
-    fn next_field(&mut self) {
-        self.step_field(1);
-    }
-
-    fn previous_field(&mut self) {
-        self.step_field(-1);
-    }
-
-    /// Move to the next field that is actually on screen. Hidden fields keep
-    /// their content, so walking past them must not clear or skip anything else.
-    fn step_field(&mut self, delta: isize) {
-        let len = FIELDS.len() as isize;
-        let mut index = self.field as isize;
-        for _ in 0..len {
-            index = (index + delta).rem_euclid(len);
-            if self.field_visible(FIELDS[index as usize]) {
-                self.focus(index as usize);
-                return;
-            }
-        }
     }
 
     /// `Ctrl+O`: fold the optional fields away, or bring them back. The choice is
@@ -1161,56 +1108,6 @@ impl App {
         self.status = "handing the message over".to_string();
     }
 
-    /// Ctrl+K: empty the field under the cursor. The type is a choice from the
-    /// picker, not text, so it stays.
-    fn clear_field(&mut self) {
-        let field = self.active_field();
-        if field == Field::Type {
-            self.status = "the type stays · Space picks another one".to_string();
-            return;
-        }
-        if self.value(field).trim().is_empty() {
-            self.status = format!("{} is already empty", field.label());
-            return;
-        }
-        *self.value_mut(field) = String::new();
-        self.cursors[self.field] = 0;
-        self.revalidate();
-        self.status = format!("cleared {}", field.label());
-    }
-
-    /// Enter inside a multiline field starts a new line, elsewhere it advances.
-    fn enter(&mut self) {
-        if self.active_field().multiline() {
-            self.insert('\n');
-        } else if self.active_field() == Field::Type {
-            self.open_type_picker();
-        } else {
-            self.next_field();
-        }
-    }
-
-    /// Insert typed or pasted text at the cursor. Control characters are
-    /// dropped, except the line breaks that belong in multiline fields.
-    pub fn handle_paste(&mut self, text: &str) {
-        if self.active_field() == Field::Type {
-            return;
-        }
-        for c in text.chars() {
-            if c == '\r' {
-                continue;
-            }
-            if c == '\n' && !self.active_field().multiline() {
-                self.insert(' ');
-                continue;
-            }
-            if c.is_control() && c != '\n' {
-                continue;
-            }
-            self.insert(c);
-        }
-    }
-
     fn insert(&mut self, c: char) {
         let field = self.active_field();
         if field == Field::Type {
@@ -1223,63 +1120,6 @@ impl App {
         *value = chars.into_iter().collect();
         self.cursors[self.field] = (cursor + 1).min(value.chars().count());
         self.revalidate();
-    }
-
-    fn backspace(&mut self) {
-        let field = self.active_field();
-        if field == Field::Type {
-            return;
-        }
-        let cursor = self.cursors[self.field];
-        if cursor == 0 {
-            return;
-        }
-        let value = self.value_mut(field);
-        let mut chars: Vec<char> = value.chars().collect();
-        chars.remove(cursor - 1);
-        *value = chars.into_iter().collect();
-        self.cursors[self.field] = cursor - 1;
-        self.revalidate();
-    }
-
-    fn delete(&mut self) {
-        let field = self.active_field();
-        if field == Field::Type {
-            return;
-        }
-        let cursor = self.cursors[self.field];
-        let value = self.value_mut(field);
-        let mut chars: Vec<char> = value.chars().collect();
-        if cursor < chars.len() {
-            chars.remove(cursor);
-            *value = chars.into_iter().collect();
-            self.revalidate();
-        }
-    }
-
-    /// `←`/`→`: always the text, on every tab.
-    fn arrow(&mut self, key: KeyEvent) {
-        let has_text = self.active_field() != Field::Type;
-        match navigation::horizontal(key.code, has_text) {
-            Some(navigation::Horizontal::Caret(delta)) => self.move_cursor(delta),
-            Some(navigation::Horizontal::Value(delta)) => self.cycle_type(delta > 0),
-            None => {}
-        }
-    }
-
-    /// `↑`/`↓`: between fields, or through the lines of a multiline field.
-    fn vertical(&mut self, key: KeyEvent) {
-        match navigation::vertical(key.code, self.active_field().multiline()) {
-            Some(navigation::Vertical::Lines(delta)) => self.line_move(delta),
-            Some(navigation::Vertical::Field(delta)) => {
-                if delta < 0 {
-                    self.previous_field();
-                } else {
-                    self.next_field();
-                }
-            }
-            None => {}
-        }
     }
 
     fn move_cursor(&mut self, delta: isize) {
@@ -1342,28 +1182,6 @@ impl App {
                 None => self.next_field(),
             }
         }
-    }
-
-    fn home(&mut self) {
-        let value = self.value(self.active_field()).to_string();
-        let cursor = self.cursors[self.field].min(value.chars().count());
-        let chars: Vec<char> = value.chars().collect();
-        self.cursors[self.field] = chars[..cursor]
-            .iter()
-            .rposition(|c| *c == '\n')
-            .map(|idx| idx + 1)
-            .unwrap_or(0);
-    }
-
-    fn end(&mut self) {
-        let value = self.value(self.active_field()).to_string();
-        let cursor = self.cursors[self.field].min(value.chars().count());
-        let chars: Vec<char> = value.chars().collect();
-        self.cursors[self.field] = chars[cursor..]
-            .iter()
-            .position(|c| *c == '\n')
-            .map(|offset| cursor + offset)
-            .unwrap_or(chars.len());
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
