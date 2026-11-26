@@ -13,6 +13,7 @@ pub mod keymap;
 pub mod log;
 pub mod ports;
 pub mod release;
+pub mod scroll;
 pub mod setup;
 pub mod slug;
 pub mod text;

@@ -8,6 +8,7 @@ use ratatui::widgets::{Block, BorderType, Paragraph, Wrap};
 
 use crate::app::App;
 use crate::ui::theme;
+use commitsmith::domain::scroll;
 
 const MUTED: Style = theme::muted();
 const HINT: Style = theme::hint();
@@ -151,15 +152,6 @@ fn truncate_left(text: &str, width: usize) -> String {
     format!("…{tail}")
 }
 
-/// How many rows a line needs at this width, at least one.
-fn wrapped_rows(line: &str, width: usize) -> usize {
-    if width == 0 {
-        return 1;
-    }
-    let cells = unicode_width::UnicodeWidthStr::width(line);
-    cells.div_ceil(width).max(1)
-}
-
 pub fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
     // The list shows a shortened name; the diff names the file in full, so the
     // complete path is always on screen somewhere.
@@ -186,12 +178,15 @@ pub fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
 
     let height = area.height.saturating_sub(2) as usize;
     let offset = app.branches.files.diff_offset;
+    // Only the rows that fit are built, not every line of the diff: a lockfile
+    // diff is ten thousand lines and this runs on every redraw.
     let mut lines: Vec<Line> = app
         .branches
         .files
         .diff
         .lines()
         .skip(offset)
+        .take(height.max(1))
         .map(|raw| {
             let style = if raw.starts_with('+') && !raw.starts_with("+++") {
                 theme::ok()
@@ -210,12 +205,11 @@ pub fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
     if lines.is_empty() {
         lines.push(Line::styled("  no diff for this file", MUTED));
     }
-    lines.truncate(height.max(1));
 
     // Long lines wrap instead of running off the right edge; the indent of a
     // wrapped line keeps the code readable.
     frame.render_widget(
-        Paragraph::new(Text::from(lines.clone()))
+        Paragraph::new(Text::from(lines))
             .block(block)
             .wrap(Wrap { trim: false }),
         area,
@@ -223,25 +217,13 @@ pub fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
 
     // A slim scrollbar. The thumb is computed from *wrapped* rows, because a
     // long line occupies more than one row on screen; counting lines made the
-    // bar lag behind what the eye saw.
+    // bar lag behind what the eye saw. The maths lives in `domain::scroll` so
+    // it can be tested without a terminal.
     let text_width = area.width.saturating_sub(2) as usize;
-    let heights: Vec<usize> = app
-        .branches
-        .files
-        .diff
-        .lines()
-        .map(|line| wrapped_rows(line, text_width))
-        .collect();
-    let total: usize = heights.iter().sum();
-    let before: usize = heights.iter().take(offset.min(heights.len())).sum();
-    if total > height.max(1) && area.height > 2 {
-        let track = area.height.saturating_sub(2);
-        let visible = height.min(total).max(1) as u16;
-        let span = (track as usize * visible as usize / total).max(1) as u16;
-        let start = (before * track as usize)
-            .checked_div(total.saturating_sub(visible as usize).max(1))
-            .unwrap_or(0)
-            .min(track.saturating_sub(span) as usize) as u16;
+    let (total, before) = app.branches.files.row_span(text_width, offset);
+    let track = area.height.saturating_sub(2);
+    let visible = height.min(total).max(1);
+    if let Some((start, span)) = scroll::thumb(total, before, visible, track) {
         for step in 0..span {
             let y = area.y + 1 + start + step;
             if y < area.y + 1 + track {

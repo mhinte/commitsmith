@@ -859,7 +859,7 @@ fn a_long_path_is_shortened_but_named_in_full_in_the_diff() {
     app.tab = crate::application::tabs::Tab::Branches;
     app.branches.files.items = vec![staging_item(path)];
     app.branches.files.show_diff = true;
-    app.branches.files.diff = String::new();
+    app.branches.files.set_diff(String::new());
 
     // Narrow enough that the full path cannot fit next to the status code.
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).unwrap();

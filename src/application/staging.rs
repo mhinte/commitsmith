@@ -3,6 +3,8 @@
 //!
 //! The list holds no git knowledge; everything goes through the port.
 
+use std::cell::RefCell;
+
 use commitsmith::domain::errors::GitError;
 use commitsmith::domain::ports::{ChangedFile, GitRepository};
 
@@ -19,8 +21,14 @@ pub enum Confirm {
 pub struct Staging {
     pub items: Vec<ChangedFile>,
     pub selected: usize,
-    /// Unified diff of the selected file, loaded on demand.
+    /// Unified diff of the selected file, loaded on demand. Written through
+    /// [`Staging::set_diff`] so the row cache below knows it is stale.
     pub diff: String,
+    /// Wrapped-row counts of `diff` at the width they were measured at. One
+    /// unicode-width pass over a ten-thousand-line diff costs about a
+    /// millisecond, which is felt on every redraw, so it happens once per
+    /// (diff, width) instead.
+    rows: RefCell<RowCache>,
     pub show_diff: bool,
     /// First diff line on screen; reset whenever another file is shown.
     pub diff_offset: usize,
@@ -30,7 +38,48 @@ pub struct Staging {
     pub selected_staged: bool,
 }
 
+/// Row counts for the diff as it was last measured.
+///
+/// `starts[i]` is the first screen row of diff line `i`, so the last entry is
+/// the total: the pane then answers "where does the thumb go" with two index
+/// reads instead of a pass over ten thousand lines.
+#[derive(Debug, Default, Clone)]
+struct RowCache {
+    width: usize,
+    starts: Vec<usize>,
+}
+
 impl Staging {
+    /// Replace the diff and drop the row cache with it.
+    pub fn set_diff(&mut self, diff: String) {
+        self.diff = diff;
+        *self.rows.borrow_mut() = RowCache::default();
+    }
+
+    /// How many rows the whole diff occupies at `width`, and how many of them
+    /// lie above row `offset`. Measured once per width.
+    pub fn row_span(&self, width: usize, offset: usize) -> (usize, usize) {
+        let mut cache = self.rows.borrow_mut();
+        if cache.width != width {
+            let mut starts = Vec::with_capacity(16);
+            let mut row = 0;
+            for line in self.diff.lines() {
+                starts.push(row);
+                row += commitsmith::domain::scroll::line_rows(line, width);
+            }
+            starts.push(row);
+            cache.starts = starts;
+            cache.width = width;
+        }
+        let total = cache.starts.last().copied().unwrap_or(0);
+        let before = cache
+            .starts
+            .get(offset.min(cache.starts.len().saturating_sub(1)))
+            .copied()
+            .unwrap_or(0);
+        (total, before)
+    }
+
     pub fn reload(&mut self, repo: &dyn GitRepository) -> Result<(), GitError> {
         let keep = self.selected_path();
         let mut items = repo.changes()?;
@@ -42,7 +91,7 @@ impl Staging {
             .unwrap_or_else(|| self.selected.min(self.items.len().saturating_sub(1)));
         // The diff is not read here: `git diff` on a large file is the most
         // expensive part and nobody sees it until the pane is opened.
-        self.diff.clear();
+        self.set_diff(String::new());
         Ok(())
     }
 
@@ -123,12 +172,13 @@ impl Staging {
     pub fn refresh_diff(&mut self, repo: &dyn GitRepository) -> Result<(), GitError> {
         self.diff_offset = 0;
         let Some(file) = self.selected_file().cloned() else {
-            self.diff.clear();
+            self.set_diff(String::new());
             self.selected_staged = false;
             return Ok(());
         };
         self.selected_staged = file.is_staged();
-        self.diff = repo.diff(&file.path, self.selected_staged)?;
+        let diff = repo.diff(&file.path, self.selected_staged)?;
+        self.set_diff(diff);
         Ok(())
     }
 }
@@ -172,6 +222,21 @@ mod tests {
             *log.borrow(),
             vec!["stage_move a.txt b.txt", "unstage_move a.txt b.txt"]
         );
+    }
+
+    #[test]
+    fn the_diff_span_counts_wrapped_rows_and_follows_the_diff() {
+        let mut staging = Staging::default();
+        staging.set_diff("short\n".to_string() + &"x".repeat(30) + "\nthird\n");
+        // At width 10 the long line needs three rows: 1 + 3 + 1.
+        assert_eq!(staging.row_span(10, 0), (5, 0));
+        assert_eq!(staging.row_span(10, 2), (5, 4), "two rows above the offset");
+        // The same text at a width where everything fits on one row.
+        assert_eq!(staging.row_span(80, 0), (3, 0));
+        // A new diff is measured again instead of reusing the old heights.
+        staging.set_diff("one\ntwo\n".to_string());
+        assert_eq!(staging.row_span(10, 0), (2, 0));
+        assert_eq!(staging.row_span(10, 1), (2, 1));
     }
 
     #[test]
