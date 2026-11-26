@@ -85,8 +85,38 @@ impl GitRepository for GitBackend {
         self.reader.current_branch()
     }
 
+    /// Read the branches with `git`, not from the cached `gix` snapshot: a
+    /// checkout rewrites `HEAD` behind that snapshot, which is why a freshly
+    /// created branch used to stay grey until the program was restarted.
     fn branches(&self) -> Result<Vec<BranchInfo>, GitError> {
-        self.reader.branches()
+        let output = self.git(&[
+            "for-each-ref",
+            "--format=%(refname)%00%(refname:short)%00%(HEAD)%00%(upstream:short)",
+            "refs/heads",
+            "refs/remotes",
+        ])?;
+        let mut branches: Vec<BranchInfo> = Vec::new();
+        for line in output.lines() {
+            let mut fields = line.split('\0');
+            let (Some(reference), Some(short), Some(head), upstream) =
+                (fields.next(), fields.next(), fields.next(), fields.next())
+            else {
+                continue;
+            };
+            // `refs/remotes/origin/HEAD` is a symbolic alias, not a branch.
+            if short.ends_with("/HEAD") {
+                continue;
+            }
+            branches.push(BranchInfo {
+                name: short.to_string(),
+                is_head: head.trim() == "*",
+                is_remote: reference.starts_with("refs/remotes/"),
+                upstream: upstream
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty()),
+            });
+        }
+        Ok(branches)
     }
 
     fn changes(&self) -> Result<Vec<ChangedFile>, GitError> {
@@ -312,6 +342,57 @@ fn short_id(output: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_branch_created_outside_the_program_is_head_at_once() {
+        let (dir, repo) = temp_repo("fresh-head");
+        repo.stage("a.txt").ok();
+        repo.commit("feat: first").unwrap();
+        assert!(
+            Command::new("git")
+                .args(["checkout", "-q", "-b", "feature/fresh"])
+                .current_dir(&dir)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let branches = repo.branches().unwrap();
+        let head = branches.iter().find(|b| b.is_head).expect("one head");
+        assert_eq!(head.name, "feature/fresh");
+        assert_eq!(branches.iter().filter(|b| b.is_head).count(), 1);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn remote_branches_are_marked_and_have_their_upstream() {
+        let (dir, repo) = temp_repo("remote-list");
+        repo.stage("a.txt").ok();
+        repo.commit("feat: first").unwrap();
+        let bare = dir.join("remote.git");
+        assert!(
+            Command::new("git")
+                .args(["init", "-q", "--bare"])
+                .arg(&bare)
+                .status()
+                .unwrap()
+                .success()
+        );
+        repo.git(&["remote", "add", "origin", bare.to_str().unwrap()])
+            .unwrap();
+        repo.git(&["push", "-q", "-u", "origin", "main"]).unwrap();
+        repo.git(&["fetch", "-q", "origin"]).unwrap();
+
+        let branches = repo.branches().unwrap();
+        let local = branches.iter().find(|b| b.name == "main").unwrap();
+        assert!(!local.is_remote);
+        assert_eq!(local.upstream.as_deref(), Some("origin/main"));
+        assert!(
+            branches
+                .iter()
+                .any(|b| b.name == "origin/main" && b.is_remote)
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
     use std::fs;
 
     fn temp_repo(name: &str) -> (PathBuf, GitBackend) {
