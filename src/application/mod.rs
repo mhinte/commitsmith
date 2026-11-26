@@ -1223,8 +1223,7 @@ impl App {
         match self.active_field() {
             Field::Type => {
                 self.status =
-                    "type: use ←/→ or Space, no list needed (Ctrl+N is for scopes and subjects)"
-                        .to_string();
+                    "type: Enter or Space opens the list, ←/→ switches without it".to_string();
             }
             Field::Scope => self.open_scope_picker(),
             Field::Subject => self.open_history_picker(),
@@ -1898,6 +1897,9 @@ impl App {
             KeyCode::Char('q') if self.active_field() == Field::Type => self.should_quit = true,
             KeyCode::Tab => self.next_field(),
             KeyCode::BackTab => self.previous_field(),
+            // The type list: Enter (and Space) open it, Ctrl+N is for the
+            // things one has to think about.
+            KeyCode::Enter if self.active_field() == Field::Type => self.open_type_picker(),
             KeyCode::Enter => self.enter(),
             KeyCode::Up | KeyCode::Down => self.vertical(key),
             // `h`/`l` on the type field cycle the value, as vi users expect; the
@@ -2616,10 +2618,13 @@ mod tests {
     #[test]
     fn ctrl_n_offers_what_the_field_can_use() {
         let mut app = App::with_config(Config::conventional(), Vec::new());
-        // Type field: no list, the field cycles with the arrows already.
+        // Type field: Ctrl+N does not open the list, Enter does.
         ctrl(&mut app, 'n');
-        assert!(app.picker.is_none(), "no redundant type list");
-        assert!(app.status.contains("←/→"), "{}", app.status);
+        assert!(app.picker.is_none(), "Ctrl+N stays away from the type list");
+        assert!(app.status.contains("Enter"), "{}", app.status);
+        press(&mut app, KeyCode::Enter);
+        assert!(app.picker.is_some(), "Enter opens the type list");
+        press(&mut app, KeyCode::Esc);
 
         // Subject field: earlier commits, or a hint when there are none.
         press(&mut app, KeyCode::Tab);
