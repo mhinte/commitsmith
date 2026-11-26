@@ -1325,9 +1325,17 @@ impl App {
                 self.commit.scope = scope;
             }
         }
-        if !template.body.is_empty() {
+        // Subject and body come from the commit, not from a rendered template:
+        // the template carries the whole message, which used to land in the body
+        // while the subject stayed empty.
+        // A subject the user already typed wins; the reused one only fills a gap.
+        if self.commit.subject.trim().is_empty() && !past.summary.trim().is_empty() {
+            applied.push("subject");
+            self.commit.subject = past.summary.clone();
+        }
+        if !past.body.trim().is_empty() {
             applied.push("body");
-            self.commit.body = template.body;
+            self.commit.body = past.body.clone();
         }
 
         if applied.is_empty() {
@@ -2829,7 +2837,10 @@ mod tests {
         ctrl(&mut app, 'r');
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.commit.kind, "feat", "wip is not in the profile");
-        assert!(app.status.contains("nothing to copy"));
+        // The type is not applied, but the subject still is: it is a commit
+        // message, and the user may want its wording.
+        assert_eq!(app.commit.subject, "scratch");
+        assert!(app.status.contains("reused: subject"), "{}", app.status);
     }
 
     #[test]
