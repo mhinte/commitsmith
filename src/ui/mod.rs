@@ -136,10 +136,20 @@ fn draw_commit_body(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u1
     let right = area;
     // Body, breaking and footer all grow to MULTILINE_ROWS; counting only two of
     // them cut the footer's last rows off.
+    // A multiline field takes one row while it is empty and grows with its text,
+    // up to three: fixed three-row blocks wasted half the form.
+    let form_width = right.width.saturating_sub(LABEL_WIDTH as u16 + 4) as usize;
     let rows: u16 = FIELDS
         .iter()
         .filter(|field| app.field_visible(**field))
-        .map(|field| if field.multiline() { MULTILINE_ROWS } else { 1 })
+        .map(|field| {
+            if field.multiline() {
+                let wrapped = wrap_field(app.value(*field), form_width).len().max(1);
+                wrapped.min(MULTILINE_ROWS as usize) as u16
+            } else {
+                1
+            }
+        })
         .sum();
     let [form, content] =
         Layout::vertical([Constraint::Length(rows + 2), Constraint::Min(6)]).areas(right);
@@ -280,14 +290,6 @@ fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
                         }
                     }
                 }
-                row_y += 1;
-            }
-            for _ in rows..MULTILINE_ROWS as usize {
-                lines.push(if active {
-                    Line::raw("").style(theme::focused_row())
-                } else {
-                    Line::raw("")
-                });
                 row_y += 1;
             }
             continue;
@@ -1500,9 +1502,9 @@ mod tests {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let screen = rows(&terminal).join("\n");
         // The files live on tab 2 now, next to the branches.
-        assert!(screen.contains("staging · 1"), "{screen}");
+        assert!(screen.contains("files · 1"), "{screen}");
         assert!(screen.contains("a.txt"), "{screen}");
-        assert!(screen.contains("staging"), "{screen}");
+        assert!(screen.contains("files"), "{screen}");
     }
 
     fn staging_app_in_ui() -> (App, ()) {
@@ -1847,14 +1849,14 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let branches_before = style_of(&terminal, "branches");
-        let staging_before = style_of(&terminal, "staging");
+        let staging_before = style_of(&terminal, "files");
 
         // Tab walks the panes; the bright border walks with it.
         press(&mut app, KeyCode::Tab);
         assert_eq!(app.panel, crate::application::Panel::Files);
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let branches_after = style_of(&terminal, "branches");
-        let staging_after = style_of(&terminal, "staging");
+        let staging_after = style_of(&terminal, "files");
 
         assert_eq!(branches_before, theme::focused_panel());
         assert_eq!(staging_before, theme::idle_title());
@@ -2023,7 +2025,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let screen = rows(&terminal).join("\n");
-        assert!(screen.contains("staging · 2 · 1 staged"), "{screen}");
+        assert!(screen.contains("files · 2 · 1 staged"), "{screen}");
     }
 
     #[test]

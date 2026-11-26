@@ -71,7 +71,7 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect, matches: usize) {
             let (mark, mark_style) = match app.log_mark(commit) {
                 crate::validate::Severity::Error => ("✗", Style::default().fg(Color::Red)),
                 crate::validate::Severity::Warning => ("▲", Style::default().fg(Color::Yellow)),
-                _ => ("·", MUTED),
+                _ => ("✓", Style::default().fg(Color::Green)),
             };
             let kind = match (&commit.kind, &commit.scope) {
                 (Some(kind), Some(scope)) => format!("{kind}({scope})"),
@@ -168,7 +168,7 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
                         crate::validate::Severity::Warning => {
                             ("▲", Style::default().fg(Color::Yellow))
                         }
-                        _ => ("·", MUTED),
+                        _ => ("✓", Style::default().fg(Color::Green)),
                     };
                     lines.push(Line::from(vec![
                         Span::styled(format!("  {mark} "), style),

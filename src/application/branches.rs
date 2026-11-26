@@ -72,9 +72,15 @@ impl BranchList {
             return None;
         }
         match (branch.upstream.as_ref(), self.sync.get(&branch.name)) {
-            (None, _) => Some("no upstream".to_string()),
+            // Short forms: the branch pane is narrow, and "no upstream" was
+            // truncated to "no u…" — a dash says the same without the noise.
+            (None, _) => Some("–".to_string()),
             (Some(_), Some((0, 0))) | (Some(_), None) => Some("✓".to_string()),
-            (Some(_), Some((ahead, behind))) => Some(format!("↑{ahead} ↓{behind}")),
+            (Some(_), Some((ahead, behind))) => match (*ahead, *behind) {
+                (ahead, 0) => Some(format!("↑{ahead}")),
+                (0, behind) => Some(format!("↓{behind}")),
+                (ahead, behind) => Some(format!("↑{ahead}↓{behind}")),
+            },
         }
     }
 
@@ -127,21 +133,21 @@ mod sync_tests {
         };
         assert_eq!(
             label("ahead", Some("origin/ahead"), false).as_deref(),
-            Some("↑2 ↓0")
+            Some("↑2")
         );
         assert_eq!(
             label("behind", Some("origin/behind"), false).as_deref(),
-            Some("↑0 ↓3")
+            Some("↓3")
         );
         assert_eq!(
             label("both", Some("origin/both"), false).as_deref(),
-            Some("↑2 ↓1")
+            Some("↑2↓1")
         );
         assert_eq!(
             label("level", Some("origin/level"), false).as_deref(),
             Some("✓")
         );
-        assert_eq!(label("lonely", None, false).as_deref(), Some("no upstream"));
+        assert_eq!(label("lonely", None, false).as_deref(), Some("–"));
         assert_eq!(label("origin/main", Some("origin/main"), true), None);
     }
 }

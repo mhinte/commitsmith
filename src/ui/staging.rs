@@ -1,7 +1,7 @@
 //! Tab 1, left side: what changed, what is staged, and the diff on demand.
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Paragraph};
@@ -24,11 +24,9 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
         })
         .title(Line::from(Span::styled(
             match (staging.items.is_empty(), staging.staged_count()) {
-                (true, _) => " staging ".to_string(),
-                (false, 0) => format!(" staging · {} ", staging.items.len()),
-                (false, staged) => {
-                    format!(" staging · {} · {} staged ", staging.items.len(), staged)
-                }
+                (true, _) => " files ".to_string(),
+                (false, 0) => format!(" files · {} ", staging.items.len()),
+                (false, staged) => format!(" files · {} · {} staged ", staging.items.len(), staged),
             },
             if focused {
                 theme::focused_panel()
@@ -37,14 +35,8 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
             },
         )));
 
-    // With the diff open the list gets a fixed share. Both panes are shorter then,
-    // so the list has to scroll to keep the cursor on screen.
-    let [list_area, diff_area] = if staging.show_diff {
-        Layout::vertical([Constraint::Min(4), Constraint::Percentage(45)]).areas(area)
-    } else {
-        [area, Rect::default()]
-    };
-
+    // The diff lives in its own pane on tab 2; this one is only the list.
+    let list_area = area;
     let visible = list_area.height.saturating_sub(2) as usize;
     let name_width = list_area.width.saturating_sub(7) as usize;
     let mut lines: Vec<Line> = Vec::new();
@@ -94,9 +86,6 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
     }
 
     frame.render_widget(Paragraph::new(Text::from(lines)).block(block), list_area);
-    if staging.show_diff {
-        draw_diff(frame, app, diff_area);
-    }
 }
 
 /// First row to draw so the selection stays inside the pane.

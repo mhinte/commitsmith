@@ -495,9 +495,11 @@ impl App {
     pub fn sync_label(&self) -> Option<String> {
         self.git.as_ref()?;
         Some(match self.sync {
-            Some((0, 0)) => "in sync".to_string(),
-            Some((ahead, behind)) => format!("↑{ahead} ↓{behind}"),
-            None => "no upstream".to_string(),
+            Some((0, 0)) => "✓".to_string(),
+            Some((ahead, 0)) => format!("↑{ahead}"),
+            Some((0, behind)) => format!("↓{behind}"),
+            Some((ahead, behind)) => format!("↑{ahead}↓{behind}"),
+            None => "–".to_string(),
         })
     }
 
@@ -678,14 +680,12 @@ impl App {
     /// Keys of the file list on tab 2: the same Space stages, the same arrows move.
     fn files_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Down => {
+            KeyCode::Down | KeyCode::Up => {
+                // A message about the last action must not follow the cursor.
+                self.status.clear();
                 if let Some(git) = self.git.as_deref() {
-                    self.staging.move_by(1, git);
-                }
-            }
-            KeyCode::Up => {
-                if let Some(git) = self.git.as_deref() {
-                    self.staging.move_by(-1, git);
+                    let delta = if key.code == KeyCode::Down { 1 } else { -1 };
+                    self.staging.move_by(delta, git);
                 }
             }
             KeyCode::Char(' ') | KeyCode::Enter => {
@@ -2424,11 +2424,11 @@ mod tests {
     #[test]
     fn the_footer_label_says_how_far_the_branch_is() {
         let (app, _) = app_with_remote(Some((2, 1)));
-        assert_eq!(app.sync_label().as_deref(), Some("↑2 ↓1"));
+        assert_eq!(app.sync_label().as_deref(), Some("↑2↓1"));
         let (app, _) = app_with_remote(Some((0, 0)));
-        assert_eq!(app.sync_label().as_deref(), Some("in sync"));
+        assert_eq!(app.sync_label().as_deref(), Some("✓"));
         let (app, _) = app_with_remote(None);
-        assert_eq!(app.sync_label().as_deref(), Some("no upstream"));
+        assert_eq!(app.sync_label().as_deref(), Some("–"));
     }
 
     #[test]
