@@ -898,7 +898,7 @@ fn the_log_shows_what_the_filter_keeps() {
         past("feat", "ui", "add the button"),
         past("fix", "api", "repair the route"),
     ]);
-    app.log.filter.kind = Some("feat".to_string());
+    app.release.log.filter.kind = Some("feat".to_string());
 
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
@@ -1028,7 +1028,7 @@ fn an_empty_filter_result_says_so() {
     let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
     app.tab = crate::application::tabs::Tab::History;
     app.set_history(vec![past("fix", "api", "repair the route")]);
-    app.log.filter.kind = Some("feat".to_string());
+    app.release.log.filter.kind = Some("feat".to_string());
 
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();

@@ -65,21 +65,33 @@ impl App {
 
     /// Recent commits, with their message shown in the pane next to the list.
     pub(crate) fn open_history_picker(&mut self) {
-        if self.history.is_empty() {
+        if self.history.commits.is_empty() {
             self.status = "no commits yet: this repository has no history to reuse".into();
             return;
         }
-        let items: Vec<String> = self.history.iter().map(|commit| commit.label(60)).collect();
+        let items: Vec<String> = self
+            .history
+            .commits
+            .iter()
+            .map(|commit| commit.label(60))
+            .collect();
         let values: Vec<String> = self
             .history
+            .commits
             .iter()
             .map(|commit| commit.id.clone())
             .collect();
-        let previews: Vec<String> = self.history.iter().map(|commit| commit.preview()).collect();
+        let previews: Vec<String> = self
+            .history
+            .commits
+            .iter()
+            .map(|commit| commit.preview())
+            .collect();
         // Start on the newest conventional commit: a plain message has no
         // type or scope to reuse.
         let selected = self
             .history
+            .commits
             .iter()
             .position(|commit| commit.conventional())
             .unwrap_or(0);
@@ -99,7 +111,7 @@ impl App {
     /// Take type, scope and body from a past commit, keeping what is already
     /// typed in the subject and in the footer.
     pub(crate) fn apply_template(&mut self, id: &str) {
-        let Some(past) = self.history.iter().find(|commit| commit.id == id) else {
+        let Some(past) = self.history.commits.iter().find(|commit| commit.id == id) else {
             self.status = format!("commit {id} is not in the cached history");
             return;
         };

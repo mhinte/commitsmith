@@ -9,10 +9,12 @@ pub mod branch_wizard;
 pub mod branches;
 pub mod composer;
 pub mod form;
+pub mod history_view;
 pub mod log;
 pub mod navigation;
 pub mod picker;
 pub mod release_cmds;
+pub mod release_view;
 mod repo;
 pub mod staging;
 mod sync;
@@ -25,6 +27,8 @@ use std::collections::HashMap;
 use crate::commit::Commit;
 
 use form::Form;
+use history_view::History;
+use release_view::Release;
 use repo::RepoState;
 
 /// Reads a commit's file list when the history preview needs it.
@@ -220,14 +224,16 @@ pub struct App {
     pub config: Config,
     /// The repository: branch, summary line, sync state.
     pub repo: RepoState,
+    /// The commits the tool knows about.
+    pub history: History,
+    /// Tab 3: the log and the release toolbox.
+    pub release: Release,
     pub rules: Rules,
     pub scopes: ScopeInfo,
     /// The commit being written and where the cursor sits.
     pub form: Form,
     pub issues: Vec<Issue>,
     pub picker: Option<Picker>,
-    /// Recent commits, offered by the history picker.
-    pub history: Vec<PastCommit>,
     pub status: String,
     /// Set when the user asks to hand the message to git.
     pub output: Option<String>,
@@ -243,25 +249,12 @@ pub struct App {
     pub branches: BranchList,
     /// Which pane has the keyboard on tab 2.
     pub panel: Panel,
-    /// Log state of tab 3.
-    pub log: LogState,
-    /// What the next release would be, from the last tag to `HEAD`.
-    pub plan: Option<commitsmith::domain::release::ReleasePlan>,
-    /// True while the write waits for a second keypress: nothing happens behind
-    /// the user's back.
-    pub release_confirm: bool,
-    /// Where `CHANGELOG.md` lives; set by the caller, `None` outside a repository.
-    changelog_root: Option<std::path::PathBuf>,
     /// Staging list of tab 1.
     pub staging: Staging,
     /// Where the toggle is written, once the caller supplied one.
     config_store: Option<Box<dyn ConfigStore>>,
     /// The conventional branch wizard on tab 2.
     pub wizard: BranchWizard,
-    /// File lists are read on demand: one `git show` per commit at startup made
-    /// long histories slow.
-    files_loader: Option<FilesLoader>,
-    pub files_cache: HashMap<String, Vec<String>>,
     pub should_quit: bool,
     pub show_help: bool,
 }
@@ -289,12 +282,13 @@ impl App {
             },
             config,
             repo: RepoState::default(),
+            history: History::default(),
+            release: Release::default(),
             rules,
             scopes,
             config_store: None,
             issues: Vec::new(),
             picker: None,
-            history: Vec::new(),
             status: warnings.join(" · "),
             output: None,
             commit_mode: false,
@@ -302,14 +296,8 @@ impl App {
             tab: tabs::Tab::Commit,
             branches: BranchList::default(),
             panel: Panel::default(),
-            log: LogState::default(),
-            plan: None,
-            release_confirm: false,
-            changelog_root: None,
             staging: Staging::default(),
             wizard: BranchWizard::default(),
-            files_loader: None,
-            files_cache: HashMap::new(),
             should_quit: false,
             show_help: false,
         };
@@ -398,7 +386,7 @@ impl App {
 
     /// Replace the list of recent commits offered as templates.
     pub fn set_history(&mut self, history: Vec<PastCommit>) {
-        self.history = history;
+        self.history.commits = history;
     }
 
     /// Hand the application the repository it may act on, and fill the branch
@@ -835,7 +823,7 @@ impl App {
 
     /// Hand the composer a way to read a commit's file list when it is needed.
     pub fn set_files_loader(&mut self, loader: FilesLoader) {
-        self.files_loader = Some(loader);
+        self.history.loader = Some(loader);
     }
 
     /// Read the file list for the highlighted history entry, once.
@@ -854,15 +842,15 @@ impl App {
             return;
         };
 
-        if !self.files_cache.contains_key(&id) {
-            let Some(loader) = self.files_loader.as_ref() else {
+        if !self.history.cache.contains_key(&id) {
+            let Some(loader) = self.history.loader.as_ref() else {
                 return;
             };
             let files = loader(&id);
-            self.files_cache.insert(id.clone(), files);
+            self.history.cache.insert(id.clone(), files);
         }
-        let files = self.files_cache.get(&id).cloned().unwrap_or_default();
-        let Some(commit) = self.history.iter().find(|commit| commit.id == id) else {
+        let files = self.history.cache.get(&id).cloned().unwrap_or_default();
+        let Some(commit) = self.history.commits.iter().find(|commit| commit.id == id) else {
             return;
         };
         let mut enriched = commit.clone();

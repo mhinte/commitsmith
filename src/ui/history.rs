@@ -14,7 +14,7 @@ const MUTED: Style = theme::muted();
 const HINT: Style = theme::hint();
 
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
-    let visible = app.log.visible(&app.history);
+    let visible = app.release.log.visible(&app.history.commits);
     let [list_area, right] =
         Layout::horizontal([Constraint::Percentage(52), Constraint::Min(42)]).areas(area);
     let [detail_area, release_area] =
@@ -26,15 +26,18 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_list(frame: &mut Frame, app: &App, area: Rect, matches: usize) {
-    let title = match &app.log.input {
+    let title = match &app.release.log.input {
         Some(text) => format!(" filter › {text}▏ "),
         None => {
-            let counts = type_counts(&app.history);
-            let filter = app.log.filter.describe();
+            let counts = type_counts(&app.history.commits);
+            let filter = app.release.log.filter.describe();
             if filter.is_empty() {
-                format!(" log · {} · {counts} ", app.history.len())
+                format!(" log · {} · {counts} ", app.history.commits.len())
             } else {
-                format!(" log · {filter} · {matches} of {} ", app.history.len())
+                format!(
+                    " log · {filter} · {matches} of {} ",
+                    app.history.commits.len()
+                )
             }
         }
     };
@@ -46,20 +49,28 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect, matches: usize) {
     let height = area.height.saturating_sub(2) as usize;
     let mut lines: Vec<Line> = Vec::new();
 
-    if app.history.is_empty() {
+    if app.history.commits.is_empty() {
         lines.push(Line::styled("  no commits yet", MUTED));
     } else if matches == 0 {
         lines.push(Line::styled(
-            format!("  keine Treffer für „{}“", app.log.filter.describe()),
+            format!(
+                "  keine Treffer für „{}“",
+                app.release.log.filter.describe()
+            ),
             MUTED,
         ));
         lines.push(Line::styled("  c clears the filter", MUTED));
     } else {
-        let offset = app.log.selected.saturating_sub(height.saturating_sub(1));
+        let offset = app
+            .release
+            .log
+            .selected
+            .saturating_sub(height.saturating_sub(1));
         let name_width = area.width.saturating_sub(18) as usize;
         for (index, commit) in app
+            .release
             .log
-            .visible(&app.history)
+            .visible(&app.history.commits)
             .iter()
             .enumerate()
             .skip(offset)
@@ -67,7 +78,7 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect, matches: usize) {
             if lines.len() >= height {
                 break;
             }
-            let selected = index == app.log.selected;
+            let selected = index == app.release.log.selected;
             let (mark, mark_style) = match app.log_mark(commit) {
                 crate::validate::Severity::Error => ("✗", theme::bad()),
                 crate::validate::Severity::Warning => ("▲", theme::warn()),
@@ -126,9 +137,10 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
 
     let mut lines: Vec<Line> = Vec::new();
     let selected = app
+        .release
         .log
-        .visible(&app.history)
-        .get(app.log.selected)
+        .visible(&app.history.commits)
+        .get(app.release.log.selected)
         .copied()
         .cloned();
     match selected {
@@ -190,7 +202,7 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
 /// The next release: what it would be called, why, and the section that would be
 /// written. Nothing here writes anything.
 fn draw_release(frame: &mut Frame, app: &App, area: Rect) {
-    let title = match &app.plan {
+    let title = match &app.release.plan {
         Some(plan) => format!(" release · {} ", plan.next),
         None => " release ".to_string(),
     };
@@ -201,11 +213,11 @@ fn draw_release(frame: &mut Frame, app: &App, area: Rect) {
 
     let height = area.height.saturating_sub(2) as usize;
     let mut lines: Vec<Line> = Vec::new();
-    match &app.plan {
+    match &app.release.plan {
         None => lines.push(Line::styled("  no repository", MUTED)),
         Some(plan) => {
             lines.push(Line::styled(format!("  {}", plan.headline()), HINT));
-            if app.release_confirm {
+            if app.release.confirm {
                 lines.push(Line::styled(
                     format!(
                         "  Enter writes CHANGELOG.md for {} · Esc cancels",

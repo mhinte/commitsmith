@@ -579,9 +579,9 @@ fn a_cancelled_release_writes_nothing() {
     app.refresh_plan();
 
     press(&mut app, KeyCode::Char('y'));
-    assert!(app.release_confirm);
+    assert!(app.release.confirm);
     press(&mut app, KeyCode::Esc);
-    assert!(!app.release_confirm);
+    assert!(!app.release.confirm);
     assert!(
         calls.borrow().iter().all(|call| !call.starts_with("tag ")),
         "no tag after cancelling: {:?}",
@@ -659,7 +659,7 @@ fn the_plan_names_the_next_version() {
     app.set_git(Box::new(git));
     app.refresh_plan();
 
-    let plan = app.plan.as_ref().expect("a plan without tags");
+    let plan = app.release.plan.as_ref().expect("a plan without tags");
     assert_eq!(plan.next.to_string(), "0.1.0", "no tag: the first release");
     assert_eq!(plan.commits.len(), 1);
 }

@@ -6,12 +6,12 @@ impl App {
     /// Write the changelog section and tag the release — but only after `y` armed
     /// it and Enter confirmed.
     pub(crate) fn write_release(&mut self) {
-        self.release_confirm = false;
-        let Some(plan) = self.plan.clone() else {
+        self.release.confirm = false;
+        let Some(plan) = self.release.plan.clone() else {
             self.status = "no release plan · nothing to write".to_string();
             return;
         };
-        let Some(root) = self.changelog_root.clone() else {
+        let Some(root) = self.release.changelog_root.clone() else {
             self.status = "no repository · nowhere to write CHANGELOG.md".to_string();
             return;
         };
@@ -37,7 +37,7 @@ impl App {
     /// they demand. Reading only — nothing is written until the user asks.
     pub(crate) fn refresh_plan(&mut self) {
         let Some(git) = self.repo.git.as_deref() else {
-            self.plan = None;
+            self.release.plan = None;
             return;
         };
         let tags = git.tags().unwrap_or_default();
@@ -46,7 +46,7 @@ impl App {
         let commits = git
             .commits_since(last.as_deref(), limit)
             .unwrap_or_default();
-        self.plan = Some(commitsmith::domain::release::ReleasePlan::build(
+        self.release.plan = Some(commitsmith::domain::release::ReleasePlan::build(
             last.as_deref(),
             commits,
         ));
@@ -83,7 +83,7 @@ impl App {
     /// so a ticket with digits cannot switch tabs.
     pub(crate) fn history_key(&mut self, key: KeyEvent) {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        if key.code == KeyCode::Char('?') && self.log.input.is_none() {
+        if key.code == KeyCode::Char('?') && self.release.log.input.is_none() {
             self.show_help = true;
             return;
         }
@@ -92,50 +92,51 @@ impl App {
             return;
         }
         // The release: `y` asks, Enter writes, Esc or `n` backs out.
-        if self.release_confirm && self.log.input.is_none() {
+        if self.release.confirm && self.release.log.input.is_none() {
             match key.code {
                 KeyCode::Enter | KeyCode::Char('y') => self.write_release(),
                 KeyCode::Esc | KeyCode::Char('n') => {
-                    self.release_confirm = false;
+                    self.release.confirm = false;
                     self.status = "release cancelled · file and tags untouched".to_string();
                 }
                 _ => {}
             }
             return;
         }
-        if self.log.input.is_some() {
+        if self.release.log.input.is_some() {
             match key.code {
-                KeyCode::Esc => self.log.cancel_filter(),
+                KeyCode::Esc => self.release.log.cancel_filter(),
                 KeyCode::Enter => {
                     let types = self.config.type_names();
-                    self.log.apply_filter(&types);
-                    let len = self.log.visible(&self.history).len();
-                    self.log.clamp(len);
-                    self.status = match self.log.filter.is_empty() {
+                    self.release.log.apply_filter(&types);
+                    let len = self.release.log.visible(&self.history.commits).len();
+                    self.release.log.clamp(len);
+                    self.status = match self.release.log.filter.is_empty() {
                         true => "filter cleared".to_string(),
                         false => {
                             let matches = format!("{} matches", len);
-                            format!("{} · {}", self.log.filter.describe(), matches)
+                            format!("{} · {}", self.release.log.filter.describe(), matches)
                         }
                     };
                 }
-                KeyCode::Backspace => self.log.backspace(),
-                KeyCode::Char(c) => self.log.push(c),
+                KeyCode::Backspace => self.release.log.backspace(),
+                KeyCode::Char(c) => self.release.log.push(c),
                 _ => {}
             }
             return;
         }
-        let len = self.log.visible(&self.history).len();
+        let len = self.release.log.visible(&self.history.commits).len();
         match key.code {
-            KeyCode::Up => self.log.move_by(-1, len),
-            KeyCode::Down => self.log.move_by(1, len),
-            KeyCode::Home => self.log.selected = 0,
-            KeyCode::End => self.log.selected = len.saturating_sub(1),
-            KeyCode::Char('/') => self.log.open_filter(),
-            KeyCode::Char('c') => self.log.clear_filter(),
+            KeyCode::Up => self.release.log.move_by(-1, len),
+            KeyCode::Down => self.release.log.move_by(1, len),
+            KeyCode::Home => self.release.log.selected = 0,
+            KeyCode::End => self.release.log.selected = len.saturating_sub(1),
+            KeyCode::Char('/') => self.release.log.open_filter(),
+            KeyCode::Char('c') => self.release.log.clear_filter(),
             KeyCode::Char('y') => {
-                self.release_confirm = true;
+                self.release.confirm = true;
                 let next = self
+                    .release
                     .plan
                     .as_ref()
                     .map(|plan| plan.next.to_string())
@@ -148,6 +149,6 @@ impl App {
     }
 
     pub(crate) fn set_changelog_root(&mut self, root: std::path::PathBuf) {
-        self.changelog_root = Some(root);
+        self.release.changelog_root = Some(root);
     }
 }
