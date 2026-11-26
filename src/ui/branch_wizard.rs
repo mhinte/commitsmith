@@ -157,7 +157,7 @@ fn block(wizard: &crate::application::branch_wizard::BranchWizard, width: u16) -
         // already looks for it.
         .title_top(
             Line::from(Span::styled(
-                if width >= 56 {
+                if width >= 32 {
                     format!(" {} · {} ", wizard.kind.as_str(), wizard.kind.description())
                 } else {
                     String::new()

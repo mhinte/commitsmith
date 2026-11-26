@@ -88,15 +88,31 @@ fn draw_full(frame: &mut Frame, app: &App, area: Rect) {
             // The wizard sits beside the list, not on top of it: while it is
             // open the branches stay visible for reference.
             if app.wizard.open {
-                // The wizard sits beside the list, not on top of it: while it is
-                // open the branches stay visible for reference.
-                let [list, wizard] = Layout::horizontal([
-                    Constraint::Min(24),
-                    Constraint::Length(body.width.clamp(0, 52).max(body.width / 2)),
-                ])
-                .areas(body);
+                // The wizard opens as a pane under the list, like the diff under
+                // the files: the branches and the files stay in view.
+                let [tree, right] =
+                    Layout::horizontal([Constraint::Percentage(46), Constraint::Min(34)])
+                        .areas(body);
+                let [list, wizard] =
+                    Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)])
+                        .areas(tree);
                 branches::draw(frame, app, list);
-                branch_wizard::draw(frame, app, wizard)
+                branch_wizard::draw(frame, app, wizard);
+                let [files, diff] = if app.staging.show_diff {
+                    Layout::vertical([Constraint::Percentage(50), Constraint::Min(6)]).areas(right)
+                } else {
+                    [right, Rect::default()]
+                };
+                staging::draw(
+                    frame,
+                    app,
+                    files,
+                    app.panel == crate::application::Panel::Files,
+                );
+                if app.staging.show_diff {
+                    staging::draw_diff(frame, app, diff);
+                }
+                None
             } else {
                 // Same shape as the other tabs: one main pane, two support panes.
                 let [tree, right] =
@@ -1567,12 +1583,15 @@ mod tests {
         );
         assert_ne!(row_style(&terminal, "ticket").bg, Some(theme::FOCUS_BG));
 
-        // The panel border carries the same cyan as a focused row's label.
+        // The panel border carries the same cyan as a focused row's label. The
+        // pane can sit anywhere in the lower half, so look there instead of at a
+        // fixed column.
         let buffer = terminal.backend().buffer();
-        let border = (0..buffer.area.height)
-            .map(|y| buffer[(56, y)].style())
-            .find(|style| style.fg == Some(ratatui::style::Color::Cyan));
-        assert!(border.is_some(), "the wizard panel has the bright border");
+        let lit = (buffer.area.height / 2..buffer.area.height).any(|y| {
+            (0..buffer.area.width)
+                .any(|x| buffer[(x, y)].style().fg == Some(ratatui::style::Color::Cyan))
+        });
+        assert!(lit, "the wizard panel has the bright border");
     }
 
     #[test]
