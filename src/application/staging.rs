@@ -99,12 +99,21 @@ impl Staging {
         };
         // The footer already names the file in full; the status only says what
         // happened to it.
+        // A move needs both of its paths: one alone leaves the other end in the
+        // index as a deletion, so the rename would never leave the index.
+        let origin = file.origin.clone();
         if file.is_staged() {
-            repo.unstage(&file.path)?;
+            match &origin {
+                Some(origin) => repo.unstage_move(origin, &file.path)?,
+                None => repo.unstage(&file.path)?,
+            }
             let _ = self.reload(repo);
             Ok("unstaged".to_string())
         } else {
-            repo.stage(&file.path)?;
+            match &origin {
+                Some(origin) => repo.stage_move(origin, &file.path)?,
+                None => repo.stage(&file.path)?,
+            }
             let _ = self.reload(repo);
             Ok("staged".to_string())
         }
@@ -133,18 +142,36 @@ mod tests {
     fn files() -> RecordingGit {
         let repo = RecordingGit::new(&["main"], "main");
         repo.files.borrow_mut().extend([
-            ChangedFile {
-                path: "b.txt".to_string(),
-                index: Some(FileState::Modified),
-                worktree: None,
-            },
-            ChangedFile {
-                path: "a.txt".to_string(),
-                index: None,
-                worktree: Some(FileState::Modified),
-            },
+            ChangedFile::new("b.txt", Some(FileState::Modified), None),
+            ChangedFile::new("a.txt", None, Some(FileState::Modified)),
         ]);
         repo
+    }
+
+    #[test]
+    fn a_move_goes_through_stage_move() {
+        // The index needs the old path too, or the move never lands.
+        let repo = RecordingGit::new(&["main"], "main");
+        repo.files
+            .borrow_mut()
+            .push(ChangedFile::new("b.txt", None, Some(FileState::Renamed)).with_origin("a.txt"));
+        let log = repo.calls();
+        let mut staging = Staging::default();
+        staging.reload(&repo).unwrap();
+        staging.toggle(&repo).unwrap();
+        assert_eq!(
+            *log.borrow(),
+            vec!["stage_move a.txt b.txt"],
+            "both paths, no plain stage"
+        );
+        // The move is now staged, so the same key takes it back out — with both
+        // paths again, or the old one stays in the index as a deletion.
+        staging.reload(&repo).unwrap();
+        staging.toggle(&repo).unwrap();
+        assert_eq!(
+            *log.borrow(),
+            vec!["stage_move a.txt b.txt", "unstage_move a.txt b.txt"]
+        );
     }
 
     #[test]

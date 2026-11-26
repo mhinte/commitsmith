@@ -105,11 +105,31 @@ impl GitRepository for RecordingGit {
                 file.index = Some(FileState::Modified);
                 file.worktree = None;
             }
-            None => files.push(ChangedFile {
-                path: path.to_string(),
-                index: Some(FileState::Added),
-                worktree: None,
-            }),
+            None => files.push(ChangedFile::new(path, Some(FileState::Added), None)),
+        }
+        Ok(())
+    }
+
+    fn unstage_move(&self, origin: &str, path: &str) -> Result<(), GitError> {
+        self.calls
+            .borrow_mut()
+            .push(format!("unstage_move {origin} {path}"));
+        let mut files = self.files.borrow_mut();
+        if let Some(file) = files.iter_mut().find(|file| file.path == path) {
+            file.index = None;
+            file.worktree = Some(FileState::Renamed);
+        }
+        Ok(())
+    }
+
+    fn stage_move(&self, origin: &str, path: &str) -> Result<(), GitError> {
+        self.calls
+            .borrow_mut()
+            .push(format!("stage_move {origin} {path}"));
+        let mut files = self.files.borrow_mut();
+        if let Some(file) = files.iter_mut().find(|file| file.path == path) {
+            file.index = Some(FileState::Renamed);
+            file.worktree = None;
         }
         Ok(())
     }

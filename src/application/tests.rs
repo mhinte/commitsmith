@@ -20,11 +20,11 @@ fn staging_app() -> (App, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
     let git = RecordingGit::new(&["main"], "main");
     git.files
         .borrow_mut()
-        .push(commitsmith::domain::ports::ChangedFile {
-            path: "a.txt".to_string(),
-            index: None,
-            worktree: Some(commitsmith::domain::ports::FileState::Modified),
-        });
+        .push(commitsmith::domain::ports::ChangedFile::new(
+            "a.txt",
+            None,
+            Some(commitsmith::domain::ports::FileState::Modified),
+        ));
     let log = git.calls();
     let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
     app.set_in_repository(true);
@@ -787,6 +787,18 @@ fn cycles_types_with_arrows() {
 }
 
 #[test]
+fn h_and_l_do_not_cycle_the_type() {
+    // Removed on request: the arrow keys own the field, and no footer or help
+    // line ever advertised `h`/`l`.
+    let mut app = App::default();
+    press(&mut app, KeyCode::Char('l'));
+    assert_eq!(app.form.commit.kind, "feat");
+    press(&mut app, KeyCode::Char('h'));
+    assert_eq!(app.form.commit.kind, "feat");
+    assert_eq!(app.active_field(), Field::Type, "no typing either");
+}
+
+#[test]
 fn space_opens_the_type_picker() {
     let mut app = App::default();
     press(&mut app, KeyCode::Char(' '));
@@ -1507,11 +1519,9 @@ fn file_app(
     let git = RecordingGit::new(&["main"], "main");
     git.files
         .borrow_mut()
-        .push(commitsmith::domain::ports::ChangedFile {
-            path: "a.txt".to_string(),
-            index,
-            worktree,
-        });
+        .push(commitsmith::domain::ports::ChangedFile::new(
+            "a.txt", index, worktree,
+        ));
     let log = git.calls();
     let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
     app.set_in_repository(true);

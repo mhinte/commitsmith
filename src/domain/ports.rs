@@ -70,6 +70,10 @@ impl FileState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangedFile {
     pub path: String,
+    /// For a rename or copy: the path it came from. `None` for every other
+    /// state — a path by itself is not enough to stage a move, the index needs
+    /// both sides of it.
+    pub origin: Option<String>,
     /// State in the index (staged), if any.
     pub index: Option<FileState>,
     /// State in the work tree (unstaged), if any.
@@ -77,6 +81,42 @@ pub struct ChangedFile {
 }
 
 impl ChangedFile {
+    pub fn new(
+        path: impl Into<String>,
+        index: Option<FileState>,
+        worktree: Option<FileState>,
+    ) -> Self {
+        Self {
+            path: path.into(),
+            origin: None,
+            index,
+            worktree,
+        }
+    }
+
+    /// Mark this entry as a move and hand back itself, for the parser.
+    #[must_use]
+    pub fn with_origin(mut self, origin: impl Into<String>) -> Self {
+        self.origin = Some(origin.into());
+        self
+    }
+
+    /// Both sides of a move, new path last; just the path when nothing moved.
+    pub fn paths(&self) -> Vec<&str> {
+        match &self.origin {
+            Some(origin) => vec![origin.as_str(), self.path.as_str()],
+            None => vec![self.path.as_str()],
+        }
+    }
+
+    /// What a row says: `old → new` for a move, the path otherwise.
+    pub fn label(&self) -> String {
+        match &self.origin {
+            Some(origin) => format!("{origin} → {}", self.path),
+            None => self.path.clone(),
+        }
+    }
+
     /// True when nothing of this file is staged yet.
     pub fn is_unstaged(&self) -> bool {
         self.index.is_none()
@@ -116,7 +156,20 @@ pub trait GitRepository {
     fn diff(&self, path: &str, staged: bool) -> Result<String, GitError>;
 
     fn stage(&self, path: &str) -> Result<(), GitError>;
+    /// Stage a moved file. `path` alone is not enough: `git` then keeps the old
+    /// path as an unstaged deletion, so both sides of the move go into the
+    /// index. Implementations that do not model moves fall back to [`Self::stage`].
+    fn stage_move(&self, origin: &str, path: &str) -> Result<(), GitError> {
+        let _ = origin;
+        self.stage(path)
+    }
     fn unstage(&self, path: &str) -> Result<(), GitError>;
+    /// Take a moved file back out of the index. Both sides are needed here for
+    /// the same reason as in [`Self::stage_move`].
+    fn unstage_move(&self, origin: &str, path: &str) -> Result<(), GitError> {
+        let _ = origin;
+        self.unstage(path)
+    }
     /// Throw away the working-tree changes of one path. Destructive: the caller
     /// asks first.
     fn discard(&self, path: &str) -> Result<(), GitError>;
@@ -203,11 +256,7 @@ mod tests {
             Ok(self
                 .staged
                 .iter()
-                .map(|path| ChangedFile {
-                    path: path.clone(),
-                    index: Some(FileState::Modified),
-                    worktree: None,
-                })
+                .map(|path| ChangedFile::new(path.clone(), Some(FileState::Modified), None))
                 .collect())
         }
 
@@ -352,19 +401,22 @@ mod tests {
 
     #[test]
     fn changed_files_know_whether_they_are_staged() {
-        let staged = ChangedFile {
-            path: "a".into(),
-            index: Some(FileState::Added),
-            worktree: None,
-        };
-        let unstaged = ChangedFile {
-            path: "b".into(),
-            index: None,
-            worktree: Some(FileState::Modified),
-        };
+        let staged = ChangedFile::new("a", Some(FileState::Added), None);
+        let unstaged = ChangedFile::new("b", None, Some(FileState::Modified));
         assert!(staged.is_staged() && !staged.is_unstaged());
         assert!(unstaged.is_unstaged() && !unstaged.is_staged());
         assert_eq!(FileState::Untracked.code(), '?');
+    }
+
+    #[test]
+    fn a_move_carries_both_of_its_paths() {
+        let moved = ChangedFile::new("src/new.rs", None, Some(FileState::Renamed))
+            .with_origin("src/old.rs");
+        let plain = ChangedFile::new("src/lib.rs", Some(FileState::Added), None);
+        assert_eq!(moved.paths(), ["src/old.rs", "src/new.rs"]);
+        assert_eq!(moved.label(), "src/old.rs → src/new.rs");
+        assert_eq!(plain.paths(), ["src/lib.rs"]);
+        assert_eq!(plain.label(), "src/lib.rs");
     }
 
     #[test]

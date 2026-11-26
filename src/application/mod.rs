@@ -1289,10 +1289,6 @@ impl App {
             KeyCode::Enter if self.active_field() == Field::Type => self.open_type_picker(),
             KeyCode::Enter => self.enter(),
             KeyCode::Up | KeyCode::Down => self.vertical(key),
-            // `h`/`l` on the type field cycle the value, as vi users expect; the
-            // arrow keys go through the shared rule below.
-            KeyCode::Char('l') if self.active_field() == Field::Type => self.cycle_type(true),
-            KeyCode::Char('h') if self.active_field() == Field::Type => self.cycle_type(false),
             KeyCode::Char(' ') if self.active_field() == Field::Type => self.open_type_picker(),
             KeyCode::Left | KeyCode::Right => self.arrow(key),
             KeyCode::Home => self.home(),

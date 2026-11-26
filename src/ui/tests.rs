@@ -432,11 +432,9 @@ fn staging_app_in_ui() -> (App, ()) {
     use commitsmith::domain::ports::{ChangedFile, FileState};
 
     let git = RecordingGit::new(&["main"], "main");
-    git.files.borrow_mut().push(ChangedFile {
-        path: "a.txt".to_string(),
-        index: None,
-        worktree: Some(FileState::Modified),
-    });
+    git.files
+        .borrow_mut()
+        .push(ChangedFile::new("a.txt", None, Some(FileState::Modified)));
     let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
     app.set_in_repository(true);
     app.set_git(Box::new(git));
@@ -789,11 +787,11 @@ fn style_of(terminal: &ratatui::Terminal<ratatui::backend::TestBackend>, needle:
 }
 
 fn staging_item(path: &str) -> commitsmith::domain::ports::ChangedFile {
-    commitsmith::domain::ports::ChangedFile {
-        path: path.to_string(),
-        index: None,
-        worktree: Some(commitsmith::domain::ports::FileState::Modified),
-    }
+    commitsmith::domain::ports::ChangedFile::new(
+        path,
+        None,
+        Some(commitsmith::domain::ports::FileState::Modified),
+    )
 }
 
 #[test]
@@ -965,16 +963,16 @@ fn the_staging_title_counts_what_is_staged() {
     let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
     app.tab = crate::application::tabs::Tab::Branches;
     app.branches.files.items = vec![
-        commitsmith::domain::ports::ChangedFile {
-            path: "src/a.rs".to_string(),
-            index: Some(commitsmith::domain::ports::FileState::Modified),
-            worktree: None,
-        },
-        commitsmith::domain::ports::ChangedFile {
-            path: "src/b.rs".to_string(),
-            index: None,
-            worktree: Some(commitsmith::domain::ports::FileState::Modified),
-        },
+        commitsmith::domain::ports::ChangedFile::new(
+            "src/a.rs",
+            Some(commitsmith::domain::ports::FileState::Modified),
+            None,
+        ),
+        commitsmith::domain::ports::ChangedFile::new(
+            "src/b.rs",
+            None,
+            Some(commitsmith::domain::ports::FileState::Modified),
+        ),
     ];
 
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();

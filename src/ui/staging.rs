@@ -75,7 +75,22 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
                     },
                 ),
             ];
-            spans.extend(path_spans(&file.path, name_width, selected));
+            // A move names both ends: the new path is what the pane acts on, the
+            // old one is where the code came from.
+            let mut used = 0;
+            if let Some(origin) = &file.origin {
+                let room = name_width.saturating_sub(file.path.chars().count() + 3);
+                if room >= 8 {
+                    let short = truncate_left(origin, room);
+                    used = short.chars().count() + 3;
+                    spans.push(Span::styled(format!("{short} → "), MUTED));
+                }
+            }
+            spans.extend(path_spans(
+                &file.path,
+                name_width.saturating_sub(used),
+                selected,
+            ));
             let row = Line::from(spans);
             lines.push(if selected {
                 row.style(theme::focused_row())

@@ -16,13 +16,26 @@ use crate::infrastructure::gix_repo::{GixRepo, file_state};
 pub struct GitBackend {
     reader: GixRepo,
     workdir: PathBuf,
+    /// False in a repository without a commit. `reset --` cannot unstage there,
+    /// `restore --staged` can, so the two answers are not interchangeable.
+    has_head: bool,
 }
 
 impl GitBackend {
     pub fn open(path: &Path) -> Result<Self, GitError> {
         let reader = GixRepo::open(path)?;
         let workdir = reader.workdir().to_path_buf();
-        Ok(Self { reader, workdir })
+        let has_head = Command::new("git")
+            .current_dir(&workdir)
+            .args(["rev-parse", "--verify", "HEAD"])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false);
+        Ok(Self {
+            reader,
+            workdir,
+            has_head,
+        })
     }
 
     pub fn workdir(&self) -> &Path {
@@ -60,6 +73,50 @@ fn parse_track(track: &str) -> (usize, usize) {
         }
     }
     (ahead, behind)
+}
+
+/// Parse `git status --porcelain=v1 -z` into changed files.
+///
+/// Records are NUL-terminated as `XY <path>`; a rename or copy is followed by
+/// one extra record holding the path it came from. Nothing is quoted here, so a
+/// space or an umlaut arrives as itself.
+fn parse_status(output: &str) -> Vec<ChangedFile> {
+    let mut changes: Vec<ChangedFile> = Vec::new();
+    let mut records = output.split('\0');
+    while let Some(record) = records.next() {
+        let bytes = record.as_bytes();
+        if bytes.len() < 4 {
+            continue;
+        }
+        let index = bytes[0] as char;
+        let worktree = bytes[1] as char;
+        let path = &record[3..];
+        // `??` is untracked: nothing in the index, and the file is new in the
+        // worktree. Treating it as staged made `Space` unstage it, which failed
+        // with "pathspec did not match".
+        let state = |code: char| match code {
+            ' ' | '?' => None,
+            other => Some(file_state(other)),
+        };
+        let untracked = index == '?' && worktree == '?';
+        let mut file = ChangedFile::new(
+            path,
+            state(index),
+            if untracked {
+                Some(crate::domain::ports::FileState::Untracked)
+            } else {
+                state(worktree)
+            },
+        );
+        if matches!(index, 'R' | 'C') || matches!(worktree, 'R' | 'C') {
+            if let Some(origin) = records.next() {
+                file = file.with_origin(origin);
+            }
+        }
+        changes.push(file);
+    }
+    changes.sort_by(|a, b| a.path.cmp(&b.path));
+    changes
 }
 
 fn classify(args: &[&str], stderr: &str, workdir: &Path) -> GitError {
@@ -122,35 +179,12 @@ impl GitRepository for GitBackend {
     fn changes(&self) -> Result<Vec<ChangedFile>, GitError> {
         // `git status` is the authority for untracked, ignored and conflict
         // states; reimplementing that with `gix` would only add a second truth.
-        let output = self.git(&["status", "--porcelain=v1", "--untracked-files=all"])?;
-        let mut changes = Vec::new();
-        for line in output.lines() {
-            if line.len() < 4 {
-                continue;
-            }
-            let index = line.as_bytes()[0] as char;
-            let worktree = line.as_bytes()[1] as char;
-            let path = line[3..].trim().to_string();
-            // `??` is untracked: nothing in the index, and the file is new in
-            // the worktree. Treating it as staged made `Space` unstage it, which
-            // failed with "pathspec did not match".
-            let state = |code: char| match code {
-                ' ' | '?' => None,
-                other => Some(file_state(other)),
-            };
-            let untracked = index == '?' && worktree == '?';
-            changes.push(ChangedFile {
-                path,
-                index: state(index),
-                worktree: if untracked {
-                    Some(crate::domain::ports::FileState::Untracked)
-                } else {
-                    state(worktree)
-                },
-            });
-        }
-        changes.sort_by(|a, b| a.path.cmp(&b.path));
-        Ok(changes)
+        // `-z` is not cosmetic: without it git quotes every path that carries a
+        // space or a non-ASCII byte (`"mit leer.txt"`, `"\303\274ber.txt"`) and
+        // writes a move as `old.txt -> new.txt`, so `git add -- <path>` then
+        // fails with "pathspec did not match any files".
+        let output = self.git(&["status", "--porcelain=v1", "-z", "--untracked-files=all"])?;
+        Ok(parse_status(&output))
     }
 
     fn recent_commits(&self, limit: usize) -> Result<Vec<PastCommit>, GitError> {
@@ -208,9 +242,33 @@ impl GitRepository for GitBackend {
         self.git(&["add", "--", path]).map(|_| ())
     }
 
+    /// `-A` with both sides: the new path goes in, the old one is recorded as
+    /// deleted. With the new path alone the move never reaches the index.
+    fn stage_move(&self, origin: &str, path: &str) -> Result<(), GitError> {
+        self.git(&["add", "-A", "--", origin, path]).map(|_| ())
+    }
+
     fn unstage(&self, path: &str) -> Result<(), GitError> {
-        // `restore --staged` works in a repository without HEAD as well.
-        self.git(&["restore", "--staged", "--", path]).map(|_| ())
+        // `reset --` puts the index back to HEAD and also handles a *staged
+        // deletion*, which `restore --staged` refuses ("pathspec did not
+        // match"). A repository without HEAD has nothing to reset to, so
+        // `restore --staged` stays the answer there.
+        let args: Vec<&str> = if self.has_head {
+            vec!["reset", "-q", "--", path]
+        } else {
+            vec!["restore", "--staged", "--", path]
+        };
+        self.git(&args).map(|_| ())
+    }
+
+    /// Both sides, or the old path keeps sitting in the index as a deletion.
+    fn unstage_move(&self, origin: &str, path: &str) -> Result<(), GitError> {
+        let args: Vec<&str> = if self.has_head {
+            vec!["reset", "-q", "--", origin, path]
+        } else {
+            vec!["restore", "--staged", "--", origin, path]
+        };
+        self.git(&args).map(|_| ())
     }
 
     fn discard(&self, path: &str) -> Result<(), GitError> {
@@ -371,6 +429,7 @@ fn short_id(output: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::ports::FileState;
     #[test]
     fn a_branch_created_outside_the_program_is_head_at_once() {
         let (dir, repo) = temp_repo("fresh-head");
@@ -447,6 +506,131 @@ mod tests {
         fs::write(dir.join("a.txt"), "hello\n").unwrap();
         let backend = GitBackend::open(&dir).unwrap();
         (dir, backend)
+    }
+
+    #[test]
+    fn the_status_parser_reads_moves_and_unquoted_paths() {
+        // Exactly what `git status --porcelain=v1 -z` prints: the rename record
+        // is followed by the path it came from, and nothing is quoted.
+        let output = "M  mit leer.txt\u{0}R  new.txt\u{0}old.txt\u{0} M \u{fc}ber.txt\u{0}?? frisch.txt\u{0}";
+        let files = parse_status(output);
+        assert_eq!(files.len(), 4, "{files:?}");
+        let space = files
+            .iter()
+            .find(|f| f.path == "mit leer.txt")
+            .expect("space");
+        assert_eq!(space.index, Some(FileState::Modified));
+        let moved = files.iter().find(|f| f.path == "new.txt").expect("new");
+        assert_eq!(moved.origin.as_deref(), Some("old.txt"));
+        assert_eq!(moved.index, Some(FileState::Renamed));
+        assert_eq!(moved.paths(), ["old.txt", "new.txt"]);
+        let umlaut = files
+            .iter()
+            .find(|f| f.path == "\u{fc}ber.txt")
+            .expect("umlaut");
+        assert_eq!(umlaut.worktree, Some(FileState::Modified));
+        let fresh = files
+            .iter()
+            .find(|f| f.path == "frisch.txt")
+            .expect("new file");
+        assert_eq!(fresh.worktree, Some(FileState::Untracked));
+        assert!(fresh.origin.is_none());
+    }
+
+    #[test]
+    fn paths_with_a_space_or_an_umlaut_can_be_staged() {
+        let (dir, repo) = temp_repo("special-paths");
+        // `restore --staged` needs a commit to restore against.
+        repo.stage("a.txt").unwrap();
+        repo.commit("chore: init").unwrap();
+        std::fs::write(dir.join("mit leer.txt"), "x\n").unwrap();
+        std::fs::write(dir.join("\u{fc}ber.txt"), "y\n").unwrap();
+        for name in ["mit leer.txt", "\u{fc}ber.txt"] {
+            let file = repo
+                .changes()
+                .unwrap()
+                .into_iter()
+                .find(|file| file.path == name)
+                .unwrap_or_else(|| panic!("{name} missing in status"));
+            repo.stage(&file.path)
+                .unwrap_or_else(|error| panic!("stage {name}: {error}"));
+            let staged = repo
+                .changes()
+                .unwrap()
+                .into_iter()
+                .find(|file| file.path == name)
+                .expect("still listed");
+            assert!(staged.is_staged(), "{name} not in the index");
+            // The diff of the quoted path used to come back empty.
+            repo.diff(&file.path, true)
+                .unwrap_or_else(|error| panic!("diff {name}: {error}"));
+            repo.unstage(&file.path)
+                .unwrap_or_else(|error| panic!("unstage {name}: {error}"));
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_move_is_staged_with_both_of_its_paths() {
+        let (dir, repo) = temp_repo("move");
+        repo.stage("a.txt").unwrap();
+        repo.commit("chore: init").unwrap();
+        let status = Command::new("git")
+            .current_dir(&dir)
+            .args(["mv", "a.txt", "b.txt"])
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        // `git mv` stages the move, so status names both ends.
+        let staged = repo
+            .changes()
+            .unwrap()
+            .into_iter()
+            .find(|file| file.path == "b.txt")
+            .expect("b.txt listed");
+        assert_eq!(staged.origin.as_deref(), Some("a.txt"));
+        assert_eq!(staged.index, Some(FileState::Renamed));
+        assert_eq!(staged.label(), "a.txt \u{2192} b.txt");
+
+        // Both sides out of the index: one alone leaves the old path behind as
+        // a *staged* deletion, so nothing would be free.
+        repo.unstage_move("a.txt", "b.txt").unwrap();
+        let after = repo.changes().unwrap();
+        assert!(
+            !after.iter().any(|file| file.is_staged()),
+            "nothing may stay staged: {after:?}"
+        );
+        assert!(
+            after
+                .iter()
+                .any(|file| file.path == "b.txt" && file.worktree == Some(FileState::Untracked)),
+            "{after:?}"
+        );
+        // A staged deletion cannot be freed with `restore --staged`; unstage on
+        // the old path alone has to work as well.
+        repo.stage("a.txt").unwrap();
+        repo.unstage("a.txt").unwrap();
+        assert!(!repo.changes().unwrap().iter().any(|file| file.is_staged()));
+
+        // Both sides together bring the rename back into the index.
+        repo.stage_move("a.txt", "b.txt").unwrap();
+        let staged = repo
+            .changes()
+            .unwrap()
+            .into_iter()
+            .find(|file| file.path == "b.txt")
+            .expect("b.txt listed");
+        assert_eq!(staged.origin.as_deref(), Some("a.txt"));
+        assert!(
+            !repo
+                .changes()
+                .unwrap()
+                .iter()
+                .any(|file| file.path == "a.txt"),
+            "the old path must not stay behind as an unstaged deletion"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
