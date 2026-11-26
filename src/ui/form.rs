@@ -115,11 +115,9 @@ pub(crate) fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16
         row_y += 1;
     }
 
-    // The compose panel has the keyboard, so it carries the same bright border
-    // as the wizard on tab 2; preview and checks stay quiet.
-    // Only the side that has the keyboard is lit; `Ctrl+L` moves that mark with
-    // the focus.
-    let compose_focused = app.staging.side == crate::application::staging::Side::Composer;
+    // The composer is the only thing on tab 1 that can hold the keyboard, so it
+    // is lit whenever that tab is showing.
+    let compose_focused = app.tab == crate::application::tabs::Tab::Commit;
     let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(if compose_focused {

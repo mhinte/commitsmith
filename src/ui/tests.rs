@@ -803,7 +803,7 @@ fn the_bright_border_follows_the_keyboard_to_the_file_list() {
 
     let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
     app.tab = crate::application::tabs::Tab::Branches;
-    app.staging.items = vec![staging_item("src/main.rs")];
+    app.branches.files.items = vec![staging_item("src/main.rs")];
 
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
@@ -830,16 +830,16 @@ fn the_file_list_scrolls_to_keep_the_cursor_visible() {
 
     let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
     app.tab = crate::application::tabs::Tab::Branches;
-    app.staging.items = (0..30)
+    app.branches.files.items = (0..30)
         .map(|index| staging_item(&format!("src/file{index:02}.rs")))
         .collect();
     press_mod(&mut app, KeyCode::Char('l'), KeyModifiers::CONTROL);
     // There is no repository here, so the list cannot load a diff; the cursor
     // position is what the renderer has to follow.
-    app.staging.selected = 25;
+    app.branches.files.selected = 25;
 
     // The diff halves the list; the cursor must stay inside that half.
-    app.staging.show_diff = true;
+    app.branches.files.show_diff = true;
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
     let screen = rows(&terminal).join("\n");
@@ -859,9 +859,9 @@ fn a_long_path_is_shortened_but_named_in_full_in_the_diff() {
     let path = "src/infrastructure/very/long/directory/chain/file_name.rs";
     let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
     app.tab = crate::application::tabs::Tab::Branches;
-    app.staging.items = vec![staging_item(path)];
-    app.staging.show_diff = true;
-    app.staging.diff = String::new();
+    app.branches.files.items = vec![staging_item(path)];
+    app.branches.files.show_diff = true;
+    app.branches.files.diff = String::new();
 
     // Narrow enough that the full path cannot fit next to the status code.
     let mut terminal = Terminal::new(TestBackend::new(80, 30)).unwrap();
@@ -964,7 +964,7 @@ fn the_staging_title_counts_what_is_staged() {
 
     let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
     app.tab = crate::application::tabs::Tab::Branches;
-    app.staging.items = vec![
+    app.branches.files.items = vec![
         commitsmith::domain::ports::ChangedFile {
             path: "src/a.rs".to_string(),
             index: Some(commitsmith::domain::ports::FileState::Modified),
@@ -1067,7 +1067,7 @@ fn the_footer_names_the_highlighted_file_in_full() {
     let path = "src/infrastructure/very/long/directory/chain/file_name.rs";
     let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
     app.tab = crate::application::tabs::Tab::Branches;
-    app.staging.items = vec![staging_item(path)];
+    app.branches.files.items = vec![staging_item(path)];
 
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
@@ -1087,7 +1087,7 @@ fn the_footer_keeps_the_status_beside_the_path() {
 
     let short = "src/main.rs";
     let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
-    app.staging.items = vec![staging_item(short)];
+    app.branches.files.items = vec![staging_item(short)];
     app.status = "staged src/main.rs".to_string();
 
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();

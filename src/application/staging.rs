@@ -1,18 +1,10 @@
-//! The staging list of tab 1: what changed, what is staged, and the diff of the
+//! The file list of tab 2: what changed, what is staged, and the diff of the
 //! highlighted file.
 //!
 //! The list holds no git knowledge; everything goes through the port.
 
 use commitsmith::domain::errors::GitError;
 use commitsmith::domain::ports::{ChangedFile, GitRepository};
-
-/// Which side of tab 1 has the keyboard.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Side {
-    #[default]
-    Composer,
-    Staging,
-}
 
 #[derive(Debug, Default, Clone)]
 pub struct Staging {
@@ -23,7 +15,6 @@ pub struct Staging {
     pub show_diff: bool,
     /// First diff line on screen; reset whenever another file is shown.
     pub diff_offset: usize,
-    pub side: Side,
     /// True when the selected file is staged (the diff then shows the index).
     pub selected_staged: bool,
 }

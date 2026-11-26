@@ -10,4 +10,6 @@ pub struct BranchesView {
     pub panel: Panel,
     /// The conventional branch wizard, when it is open.
     pub wizard: BranchWizard,
+    /// The changed files and the diff of the highlighted one.
+    pub files: Staging,
 }

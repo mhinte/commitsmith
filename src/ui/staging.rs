@@ -13,7 +13,7 @@ const MUTED: Style = theme::muted();
 const HINT: Style = theme::hint();
 
 pub fn draw(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
-    let staging = &app.staging;
+    let staging = &app.branches.files;
 
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
@@ -148,7 +148,7 @@ fn wrapped_rows(line: &str, width: usize) -> usize {
 pub fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
     // The list shows a shortened name; the diff names the file in full, so the
     // complete path is always on screen somewhere.
-    let title = match app.staging.selected_path() {
+    let title = match app.branches.files.selected_path() {
         Some(path) => format!(" diff · {path} "),
         None => " diff ".to_string(),
     };
@@ -170,9 +170,10 @@ pub fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
         )));
 
     let height = area.height.saturating_sub(2) as usize;
-    let offset = app.staging.diff_offset;
+    let offset = app.branches.files.diff_offset;
     let mut lines: Vec<Line> = app
-        .staging
+        .branches
+        .files
         .diff
         .lines()
         .skip(offset)
@@ -210,7 +211,8 @@ pub fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
     // bar lag behind what the eye saw.
     let text_width = area.width.saturating_sub(2) as usize;
     let heights: Vec<usize> = app
-        .staging
+        .branches
+        .files
         .diff
         .lines()
         .map(|line| wrapped_rows(line, text_width))

@@ -43,7 +43,7 @@ use branches::BranchList;
 use commitsmith::domain::branch::ConventionalBranchName;
 use commitsmith::domain::ports::{ConfigStore, GitRepository};
 use log::LogState;
-use staging::{Side, Staging};
+use staging::Staging;
 
 /// Order of the form fields, top to bottom.
 pub const FIELDS: [Field; 6] = [
@@ -249,8 +249,6 @@ pub struct App {
     pub setup_request: bool,
     /// Which of the three surfaces is showing.
     pub tab: tabs::Tab,
-    /// Staging list of tab 1.
-    pub staging: Staging,
     /// Where the toggle is written, once the caller supplied one.
     config_store: Option<Box<dyn ConfigStore>>,
     pub should_quit: bool,
@@ -293,7 +291,6 @@ impl App {
             commit_mode: false,
             setup_request: false,
             tab: tabs::Tab::Commit,
-            staging: Staging::default(),
             should_quit: false,
             show_help: false,
         };
@@ -415,15 +412,16 @@ impl App {
                 self.status.clear();
                 if let Some(git) = self.repo.git.as_deref() {
                     let delta = if key.code == KeyCode::Down { 1 } else { -1 };
-                    self.staging.move_by(delta, git);
+                    self.branches.files.move_by(delta, git);
                 }
             }
             KeyCode::Char(' ') | KeyCode::Enter => {
                 let outcome = match self.repo.git.as_deref() {
                     Some(git) => self
-                        .staging
+                        .branches
+                        .files
                         .toggle(git)
-                        .map(|message| (message, self.staging.show_diff)),
+                        .map(|message| (message, self.branches.files.show_diff)),
                     None => return,
                 };
                 match outcome {
@@ -433,7 +431,7 @@ impl App {
                         // pane open that looked like an empty file.
                         if diff_open {
                             if let Some(git) = self.repo.git.as_deref() {
-                                let _ = self.staging.refresh_diff(git);
+                                let _ = self.branches.files.refresh_diff(git);
                             }
                         }
                         self.refresh_sync();
@@ -443,17 +441,17 @@ impl App {
                 }
             }
             KeyCode::Char('v') => {
-                if self.staging.show_diff {
+                if self.branches.files.show_diff {
                     // Second press: close it and keep the list.
-                    self.staging.show_diff = false;
+                    self.branches.files.show_diff = false;
                     self.branches.panel = Panel::Files;
                     return;
                 }
                 // Only now is the diff worth a process.
-                self.staging.show_diff = true;
+                self.branches.files.show_diff = true;
                 self.branches.panel = Panel::Diff;
                 if let Some(git) = self.repo.git.as_deref() {
-                    let _ = self.staging.refresh_diff(git);
+                    let _ = self.branches.files.refresh_diff(git);
                 }
             }
             KeyCode::Esc => self.branches.panel = Panel::Branches,
@@ -463,51 +461,12 @@ impl App {
 
     /// Re-read the changed files and the diff of the highlighted one.
     pub fn reload_staging(&mut self) {
-        let (git, staging) = (&self.repo.git, &mut self.staging);
+        let (git, staging) = (&self.repo.git, &mut self.branches.files);
         let Some(git) = git.as_deref() else {
             return;
         };
         if let Err(error) = staging.reload(git) {
             self.status = error.to_string();
-        }
-    }
-
-    /// Keys while the staging list has the keyboard.
-    fn staging_key(&mut self, key: KeyEvent) {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        match key.code {
-            KeyCode::Up => self.move_staging(-1),
-            KeyCode::Down => self.move_staging(1),
-            KeyCode::Char(' ') => self.toggle_staged(),
-            KeyCode::Char('v') => {
-                self.staging.show_diff = !self.staging.show_diff;
-            }
-            KeyCode::Esc => self.staging.side = Side::Composer,
-            KeyCode::Char('c') if ctrl => self.should_quit = true,
-            _ => {}
-        }
-    }
-
-    fn move_staging(&mut self, delta: isize) {
-        let (git, staging) = (&self.repo.git, &mut self.staging);
-        if let Some(git) = git.as_deref() {
-            staging.move_by(delta, git);
-        }
-    }
-
-    fn toggle_staged(&mut self) {
-        let (git, staging) = (&self.repo.git, &mut self.staging);
-        let Some(git) = git.as_deref() else {
-            return;
-        };
-        match staging.toggle(git) {
-            Ok(message) => {
-                self.status = message;
-                // The header's staged count changed with the action.
-                let staged = Self::staged_count(git);
-                self.set_repo_summary(staged);
-            }
-            Err(error) => self.status = error.to_string(),
         }
     }
 
@@ -595,7 +554,7 @@ impl App {
             self.branches.panel = match (self.branches.panel, back) {
                 (Panel::Branches, false) => Panel::Files,
                 (Panel::Files, false) => {
-                    if self.staging.show_diff {
+                    if self.branches.files.show_diff {
                         Panel::Diff
                     } else {
                         Panel::Branches
@@ -603,7 +562,7 @@ impl App {
                 }
                 (Panel::Diff, false) => Panel::Branches,
                 (Panel::Branches, true) => {
-                    if self.staging.show_diff {
+                    if self.branches.files.show_diff {
                         Panel::Diff
                     } else {
                         Panel::Files
@@ -622,15 +581,15 @@ impl App {
             let page = 10usize;
             match key.code {
                 KeyCode::Esc | KeyCode::Char('v') => {
-                    self.staging.show_diff = false;
+                    self.branches.files.show_diff = false;
                     self.branches.panel = Panel::Files;
                 }
-                KeyCode::Down => self.staging.scroll_diff(1, page),
-                KeyCode::Up => self.staging.scroll_diff(-1, page),
-                KeyCode::PageDown => self.staging.scroll_diff(page as isize, page),
-                KeyCode::PageUp => self.staging.scroll_diff(-(page as isize), page),
-                KeyCode::Home => self.staging.diff_offset = 0,
-                KeyCode::End => self.staging.scroll_diff(isize::MAX / 2, page),
+                KeyCode::Down => self.branches.files.scroll_diff(1, page),
+                KeyCode::Up => self.branches.files.scroll_diff(-1, page),
+                KeyCode::PageDown => self.branches.files.scroll_diff(page as isize, page),
+                KeyCode::PageUp => self.branches.files.scroll_diff(-(page as isize), page),
+                KeyCode::Home => self.branches.files.diff_offset = 0,
+                KeyCode::End => self.branches.files.scroll_diff(isize::MAX / 2, page),
                 _ => {}
             }
             return;
@@ -1202,20 +1161,13 @@ impl App {
             return;
         }
 
-        // Tab 1 has two sides: the staging list and the composer. Ctrl+L hands
-        // the keyboard over and Esc gives it back.
-        if self.tab == tabs::Tab::Commit {
-            if key.code == KeyCode::Char('l') && ctrl {
-                self.staging.side = match self.staging.side {
-                    Side::Composer => Side::Staging,
-                    Side::Staging => Side::Composer,
-                };
-                return;
-            }
-            if self.staging.side == Side::Staging {
-                self.staging_key(key);
-                return;
-            }
+        // The file list lives on tab 2 now; Ctrl+L is the shortcut that takes
+        // the keyboard there, since it used to hand it over within tab 1.
+        if self.tab == tabs::Tab::Commit && key.code == KeyCode::Char('l') && ctrl {
+            self.tab = tabs::Tab::Branches;
+            self.branches.panel = Panel::Files;
+            self.reload_staging();
+            return;
         }
 
         // The other tabs have their own keys; typing a subject there would be

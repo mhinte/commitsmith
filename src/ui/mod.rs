@@ -101,7 +101,7 @@ fn draw_full(frame: &mut Frame, app: &App, area: Rect) {
                         .areas(tree);
                 branches::draw(frame, app, list);
                 branch_wizard::draw(frame, app, wizard);
-                let [files, diff] = if app.staging.show_diff {
+                let [files, diff] = if app.branches.files.show_diff {
                     Layout::vertical([Constraint::Percentage(50), Constraint::Min(6)]).areas(right)
                 } else {
                     [right, Rect::default()]
@@ -112,7 +112,7 @@ fn draw_full(frame: &mut Frame, app: &App, area: Rect) {
                     files,
                     app.branches.panel == crate::application::Panel::Files,
                 );
-                if app.staging.show_diff {
+                if app.branches.files.show_diff {
                     staging::draw_diff(frame, app, diff);
                 }
                 None
@@ -121,7 +121,7 @@ fn draw_full(frame: &mut Frame, app: &App, area: Rect) {
                 let [tree, right] =
                     Layout::horizontal([Constraint::Percentage(46), Constraint::Min(34)])
                         .areas(body);
-                let [files, diff] = if app.staging.show_diff {
+                let [files, diff] = if app.branches.files.show_diff {
                     Layout::vertical([Constraint::Percentage(50), Constraint::Min(6)]).areas(right)
                 } else {
                     [right, Rect::default()]
@@ -133,7 +133,7 @@ fn draw_full(frame: &mut Frame, app: &App, area: Rect) {
                     files,
                     app.branches.panel == crate::application::Panel::Files,
                 );
-                if app.staging.show_diff {
+                if app.branches.files.show_diff {
                     staging::draw_diff(frame, app, diff);
                 }
                 None
@@ -595,7 +595,7 @@ fn branch_context(app: &App, width: u16) -> String {
 fn highlighted_file(app: &App) -> Option<String> {
     // Tab 1 has no file list; there the footer is free for the status.
     (app.tab == crate::application::tabs::Tab::Branches)
-        .then(|| app.staging.selected_path())
+        .then(|| app.branches.files.selected_path())
         .flatten()
 }
 
