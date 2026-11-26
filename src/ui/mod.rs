@@ -24,6 +24,8 @@ use crate::app::{App, FIELDS, Field, Picker, PickerKind};
 use crate::application::tabs::Tab;
 use crate::validate::{self, Severity};
 
+use commitsmith::domain::text::{fit, fit_left};
+
 use self::form::{draw_form, wrap_field};
 use self::picker::draw_picker;
 
@@ -42,11 +44,7 @@ const KEY: Style = Style::new().fg(Color::Black).bg(Color::DarkGray);
 
 /// "1 error", "2 errors" — the counts sit in titles the user reads constantly.
 fn plural(count: usize, word: &str) -> String {
-    if count == 1 {
-        format!("1 {word}")
-    } else {
-        format!("{count} {word}s")
-    }
+    commitsmith::domain::text::plural(count, word)
 }
 const HINT: Style = Style::new().fg(Color::Gray);
 const MUTED: Style = Style::new().fg(Color::DarkGray);
@@ -603,15 +601,7 @@ fn highlighted_file(app: &App) -> Option<String> {
         .flatten()
 }
 
-/// Cut `text` from the left to `width` cells: the end of a path is the useful part.
-fn fit_left(text: &str, width: usize) -> String {
-    commitsmith::domain::text::fit_left(text, width)
-}
 
-/// Cut `text` to `width` display cells, with an ellipsis when it was longer.
-fn fit(text: &str, width: usize) -> String {
-    commitsmith::domain::text::fit(text, width)
-}
 
 /// Run the TUI until the user quits or hands the message over.
 pub fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {

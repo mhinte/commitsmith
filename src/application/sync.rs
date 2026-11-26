@@ -95,16 +95,25 @@ impl App {
             .unwrap_or_else(|| "HEAD".to_string())
     }
 
-    /// Rewrite the "branch · N staged" line after something was staged.
-    pub(crate) fn refresh_repo_line(&mut self) {
-        let Some(git) = self.git.as_deref() else {
-            return;
-        };
-        let staged = git
-            .changes()
+    /// How many files are staged right now, read from the index.
+    pub(crate) fn staged_count(git: &dyn GitRepository) -> usize {
+        git.changes()
             .map(|files| files.iter().filter(|file| file.is_staged()).count())
-            .unwrap_or(0);
+            .unwrap_or(0)
+    }
+
+    /// The "branch · N staged" line. One place builds it, so the header cannot
+    /// disagree with itself between startup and the first stage.
+    pub(crate) fn set_repo_summary(&mut self, staged: usize) {
         let branch = self.branch_label();
         self.repo_line = format!("{branch} · {staged} staged");
+    }
+
+    /// Rewrite the "branch · N staged" line after something was staged.
+    pub(crate) fn refresh_repo_line(&mut self) {
+        let Some(staged) = self.git.as_deref().map(Self::staged_count) else {
+            return;
+        };
+        self.set_repo_summary(staged);
     }
 }

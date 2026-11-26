@@ -48,6 +48,16 @@ pub fn fit_left(text: &str, width: usize) -> String {
     out
 }
 
+/// `"1 error"`, `"2 errors"` — the counts sit where the user reads them.
+pub fn plural(count: usize, word: &str) -> String {
+    format!("{count} {word}{}", plural_suffix(count))
+}
+
+/// Just the trailing `s`, for sentences that already carry the number.
+pub fn plural_suffix(count: usize) -> &'static str {
+    if count == 1 { "" } else { "s" }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,6 +87,15 @@ mod tests {
         let cut = fit(text, 4);
         assert!(UnicodeWidthStr::width(cut.as_str()) <= 4, "{cut}");
         assert_eq!(cut, "✨…");
+    }
+
+    #[test]
+    fn plurals_agree_on_the_rule() {
+        assert_eq!(plural(1, "error"), "1 error");
+        assert_eq!(plural(2, "error"), "2 errors");
+        assert_eq!(plural(0, "warning"), "0 warnings");
+        assert_eq!(plural_suffix(1), "");
+        assert_eq!(plural_suffix(5), "s");
     }
 
     #[test]

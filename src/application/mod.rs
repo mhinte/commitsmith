@@ -165,7 +165,7 @@ impl Picker {
 }
 
 fn plural(count: usize) -> &'static str {
-    if count == 1 { "" } else { "s" }
+    commitsmith::domain::text::plural_suffix(count)
 }
 
 /// Git says what happened in its own words; the footer has room for one line that
@@ -543,16 +543,9 @@ impl App {
         match staging.toggle(git) {
             Ok(message) => {
                 self.status = message;
-                // The footer's staged count changed with the action.
-                let staged = git
-                    .changes()
-                    .map(|files| files.iter().filter(|file| file.is_staged()).count())
-                    .unwrap_or(0);
-                let branch = self
-                    .branch_name
-                    .clone()
-                    .unwrap_or_else(|| "detached".to_string());
-                self.repo_line = format!("{branch} · {staged} staged");
+                // The header's staged count changed with the action.
+                let staged = Self::staged_count(git);
+                self.set_repo_summary(staged);
             }
             Err(error) => self.status = error.to_string(),
         }
@@ -587,11 +580,7 @@ impl App {
             )
         };
         self.branch_name = head.map(|info| info.name);
-        let branch = self
-            .branch_name
-            .clone()
-            .unwrap_or_else(|| "detached".to_string());
-        self.repo_line = format!("{branch} · {staged} staged");
+        self.set_repo_summary(staged);
         if let Some(error) = failure {
             self.status = error.to_string();
         }
