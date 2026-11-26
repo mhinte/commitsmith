@@ -94,7 +94,7 @@ fn enter_checks_out_the_selected_branch() {
     press(&mut app, KeyCode::Down);
     press(&mut app, KeyCode::Enter);
     assert_eq!(app.status, "checked out feature");
-    assert_eq!(app.repo_line, "feature · 0 staged");
+    assert_eq!(app.repo.line, "feature · 0 staged");
     assert!(app.branches.current().unwrap().is_head, "list reloaded");
 }
 
@@ -478,7 +478,7 @@ fn app_with_remote(
     git.sync = sync;
     let calls = git.calls();
     let mut app = App::with_config(Config::conventional(), Vec::new());
-    app.branch_name = Some("main".to_string());
+    app.repo.branch_name = Some("main".to_string());
     app.set_git(Box::new(git));
     (app, calls)
 }
@@ -519,7 +519,7 @@ fn a_rejected_push_says_to_pull_first() {
     git.sync_error =
         Some("! [rejected] main -> main (non-fast-forward)\nerror: failed to push".to_string());
     let mut app = App::with_config(Config::conventional(), Vec::new());
-    app.branch_name = Some("main".to_string());
+    app.repo.branch_name = Some("main".to_string());
     app.set_git(Box::new(git));
 
     alt(&mut app, 'u');
@@ -534,7 +534,7 @@ fn a_diverged_pull_explains_the_conflict_without_merging() {
     git.sync = Some((1, 1));
     git.sync_error = Some("fatal: Not possible to fast-forward, aborting.".to_string());
     let mut app = App::with_config(Config::conventional(), Vec::new());
-    app.branch_name = Some("main".to_string());
+    app.repo.branch_name = Some("main".to_string());
     app.set_git(Box::new(git));
 
     alt(&mut app, 'p');
@@ -736,7 +736,7 @@ fn the_footer_takes_its_ticket_from_the_branch() {
     let mut app = App::with_config(Config::conventional(), Vec::new());
     app.set_git(Box::new(git));
     assert_eq!(
-        app.branch_name.as_deref(),
+        app.repo.branch_name.as_deref(),
         Some("feat/hima/TICKET-42/add-a-thing")
     );
     assert!(

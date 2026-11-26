@@ -36,7 +36,7 @@ impl App {
     /// Rebuild the release plan: last version tag, the commits since it, and what
     /// they demand. Reading only — nothing is written until the user asks.
     pub(crate) fn refresh_plan(&mut self) {
-        let Some(git) = self.git.as_deref() else {
+        let Some(git) = self.repo.git.as_deref() else {
             self.plan = None;
             return;
         };

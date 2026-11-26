@@ -18,7 +18,7 @@ const HINT: Style = theme::hint();
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
 
-    if app.git.is_none() {
+    if app.repo.git.is_none() {
         lines.push(Line::raw(""));
         lines.push(Line::from(vec![
             Span::styled("  no repository ", theme::warn()),

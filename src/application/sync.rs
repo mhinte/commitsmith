@@ -9,31 +9,31 @@ impl App {
     /// Read `(ahead, behind)` once, for the footer and for the wording of the
     /// pull/push replies.
     pub(crate) fn refresh_sync(&mut self) {
-        let Some(git) = self.git.as_deref() else {
-            self.sync = None;
+        let Some(git) = self.repo.git.as_deref() else {
+            self.repo.sync = None;
             return;
         };
-        self.sync = git.ahead_behind().unwrap_or(None);
+        self.repo.sync = git.ahead_behind().unwrap_or(None);
     }
 
     /// Alt+P / Alt+U: fetch and fast-forward, or send. Never merges: a divergent
     /// branch is something to resolve in git, not behind a keypress.
     pub(crate) fn sync_with_remote(&mut self, pull: bool) {
-        let Some(git) = self.git.as_deref() else {
+        let Some(git) = self.repo.git.as_deref() else {
             self.status = "not a git repository · nothing to sync".to_string();
             return;
         };
         let branch = self.branch_label();
-        if self.sync.is_none() {
+        if self.repo.sync.is_none() {
             self.status = format!("no upstream for {branch} · git push -u origin {branch}");
             return;
         }
-        let (ahead, behind) = self.sync.unwrap_or((0, 0));
+        let (ahead, behind) = self.repo.sync.unwrap_or((0, 0));
         let result = if pull { git.pull() } else { git.push() };
         match result {
             Ok(()) => {
                 self.refresh_sync();
-                let (new_ahead, new_behind) = self.sync.unwrap_or((0, 0));
+                let (new_ahead, new_behind) = self.repo.sync.unwrap_or((0, 0));
                 self.status = if pull {
                     match behind {
                         0 => format!("{branch} was already up to date"),
@@ -61,7 +61,7 @@ impl App {
     /// `f` on tab 2: update the remote-tracking branches, then redraw the list so
     /// the sync marks are right. Nothing in the work tree changes.
     pub(crate) fn fetch_remote(&mut self) {
-        let Some(git) = self.git.as_deref() else {
+        let Some(git) = self.repo.git.as_deref() else {
             self.status = "not a git repository · nothing to fetch".to_string();
             return;
         };
@@ -89,7 +89,8 @@ impl App {
 
     /// The branch name as the user knows it, for messages.
     pub(crate) fn branch_label(&self) -> String {
-        self.branch_name
+        self.repo
+            .branch_name
             .clone()
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| "HEAD".to_string())
@@ -106,12 +107,12 @@ impl App {
     /// disagree with itself between startup and the first stage.
     pub(crate) fn set_repo_summary(&mut self, staged: usize) {
         let branch = self.branch_label();
-        self.repo_line = format!("{branch} · {staged} staged");
+        self.repo.line = format!("{branch} · {staged} staged");
     }
 
     /// Rewrite the "branch · N staged" line after something was staged.
     pub(crate) fn refresh_repo_line(&mut self) {
-        let Some(staged) = self.git.as_deref().map(Self::staged_count) else {
+        let Some(staged) = self.repo.git.as_deref().map(Self::staged_count) else {
             return;
         };
         self.set_repo_summary(staged);

@@ -519,7 +519,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             context,
-            if app.in_repository {
+            if app.repo.in_repository {
                 MUTED
             } else {
                 theme::warn()
@@ -577,12 +577,12 @@ fn branch_context(app: &App, width: u16) -> String {
     if width < 100 {
         return format!("{} ", app.config.profile);
     }
-    if !app.in_repository {
+    if !app.repo.in_repository {
         return format!("no git repository · {} ", app.config.profile);
     }
     let mut parts: Vec<String> = Vec::new();
-    if !app.repo_line.is_empty() {
-        parts.push(app.repo_line.clone());
+    if !app.repo.line.is_empty() {
+        parts.push(app.repo.line.clone());
     }
     if let Some(sync) = app.sync_label() {
         parts.push(sync);

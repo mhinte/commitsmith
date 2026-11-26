@@ -13,6 +13,7 @@ pub mod log;
 pub mod navigation;
 pub mod picker;
 pub mod release_cmds;
+mod repo;
 pub mod staging;
 mod sync;
 pub mod tabs;
@@ -24,6 +25,7 @@ use std::collections::HashMap;
 use crate::commit::Commit;
 
 use form::Form;
+use repo::RepoState;
 
 /// Reads a commit's file list when the history preview needs it.
 pub type FilesLoader = Box<dyn Fn(&str) -> Vec<String> + Send + Sync>;
@@ -216,8 +218,8 @@ pub enum Panel {
 
 pub struct App {
     pub config: Config,
-    /// Branch and staged file summary of the repository, when there is one.
-    pub repo_line: String,
+    /// The repository: branch, summary line, sync state.
+    pub repo: RepoState,
     pub rules: Rules,
     pub scopes: ScopeInfo,
     /// The commit being written and where the cursor sits.
@@ -237,8 +239,6 @@ pub struct App {
     pub setup_request: bool,
     /// Which of the three surfaces is showing.
     pub tab: tabs::Tab,
-    /// The repository behind the actions of tab 2, when there is one.
-    pub git: Option<Box<dyn GitRepository>>,
     /// Branch explorer state.
     pub branches: BranchList,
     /// Which pane has the keyboard on tab 2.
@@ -254,17 +254,10 @@ pub struct App {
     changelog_root: Option<std::path::PathBuf>,
     /// Staging list of tab 1.
     pub staging: Staging,
-    /// Short name of the checked-out branch, for the context bridge.
-    pub branch_name: Option<String>,
-    /// `(ahead, behind)` against the upstream; `None` when there is no upstream.
-    pub sync: Option<(usize, usize)>,
     /// Where the toggle is written, once the caller supplied one.
     config_store: Option<Box<dyn ConfigStore>>,
     /// The conventional branch wizard on tab 2.
     pub wizard: BranchWizard,
-    /// False when the working directory is not inside a repository; the header
-    /// says so, because scope suggestions and committing need one.
-    pub in_repository: bool,
     /// File lists are read on demand: one `git show` per commit at startup made
     /// long histories slow.
     files_loader: Option<FilesLoader>,
@@ -295,10 +288,9 @@ impl App {
                 ..Form::with_kind(kind)
             },
             config,
-            repo_line: String::new(),
+            repo: RepoState::default(),
             rules,
             scopes,
-            sync: None,
             config_store: None,
             issues: Vec::new(),
             picker: None,
@@ -308,7 +300,6 @@ impl App {
             commit_mode: false,
             setup_request: false,
             tab: tabs::Tab::Commit,
-            git: None,
             branches: BranchList::default(),
             panel: Panel::default(),
             log: LogState::default(),
@@ -316,9 +307,7 @@ impl App {
             release_confirm: false,
             changelog_root: None,
             staging: Staging::default(),
-            branch_name: None,
             wizard: BranchWizard::default(),
-            in_repository: false,
             files_loader: None,
             files_cache: HashMap::new(),
             should_quit: false,
@@ -331,7 +320,7 @@ impl App {
 
     /// The ticket of the branch we are on, when its name carries one.
     pub fn branch_ticket(&self) -> Option<String> {
-        let name = self.branch_name.as_deref()?;
+        let name = self.repo.branch_name.as_deref()?;
         // The template first, so its rules win; then a plain look for a
         // ticket-shaped word, because a renamed branch still carries one.
         ConventionalBranchName::parse(name)
@@ -399,7 +388,7 @@ impl App {
 
     /// What the header shows about the repository on the right.
     pub fn set_repo_line(&mut self, line: String) {
-        self.repo_line = line;
+        self.repo.line = line;
     }
 
     /// Replace the available scopes, usually after reading git history.
@@ -415,7 +404,7 @@ impl App {
     /// Hand the application the repository it may act on, and fill the branch
     /// list from it. Called once at startup.
     pub fn set_git(&mut self, git: Box<dyn GitRepository>) {
-        self.git = Some(git);
+        self.repo.git = Some(git);
         self.reload_branches();
         self.reload_staging();
         self.refresh_sync();
@@ -424,8 +413,8 @@ impl App {
 
     /// Short state for the footer: `↑2 ↓1`, `in sync`, or `no upstream`.
     pub fn sync_label(&self) -> Option<String> {
-        self.git.as_ref()?;
-        Some(match self.sync {
+        self.repo.git.as_ref()?;
+        Some(match self.repo.sync {
             Some((0, 0)) => "✓".to_string(),
             Some((ahead, 0)) => format!("↑{ahead}"),
             Some((0, behind)) => format!("↓{behind}"),
@@ -440,13 +429,13 @@ impl App {
             KeyCode::Down | KeyCode::Up => {
                 // A message about the last action must not follow the cursor.
                 self.status.clear();
-                if let Some(git) = self.git.as_deref() {
+                if let Some(git) = self.repo.git.as_deref() {
                     let delta = if key.code == KeyCode::Down { 1 } else { -1 };
                     self.staging.move_by(delta, git);
                 }
             }
             KeyCode::Char(' ') | KeyCode::Enter => {
-                let outcome = match self.git.as_deref() {
+                let outcome = match self.repo.git.as_deref() {
                     Some(git) => self
                         .staging
                         .toggle(git)
@@ -459,7 +448,7 @@ impl App {
                         // The list cleared its diff when it reloaded; with the
                         // pane open that looked like an empty file.
                         if diff_open {
-                            if let Some(git) = self.git.as_deref() {
+                            if let Some(git) = self.repo.git.as_deref() {
                                 let _ = self.staging.refresh_diff(git);
                             }
                         }
@@ -479,7 +468,7 @@ impl App {
                 // Only now is the diff worth a process.
                 self.staging.show_diff = true;
                 self.panel = Panel::Diff;
-                if let Some(git) = self.git.as_deref() {
+                if let Some(git) = self.repo.git.as_deref() {
                     let _ = self.staging.refresh_diff(git);
                 }
             }
@@ -490,7 +479,7 @@ impl App {
 
     /// Re-read the changed files and the diff of the highlighted one.
     pub fn reload_staging(&mut self) {
-        let (git, staging) = (&self.git, &mut self.staging);
+        let (git, staging) = (&self.repo.git, &mut self.staging);
         let Some(git) = git.as_deref() else {
             return;
         };
@@ -516,14 +505,14 @@ impl App {
     }
 
     fn move_staging(&mut self, delta: isize) {
-        let (git, staging) = (&self.git, &mut self.staging);
+        let (git, staging) = (&self.repo.git, &mut self.staging);
         if let Some(git) = git.as_deref() {
             staging.move_by(delta, git);
         }
     }
 
     fn toggle_staged(&mut self) {
-        let (git, staging) = (&self.git, &mut self.staging);
+        let (git, staging) = (&self.repo.git, &mut self.staging);
         let Some(git) = git.as_deref() else {
             return;
         };
@@ -543,20 +532,20 @@ impl App {
     pub fn reload_branches(&mut self) {
         if let Some(branch) = self.branches.items.iter().find(|branch| branch.is_head) {
             let name = Some(branch.name.clone());
-            if self.branch_name != name {
-                self.branch_name = name;
+            if self.repo.branch_name != name {
+                self.repo.branch_name = name;
                 self.seed_footer();
             }
         }
         let failure = {
-            let (git, branches) = (&self.git, &mut self.branches);
+            let (git, branches) = (&self.repo.git, &mut self.branches);
             let Some(git) = git.as_deref() else {
                 return;
             };
             branches.reload(git).err()
         };
         let (head, staged) = {
-            let Some(git) = self.git.as_deref() else {
+            let Some(git) = self.repo.git.as_deref() else {
                 return;
             };
             (
@@ -566,7 +555,7 @@ impl App {
                     .unwrap_or(0),
             )
         };
-        self.branch_name = head.map(|info| info.name);
+        self.repo.branch_name = head.map(|info| info.name);
         self.set_repo_summary(staged);
         if let Some(error) = failure {
             self.status = error.to_string();
@@ -581,7 +570,7 @@ impl App {
         if self.form.type_touched {
             return;
         }
-        let Some(name) = self.branch_name.as_deref() else {
+        let Some(name) = self.repo.branch_name.as_deref() else {
             return;
         };
         let Ok(parsed) = ConventionalBranchName::parse(name) else {
@@ -737,7 +726,7 @@ impl App {
             .or_else(|| self.config.prefix.clone());
         let prefix = self.config.ticket_prefix.clone();
         let template = self.config.branch_template.clone();
-        let (git, wizard) = (&self.git, &mut self.wizard);
+        let (git, wizard) = (&self.repo.git, &mut self.wizard);
         let Some(git) = git.as_deref() else {
             self.status = "no repository".to_string();
             return;
@@ -763,7 +752,7 @@ impl App {
             self.status = format!("{} is remote · check out a local branch", branch.name);
             return;
         }
-        let Some(git) = self.git.as_deref() else {
+        let Some(git) = self.repo.git.as_deref() else {
             self.status = "no repository".to_string();
             return;
         };
@@ -784,7 +773,7 @@ impl App {
             self.status = format!("{} is already checked out", branch.name);
             return;
         }
-        let Some(git) = self.git.as_deref() else {
+        let Some(git) = self.repo.git.as_deref() else {
             self.status = "no repository".to_string();
             return;
         };
@@ -817,7 +806,7 @@ impl App {
             self.status = format!("press d again to delete {}", branch.name);
             return;
         }
-        let Some(git) = self.git.as_deref() else {
+        let Some(git) = self.repo.git.as_deref() else {
             self.status = "no repository".to_string();
             return;
         };
@@ -833,7 +822,7 @@ impl App {
 
     /// Record whether a repository was found. Called once at startup.
     pub fn set_in_repository(&mut self, found: bool) {
-        self.in_repository = found;
+        self.repo.in_repository = found;
         if !found {
             let hint = "not a git repository · `check` works here, committing needs one";
             self.status = if self.status.is_empty() {
