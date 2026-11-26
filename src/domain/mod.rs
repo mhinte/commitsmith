@@ -14,6 +14,7 @@ pub mod ports;
 pub mod release;
 pub mod setup;
 pub mod slug;
+pub mod text;
 pub mod ticket;
 pub mod validate;
 
