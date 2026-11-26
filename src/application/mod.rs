@@ -1208,6 +1208,23 @@ impl App {
         self.open_picker(PickerKind::Type, items, values);
     }
 
+    /// Ctrl+N asks the field that has the keyboard what it has to offer: types
+    /// in the type field, scopes in the scope field, earlier commits in the
+    /// subject. Anywhere else it says so instead of opening the wrong list.
+    fn open_suggestions(&mut self) {
+        match self.active_field() {
+            Field::Type => self.open_type_picker(),
+            Field::Scope => self.open_scope_picker(),
+            Field::Subject => self.open_history_picker(),
+            Field::Body | Field::Breaking | Field::Footer => {
+                self.status = format!(
+                    "no suggestions for {} · Ctrl+N offers types, scopes and earlier subjects",
+                    self.active_field().label()
+                );
+            }
+        }
+    }
+
     fn open_scope_picker(&mut self) {
         // Offer what the user already typed in the scope field first.
         let typed = self.commit.scope.trim().to_string();
@@ -1862,7 +1879,7 @@ impl App {
             KeyCode::Char('c') | KeyCode::Char('q') if ctrl => self.should_quit = true,
             KeyCode::Char('s') if ctrl => self.finish(),
             KeyCode::Char('k') if ctrl => self.clear_field(),
-            KeyCode::Char('n') if ctrl => self.open_scope_picker(),
+            KeyCode::Char('n') if ctrl => self.open_suggestions(),
             KeyCode::Char('t') if ctrl => self.open_type_picker(),
             KeyCode::Char('p') if ctrl => self.open_profile_picker(),
             KeyCode::Char('r') if ctrl => self.open_history_picker(),
@@ -2575,6 +2592,45 @@ mod tests {
         assert!(app.status.contains("1 branch"), "{}", app.status);
     }
 
+    #[test]
+    fn the_scope_reaches_the_message_while_typing() {
+        let mut app = App::with_config(Config::conventional(), Vec::new());
+        press(&mut app, KeyCode::Tab); // scope
+        type_text(&mut app, "ui");
+        let rendered = app.commit.render();
+        assert!(rendered.contains("feat(ui):"), "{rendered}");
+    }
+
+    #[test]
+    fn ctrl_n_offers_what_the_field_can_use() {
+        let mut app = App::with_config(Config::conventional(), Vec::new());
+        // Type field: the type list.
+        ctrl(&mut app, 'n');
+        assert!(app.picker.is_some(), "types in the type field");
+        press(&mut app, KeyCode::Esc);
+
+        // Subject field: earlier commits, or a hint when there are none.
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        ctrl(&mut app, 'n');
+        assert!(
+            app.picker.is_some() || app.status.contains("no commits"),
+            "{}",
+            app.status
+        );
+        press(&mut app, KeyCode::Esc);
+
+        // Body: no list, but an explanation.
+        press(&mut app, KeyCode::Tab);
+        ctrl(&mut app, 'n');
+        assert!(app.picker.is_none(), "no list in the body");
+        assert!(
+            app.status.contains("no suggestions for body"),
+            "{}",
+            app.status
+        );
+    }
+
     fn type_text(app: &mut App, text: &str) {
         for c in text.chars() {
             press(app, KeyCode::Char(c));
@@ -2660,6 +2716,8 @@ mod tests {
             history: vec!["api".into(), "ui".into()],
             configured: Vec::new(),
         });
+        // Ctrl+N follows the keyboard: scopes belong to the scope field.
+        press(&mut app, KeyCode::Tab);
         ctrl(&mut app, 'n');
         press(&mut app, KeyCode::Down);
         press(&mut app, KeyCode::Enter);
