@@ -1131,3 +1131,61 @@ fn cursor_maps_into_wrapped_rows() {
         Some((1, 1))
     );
 }
+
+#[test]
+fn a_tick_without_input_does_not_draw_a_frame() {
+    use crate::ui::drive;
+
+    let mut draws = 0;
+    let mut ticks = 0;
+    // Five ticks with no input at all, then the loop ends.
+    drive(
+        &mut 0u8,
+        || Ok(None),
+        |_, event| {
+            assert!(event.is_none());
+            ticks += 1;
+            ticks >= 5
+        },
+        |_| {
+            draws += 1;
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(ticks, 5, "the loop kept ticking");
+    assert_eq!(draws, 1, "one frame for the state, none per tick");
+}
+
+#[test]
+fn every_event_draws_one_frame() {
+    use crate::ui::drive;
+    use ratatui::crossterm::event::Event;
+
+    let mut draws = 0;
+    let mut pending = vec![
+        Event::Resize(40, 10),
+        Event::Resize(40, 10),
+        Event::Resize(40, 10),
+    ];
+    // Then a tick with nothing, then quit on the next tick.
+    let mut quiet = 0;
+    drive(
+        &mut 0u8,
+        || Ok(pending.pop()),
+        |_, event| {
+            if event.is_none() {
+                quiet += 1;
+                return quiet >= 2;
+            }
+            false
+        },
+        |_| {
+            draws += 1;
+            Ok(())
+        },
+    )
+    .unwrap();
+    // First frame, then one per event; the two quiet ticks add nothing.
+    assert_eq!(draws, 4, "one frame per event and no more");
+}

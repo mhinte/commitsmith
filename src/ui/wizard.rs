@@ -7,10 +7,9 @@
 
 use crate::ui::theme;
 use std::io;
-use std::time::Duration;
 
 use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Position};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -192,23 +191,30 @@ fn truthy(text: &str, fallback: bool) -> bool {
 
 /// Run the dialog until it is saved or cancelled.
 pub fn run(terminal: &mut DefaultTerminal, wizard: &mut Wizard) -> io::Result<Outcome> {
-    loop {
-        terminal.draw(|frame| draw(frame, wizard))?;
-        if event::poll(Duration::from_millis(200))? {
-            match event::read()? {
-                Event::Key(key) => wizard.handle_key(key),
-                Event::Paste(text) => {
+    let mut outcome: Option<Outcome> = None;
+    crate::ui::event_loop(
+        terminal,
+        wizard,
+        || match crate::ui::poll_tick()? {
+            true => Ok(Some(crate::ui::read_event()?)),
+            false => Ok(None),
+        },
+        |wizard, event| {
+            match event {
+                Some(Event::Key(key)) => wizard.handle_key(key),
+                Some(Event::Paste(text)) => {
                     for c in text.chars().filter(|c| !c.is_control()) {
                         wizard.insert(c);
                     }
                 }
                 _ => {}
             }
-        }
-        if let Some(outcome) = wizard.done.take() {
-            return Ok(outcome);
-        }
-    }
+            outcome = wizard.done.take();
+            outcome.is_some()
+        },
+        draw,
+    )?;
+    Ok(outcome.expect("the loop only returns once the wizard is done"))
 }
 
 fn draw(frame: &mut ratatui::Frame, wizard: &Wizard) {

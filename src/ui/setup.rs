@@ -6,10 +6,9 @@
 
 use crate::ui::theme;
 use std::io;
-use std::time::Duration;
 
 use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Position};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -138,12 +137,18 @@ pub fn run(terminal: &mut DefaultTerminal) -> io::Result<Outcome> {
     );
 
     let mut setup = Setup::new();
-    let outcome = loop {
-        terminal.draw(|frame| draw(frame, &setup))?;
-        if event::poll(Duration::from_millis(200))? {
-            match event::read()? {
-                Event::Key(key) => setup.handle_key(key),
-                Event::Paste(text) => {
+    let mut outcome: Option<Outcome> = None;
+    crate::ui::event_loop(
+        terminal,
+        &mut setup,
+        || match crate::ui::poll_tick()? {
+            true => Ok(Some(crate::ui::read_event()?)),
+            false => Ok(None),
+        },
+        |setup, event| {
+            match event {
+                Some(Event::Key(key)) => setup.handle_key(key),
+                Some(Event::Paste(text)) => {
                     // A pasted line break would otherwise submit the dialog.
                     for c in text.chars().filter(|c| !c.is_control()) {
                         setup.insert(c);
@@ -151,11 +156,12 @@ pub fn run(terminal: &mut DefaultTerminal) -> io::Result<Outcome> {
                 }
                 _ => {}
             }
-        }
-        if let Some(outcome) = setup.done.take() {
-            break outcome;
-        }
-    };
+            outcome = setup.done.take();
+            outcome.is_some()
+        },
+        draw,
+    )?;
+    let outcome = outcome.expect("the loop only returns once the dialog is done");
 
     let _ = ratatui::crossterm::execute!(
         io::stdout(),

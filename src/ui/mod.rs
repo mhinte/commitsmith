@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use ratatui::DefaultTerminal;
 use ratatui::Frame;
+use ratatui::Terminal;
 use ratatui::crossterm::event::{self, Event};
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -601,6 +602,68 @@ fn highlighted_file(app: &App) -> Option<String> {
         .flatten()
 }
 
+/// How long a tick waits for a key before the loop looks at its state again.
+const TICK: Duration = Duration::from_millis(200);
+
+/// Wait up to one tick for input; `true` when something arrived.
+pub fn poll_tick() -> io::Result<bool> {
+    event::poll(TICK)
+}
+
+/// The input [`poll_tick`] waited for.
+pub fn read_event() -> io::Result<Event> {
+    event::read()
+}
+
+/// Draw when something happened, not five times a second.
+///
+/// The old loop drew on every poll, so layout, wrapping, filtering and the lint
+/// lookups ran 200 ms apart with nobody at the keyboard — a busy core behind a
+/// screen that did not change. Now a frame is drawn when an event arrived (or on
+/// the first pass), and a tick without one costs a poll and a state check.
+///
+/// `next` hands back the event, or `None` for a tick without one; `step` gets
+/// that `Option` and returns true when the loop is done, so a later background
+/// job can react on a tick instead of waiting for a key.
+pub fn drive<S>(
+    state: &mut S,
+    mut next: impl FnMut() -> io::Result<Option<Event>>,
+    mut step: impl FnMut(&mut S, Option<Event>) -> bool,
+    mut draw: impl FnMut(&S) -> io::Result<()>,
+) -> io::Result<()> {
+    let mut dirty = true;
+    loop {
+        if dirty {
+            draw(state)?;
+        }
+        let event = next()?;
+        dirty = event.is_some();
+        if step(state, event) {
+            return Ok(());
+        }
+    }
+}
+
+/// [`drive`] against a real terminal.
+pub fn event_loop<B, S>(
+    terminal: &mut Terminal<B>,
+    state: &mut S,
+    next: impl FnMut() -> io::Result<Option<Event>>,
+    step: impl FnMut(&mut S, Option<Event>) -> bool,
+    draw: impl Fn(&mut Frame, &S),
+) -> io::Result<()>
+where
+    B: ratatui::backend::Backend,
+    B::Error: Into<io::Error>,
+{
+    drive(state, next, step, |state| {
+        match terminal.draw(|frame| draw(frame, state)) {
+            Ok(_) => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    })
+}
+
 /// Run the TUI until the user quits or hands the message over.
 pub fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
     // A terminal that reports no size draws nothing at all, which looks exactly
@@ -612,22 +675,27 @@ pub fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
         ));
     }
 
-    loop {
-        terminal.draw(|frame| draw(frame, app))?;
-        if event::poll(Duration::from_millis(200))? {
-            match event::read()? {
-                Event::Key(key) => app.handle_key(key),
+    event_loop(
+        terminal,
+        app,
+        || match event::poll(TICK)? {
+            true => Ok(Some(event::read()?)),
+            false => Ok(None),
+        },
+        |app, event| {
+            match event {
+                Some(Event::Key(key)) => app.handle_key(key),
                 // A pasted block of text goes into the active field, line
                 // breaks included, instead of being replayed as key presses.
-                Event::Paste(text) => app.handle_paste(&text),
-                Event::Resize(_, _) => {}
-                _ => {}
+                Some(Event::Paste(text)) => app.handle_paste(&text),
+                // A resize is not a state change, but it is a reason to draw.
+                Some(Event::Resize(_, _)) => {}
+                Some(_) | None => {}
             }
-        }
-        if app.should_quit {
-            return Ok(());
-        }
-    }
+            app.should_quit
+        },
+        draw,
+    )
 }
 
 #[cfg(test)]
