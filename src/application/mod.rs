@@ -701,6 +701,7 @@ impl App {
                 }
             }
             KeyCode::Char('v') => {
+                // Only now is the diff worth a process.
                 self.staging.show_diff = true;
                 self.panel = Panel::Diff;
                 if let Some(git) = self.git.as_deref() {
@@ -1944,7 +1945,9 @@ mod tests {
     #[test]
     fn space_stages_and_v_shows_the_diff() {
         let (mut app, log) = staging_app();
-        ctrl(&mut app, 'l');
+        // The files live on tab 2 now; Tab puts the keyboard on them.
+        app.tab = tabs::Tab::Branches;
+        press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Char(' '));
         assert!(log.borrow().iter().any(|call| call == "stage a.txt"));
         // The footer names the file; the status only says what happened.

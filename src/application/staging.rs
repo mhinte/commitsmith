@@ -38,7 +38,10 @@ impl Staging {
         self.selected = keep
             .and_then(|path| self.items.iter().position(|file| file.path == path))
             .unwrap_or_else(|| self.selected.min(self.items.len().saturating_sub(1)));
-        self.refresh_diff(repo)
+        // The diff is not read here: `git diff` on a large file is the most
+        // expensive part and nobody sees it until the pane is opened.
+        self.diff.clear();
+        Ok(())
     }
 
     /// How many files are fully staged — the number the pane title shows.
@@ -173,6 +176,17 @@ mod tests {
         let calls = repo.calls();
         let mut staging = Staging::default();
         staging.reload(&repo).unwrap();
+        // Reading the list does not read a single diff: that costs a process and
+        // nobody sees the result until the pane opens.
+        assert!(staging.diff.is_empty(), "{}", staging.diff);
+        assert!(
+            calls.borrow().iter().all(|call| !call.starts_with("diff ")),
+            "{:?}",
+            calls.borrow()
+        );
+
+        // Opening it reads exactly the selected file.
+        staging.refresh_diff(&repo).unwrap();
         assert!(staging.diff.contains("diff --git"), "{}", staging.diff);
         let diffs: Vec<String> = calls
             .borrow()
