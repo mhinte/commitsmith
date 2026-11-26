@@ -9,6 +9,7 @@ pub mod branch;
 pub mod commit;
 pub mod errors;
 pub mod history;
+pub mod keymap;
 pub mod log;
 pub mod ports;
 pub mod release;

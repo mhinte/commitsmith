@@ -4,6 +4,8 @@
 //! shortcut that does nothing on the active tab must not be advertised, and a
 //! pane that grows a key only edits its own entry.
 
+use commitsmith::domain::keymap::Keymap;
+
 /// The top-level surfaces of the program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Tab {
@@ -57,7 +59,7 @@ impl Tab {
     /// Keys that work on this tab, most important first.
     ///
     /// `commit_mode` only changes the wording of Ctrl+S on the first tab.
-    pub fn keys(self, commit_mode: bool) -> Vec<(&'static str, &'static str)> {
+    pub fn keys(self, commit_mode: bool, keymap: Keymap) -> Vec<(&'static str, &'static str)> {
         let mut keys = match self {
             Self::Commit => vec![
                 ("Tab", "next"),
@@ -99,6 +101,12 @@ impl Tab {
         };
         keys.push(("1-3", "tabs"));
         keys.push(("?", "help"));
+        if keymap == Keymap::Ide {
+            // Same keys, different order: an editor hand looks for Ctrl+Enter
+            // and Ctrl+Space first, a terminal hand for Ctrl+S.
+            promote(&mut keys, "C-Enter", 2);
+            promote(&mut keys, "C-Space", 4);
+        }
         keys
     }
 
@@ -167,9 +175,30 @@ impl Tab {
     }
 }
 
+/// Move the entry with this key to `index`, keeping the rest in order.
+fn promote(keys: &mut Vec<(&'static str, &'static str)>, key: &str, index: usize) {
+    if let Some(position) = keys.iter().position(|(name, _)| *name == key) {
+        let entry = keys.remove(position);
+        keys.insert(index.min(keys.len().saturating_sub(2)), entry);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_ide_profile_leads_with_its_own_pair() {
+        let default = Tab::Commit.keys(false, Keymap::Default);
+        assert_eq!(default[2].0, "C-s", "the terminal hand gets Ctrl+S first");
+        let ide = Tab::Commit.keys(false, Keymap::Ide);
+        assert_eq!(ide[2].0, "C-Enter", "the editor hand gets Ctrl+Enter first");
+        assert!(
+            ide.iter().any(|(key, _)| *key == "C-s"),
+            "Ctrl+S stays available, it is only advertised later"
+        );
+        assert!(ide.iter().any(|(key, _)| *key == "C-Space"));
+    }
 
     #[test]
     fn digits_and_arrows_agree_with_the_order() {
@@ -223,7 +252,7 @@ mod tests {
 
     #[test]
     fn every_tab_names_its_own_keys() {
-        let commit = Tab::Commit.keys(false);
+        let commit = Tab::Commit.keys(false, Keymap::Default);
         assert!(commit.iter().any(|(key, _)| *key == "C-s"));
         assert!(!commit.iter().any(|(key, _)| *key == "merge"));
         // The composer hints from 0.4.0 must not get lost in the tab rewrite.
@@ -234,11 +263,11 @@ mod tests {
             );
         }
 
-        let branches = Tab::Branches.keys(false);
+        let branches = Tab::Branches.keys(false, Keymap::Default);
         assert!(branches.iter().any(|(key, _)| *key == "Enter"));
         assert!(!branches.iter().any(|(key, _)| *key == "C-s"));
 
-        let history = Tab::History.keys(false);
+        let history = Tab::History.keys(false, Keymap::Default);
         assert!(history.iter().any(|(key, _)| *key == "/"));
         assert!(!history.iter().any(|(key, _)| *key == "C-k"));
     }
@@ -247,7 +276,7 @@ mod tests {
     fn the_commit_label_follows_the_mode() {
         let label = |mode| {
             Tab::Commit
-                .keys(mode)
+                .keys(mode, Keymap::Default)
                 .into_iter()
                 .find(|(key, _)| *key == "C-s")
                 .map(|(_, label)| label.to_string())
@@ -260,7 +289,7 @@ mod tests {
     #[test]
     fn the_tab_hint_and_help_are_on_every_tab() {
         for tab in Tab::ALL {
-            let keys = tab.keys(false);
+            let keys = tab.keys(false, Keymap::Default);
             assert!(keys.iter().any(|(key, _)| *key == "1-3"), "{tab:?}");
             assert!(keys.iter().any(|(key, _)| *key == "?"), "{tab:?}");
         }
