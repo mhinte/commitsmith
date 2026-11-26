@@ -88,6 +88,8 @@ fn draw_full(frame: &mut Frame, app: &App, area: Rect) {
             // The wizard sits beside the list, not on top of it: while it is
             // open the branches stay visible for reference.
             if app.wizard.open {
+                // The wizard sits beside the list, not on top of it: while it is
+                // open the branches stay visible for reference.
                 let [list, wizard] = Layout::horizontal([
                     Constraint::Min(24),
                     Constraint::Length(body.width.clamp(0, 52).max(body.width / 2)),

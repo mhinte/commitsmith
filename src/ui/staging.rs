@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, BorderType, Paragraph};
+use ratatui::widgets::{Block, BorderType, Paragraph, Wrap};
 
 use crate::app::App;
 use crate::ui::theme;
@@ -175,7 +175,40 @@ pub fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
     }
     lines.truncate(height.max(1));
 
-    frame.render_widget(Paragraph::new(Text::from(lines)).block(block), area);
+    // Long lines wrap instead of running off the right edge; the indent of a
+    // wrapped line keeps the code readable.
+    frame.render_widget(
+        Paragraph::new(Text::from(lines.clone()))
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+
+    // A slim scrollbar: where in the file this window sits.
+    let total = app.staging.diff.lines().count();
+    if total > height.max(1) && area.height > 2 {
+        let track = area.height.saturating_sub(2);
+        let visible = height.min(total).max(1) as u16;
+        let span = (track as usize * visible as usize / total).max(1) as u16;
+        let max_offset = total - visible as usize;
+        let start = (app.staging.diff_offset * track as usize)
+            .checked_div(max_offset)
+            .unwrap_or(0) as u16;
+        for step in 0..span {
+            let y = area.y + 1 + start.min(track.saturating_sub(span)) + step;
+            if y < area.y + 1 + track {
+                frame.render_widget(
+                    Paragraph::new("▐").style(Style::default().fg(Color::Cyan)),
+                    Rect {
+                        x: area.x + area.width - 1,
+                        y,
+                        width: 1,
+                        height: 1,
+                    },
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]

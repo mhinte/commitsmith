@@ -892,10 +892,12 @@ impl App {
             // second vocabulary nobody asked for.
             KeyCode::Down => {
                 self.branches.confirming = None;
+                self.status.clear();
                 self.branches.move_by(1);
             }
             KeyCode::Up => {
                 self.branches.confirming = None;
+                self.status.clear();
                 self.branches.move_by(-1);
             }
             KeyCode::Home => {
