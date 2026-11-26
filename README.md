@@ -259,10 +259,40 @@ profile does not offer, leaves the current type alone.
 | `Ctrl+K` | clear the field under the cursor (the type stays) |
 | `Ctrl+R` | reuse type, scope and body of a recent commit, with preview |
 | `←` `→`, `h` `l` | previous/next type on the type field, cursor movement elsewhere |
-| `j` `k` | next/previous field on the type field |
-| `Ctrl+S` | finish: print the message, or commit with `--commit` |
+| `Ctrl+Space` | suggestions for the field: type, scope, recent subjects |
+| `Ctrl+Enter`, `Ctrl+S` | finish: print the message, or commit with `--commit` |
 | `Esc`, `Ctrl+Q` | quit without output |
-| `?` | key help overlay |
+| `?` | key help overlay, only what the current tab and pane can do |
+
+On the file list (tab 2):
+
+| Key | Action |
+|-----|--------|
+| `Space` | stage or unstage the file |
+| `v` | show the diff; `Esc` closes it |
+| `r` | take the file out of the index, the changes stay |
+| `x` | throw the working-tree changes away (asks first) |
+| `z` / `Z` | stash everything / take the newest stash back (asks first) |
+
+On the log (tab 3): `/` filters, `c` clears it, `y` writes `CHANGELOG.md`,
+`b` moves the window between the last tag and the last 20 or 50 commits, `e`
+exports the section as `RELEASE-NOTES-<version>.md`.
+
+## Editors and terminals
+
+`keymap = "ide"` in `config.toml` leads the footer with `Ctrl+Enter` and
+`Ctrl+Space`; `default` leads with `Ctrl+S` and `Ctrl+N`. Every key works in both
+profiles — the profile only decides what is advertised first, so a hand that
+knows one editor is not surprised.
+
+**Visual Studio** (2022): `View > Terminal` or ``Ctrl+` `` opens a real terminal
+window; type `commitsmith` there and every key above works, because the window is
+a PTY and not an output pane. If you want a button for colleagues, add
+`Tools > External Tools` with the command `commitsmith` and the initial directory
+`$(SolutionDir)`, then bind `Tools.ExternalCommand1` under
+`Tools > Options > Environment > Keyboard`. Committing through Visual Studio's own
+Git UI bypasses the tool, so run `commitsmith hooks install` once per repository:
+the `commit-msg` hook then checks the message however it was written.
 
 ## Rules
 
