@@ -109,7 +109,7 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect, matches: usize) {
                     },
                 ),
                 Span::styled(
-                    crate::ui::history::crop(&commit.summary, name_width),
+                    crate::ui::history::fit(&commit.summary, name_width),
                     if selected {
                         theme::focused_value()
                     } else {
@@ -248,6 +248,6 @@ fn draw_release(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Cut a line to `width` characters, with an ellipsis.
-pub fn crop(text: &str, width: usize) -> String {
+pub fn fit(text: &str, width: usize) -> String {
     commitsmith::domain::text::fit(text, width)
 }

@@ -5,10 +5,7 @@
 
 use std::collections::BTreeSet;
 
-/// Cut `text` to `width` characters, ending on an ellipsis when it was cut.
-fn crop(text: &str, width: usize) -> String {
-    super::text::fit(text, width)
-}
+use super::text;
 
 /// What a scope picker needs to offer.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -97,7 +94,7 @@ impl PastCommit {
             _ if self.conventional() => "-".to_string(),
             _ => "plain".to_string(),
         };
-        let summary = crop(&self.summary, width.saturating_sub(28));
+        let summary = text::fit(&self.summary, width.saturating_sub(28));
         format!("{} {:<14} {}", self.short_id, kind, summary)
     }
 

@@ -9,6 +9,8 @@ use ratatui::widgets::{Block, BorderType, Paragraph, Wrap};
 use crate::app::App;
 use crate::ui::theme;
 use commitsmith::domain::scroll;
+use commitsmith::domain::text::fit_left;
+use unicode_width::UnicodeWidthStr;
 
 const MUTED: Style = theme::muted();
 const HINT: Style = theme::hint();
@@ -80,10 +82,11 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect, focused: bool) {
             // old one is where the code came from.
             let mut used = 0;
             if let Some(origin) = &file.origin {
-                let room = name_width.saturating_sub(file.path.chars().count() + 3);
+                let room = name_width
+                    .saturating_sub(UnicodeWidthStr::width(file.path.as_str() as &str) + 3);
                 if room >= 8 {
-                    let short = truncate_left(origin, room);
-                    used = short.chars().count() + 3;
+                    let short = fit_left(origin, room);
+                    used = UnicodeWidthStr::width(short.as_str() as &str) + 3;
                     spans.push(Span::styled(format!("{short} → "), MUTED));
                 }
             }
@@ -124,32 +127,19 @@ fn path_spans(path: &str, width: usize, selected: bool) -> Vec<Span<'static>> {
     } else {
         theme::idle_row()
     };
-    if dir.is_empty() || width <= name.chars().count() + 2 {
-        return vec![Span::styled(truncate_left(path, width), name_style)];
+    let name_cells = UnicodeWidthStr::width(name);
+    if dir.is_empty() || width <= name_cells + 2 {
+        return vec![Span::styled(fit_left(path, width), name_style)];
     }
-    let room = width - name.chars().count() - 1;
-    let mut dir_text = truncate_left(dir, room);
-    if dir_text.chars().count() == dir.chars().count() {
+    let room = width - name_cells - 1;
+    let mut dir_text = fit_left(dir, room);
+    if UnicodeWidthStr::width(dir_text.as_str() as &str) == UnicodeWidthStr::width(dir) {
         dir_text.push('/');
     }
     vec![
         Span::styled(dir_text, MUTED),
         Span::styled(name.to_string(), name_style),
     ]
-}
-
-/// Cut a path from the left, keeping the end where the file name lives.
-fn truncate_left(text: &str, width: usize) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    if chars.len() <= width {
-        return text.to_string();
-    }
-    if width < 4 {
-        return chars[chars.len() - width..].iter().collect();
-    }
-    let keep = width - 1;
-    let tail: String = chars[chars.len() - keep..].iter().collect();
-    format!("…{tail}")
 }
 
 pub fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
