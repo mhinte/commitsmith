@@ -136,6 +136,15 @@ fn truncate_left(text: &str, width: usize) -> String {
     format!("…{tail}")
 }
 
+/// How many rows a line needs at this width, at least one.
+fn wrapped_rows(line: &str, width: usize) -> usize {
+    if width == 0 {
+        return 1;
+    }
+    let cells = unicode_width::UnicodeWidthStr::width(line);
+    cells.div_ceil(width).max(1)
+}
+
 pub fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
     // The list shows a shortened name; the diff names the file in full, so the
     // complete path is always on screen somewhere.
@@ -196,18 +205,28 @@ pub fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
         area,
     );
 
-    // A slim scrollbar: where in the file this window sits.
-    let total = app.staging.diff.lines().count();
+    // A slim scrollbar. The thumb is computed from *wrapped* rows, because a
+    // long line occupies more than one row on screen; counting lines made the
+    // bar lag behind what the eye saw.
+    let text_width = area.width.saturating_sub(2) as usize;
+    let heights: Vec<usize> = app
+        .staging
+        .diff
+        .lines()
+        .map(|line| wrapped_rows(line, text_width))
+        .collect();
+    let total: usize = heights.iter().sum();
+    let before: usize = heights.iter().take(offset.min(heights.len())).sum();
     if total > height.max(1) && area.height > 2 {
         let track = area.height.saturating_sub(2);
         let visible = height.min(total).max(1) as u16;
         let span = (track as usize * visible as usize / total).max(1) as u16;
-        let max_offset = total - visible as usize;
-        let start = (app.staging.diff_offset * track as usize)
-            .checked_div(max_offset)
-            .unwrap_or(0) as u16;
+        let start = (before * track as usize)
+            .checked_div(total.saturating_sub(visible as usize).max(1))
+            .unwrap_or(0)
+            .min(track.saturating_sub(span) as usize) as u16;
         for step in 0..span {
-            let y = area.y + 1 + start.min(track.saturating_sub(span)) + step;
+            let y = area.y + 1 + start + step;
             if y < area.y + 1 + track {
                 frame.render_widget(
                     Paragraph::new("▐").style(Style::default().fg(Color::Cyan)),
