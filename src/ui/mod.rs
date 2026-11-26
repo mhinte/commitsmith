@@ -1008,40 +1008,12 @@ fn highlighted_file(app: &App) -> Option<String> {
 
 /// Cut `text` from the left to `width` cells: the end of a path is the useful part.
 fn fit_left(text: &str, width: usize) -> String {
-    if unicode_width::UnicodeWidthStr::width(text) <= width {
-        return text.to_string();
-    }
-    let chars: Vec<char> = text.chars().collect();
-    let mut out = String::new();
-    let mut used = 0;
-    for c in chars.iter().rev() {
-        let cell = unicode_width::UnicodeWidthChar::width(*c).unwrap_or(1);
-        if used + cell + 1 > width {
-            break;
-        }
-        used += cell;
-        out.insert(0, *c);
-    }
-    format!("…{out}")
+    commitsmith::domain::text::fit_left(text, width)
 }
 
 /// Cut `text` to `width` display cells, with an ellipsis when it was longer.
 fn fit(text: &str, width: usize) -> String {
-    if unicode_width::UnicodeWidthStr::width(text) <= width {
-        return text.to_string();
-    }
-    let mut out = String::new();
-    let mut used = 0;
-    for c in text.chars() {
-        let cell = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1);
-        if used + cell + 1 > width {
-            break;
-        }
-        used += cell;
-        out.push(c);
-    }
-    out.push('…');
-    out
+    commitsmith::domain::text::fit(text, width)
 }
 
 /// Run the TUI until the user quits or hands the message over.

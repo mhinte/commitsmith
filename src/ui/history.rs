@@ -239,11 +239,5 @@ fn draw_release(frame: &mut Frame, app: &App, area: Rect) {
 
 /// Cut a line to `width` characters, with an ellipsis.
 pub fn crop(text: &str, width: usize) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    if chars.len() <= width {
-        return text.to_string();
-    }
-    let mut out: String = chars.into_iter().take(width.saturating_sub(1)).collect();
-    out.push('…');
-    out
+    commitsmith::domain::text::fit(text, width)
 }

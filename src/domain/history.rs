@@ -7,12 +7,7 @@ use std::collections::BTreeSet;
 
 /// Cut `text` to `width` characters, ending on an ellipsis when it was cut.
 fn crop(text: &str, width: usize) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    if chars.len() <= width {
-        return text.to_string();
-    }
-    let kept: String = chars[..width.saturating_sub(1)].iter().collect();
-    format!("{}…", kept.trim_end())
+    super::text::fit(text, width)
 }
 
 /// What a scope picker needs to offer.
