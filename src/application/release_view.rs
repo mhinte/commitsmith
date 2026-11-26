@@ -5,8 +5,12 @@ use super::*;
 /// Which commits the plan counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Basis {
-    /// Everything since the last version tag — the usual answer.
+    /// This branch's own work: everything since its merge base with the main
+    /// branch. The default, because it needs no tags and answers the question
+    /// "what would go into *this* release".
     #[default]
+    Branch,
+    /// Everything since the last version tag, for a repository that tags.
     Tag,
     /// The last N commits, for a repository that has no tags at all.
     Recent(usize),
@@ -16,15 +20,22 @@ impl Basis {
     /// `b` walks through these.
     pub fn next(self) -> Self {
         match self {
-            Self::Tag => Self::Recent(20),
+            Self::Tag => Self::Branch,
+            Self::Branch => Self::Recent(20),
             Self::Recent(20) => Self::Recent(50),
             Self::Recent(_) => Self::Tag,
         }
     }
 
-    pub fn label(self) -> Option<String> {
+    /// A label for the cases that are not "since the tag"; the branch case
+    /// fills in the base it found, so `label_for` takes it.
+    pub fn label_for(self, base: Option<&str>) -> Option<String> {
         match self {
             Self::Tag => None,
+            Self::Branch => Some(match base {
+                Some(base) => format!("on this branch, not on {base}"),
+                None => "on this branch".to_string(),
+            }),
             Self::Recent(count) => Some(format!("last {count} commits")),
         }
     }

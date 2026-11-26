@@ -43,13 +43,26 @@ impl App {
         };
         let tags = git.tags().unwrap_or_default();
         let last = commitsmith::domain::release::ReleasePlan::latest_tag(&tags);
-        let (window, limit) = match self.release.basis {
-            Basis::Tag => (last.as_deref(), self.config.history_depth.min(2000)),
-            Basis::Recent(count) => (None, count),
+        let limit = self.config.history_depth.min(2000);
+        let (commits, base) = match self.release.basis {
+            Basis::Tag => (
+                git.commits_since(last.as_deref(), limit)
+                    .unwrap_or_default(),
+                None,
+            ),
+            Basis::Recent(count) => (git.commits_since(None, count).unwrap_or_default(), None),
+            // Only this branch's own work: the merge base with the main branch is
+            // the honest cut, and it needs no tags at all.
+            Basis::Branch => match self.main_branch(git) {
+                Some(base) => (
+                    git.commits_not_on(&base, limit).unwrap_or_default(),
+                    Some(base),
+                ),
+                None => (git.commits_since(None, limit).unwrap_or_default(), None),
+            },
         };
-        let commits = git.commits_since(window, limit).unwrap_or_default();
         let mut plan = commitsmith::domain::release::ReleasePlan::build(last.as_deref(), commits);
-        plan.basis = self.release.basis.label();
+        plan.basis = self.release.basis.label_for(base.as_deref());
         self.release.plan = Some(plan);
     }
 
@@ -163,6 +176,19 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// The branch this one was forked from: `main`, `master` or their remote
+    /// counterparts, in that order. `Some` even when `HEAD` *is* that branch —
+    /// the plan then simply has no commits, which is truthful.
+    fn main_branch(&self, git: &dyn GitRepository) -> Option<String> {
+        let branches = git.branches().ok()?;
+        for candidate in ["main", "master", "origin/main", "origin/master"] {
+            if branches.iter().any(|branch| branch.name == candidate) {
+                return Some(candidate.to_string());
+            }
+        }
+        None
     }
 
     /// Write the plan to `RELEASE-NOTES-<version>.md` next to the changelog.

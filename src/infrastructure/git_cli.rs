@@ -173,6 +173,20 @@ impl GitRepository for GitBackend {
         self.reader.commits_since(since, limit)
     }
 
+    fn commits_not_on(&self, base: &str, limit: usize) -> Result<Vec<PastCommit>, GitError> {
+        // The merge base is the honest cut: everything after it is this branch's
+        // own work. Walking far enough matters — the base can be deep.
+        let merge_base = self.git(&["merge-base", base, "HEAD"])?;
+        let sha = merge_base.trim();
+        if sha.is_empty() {
+            return Err(GitError::invalid_state(format!(
+                "no common history with {base}"
+            )));
+        }
+        let window = limit.max(500);
+        self.reader.commits_since(Some(sha), window)
+    }
+
     fn diff(&self, path: &str, staged: bool) -> Result<String, GitError> {
         // No pager, no colour: the pane decides how to paint the hunks.
         let args: Vec<&str> = if staged {

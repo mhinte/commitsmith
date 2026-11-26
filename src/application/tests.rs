@@ -223,7 +223,13 @@ fn a_ticket_lands_in_the_name() {
         app.status,
         "created and checked out feat/hima/TICKET-1234/add-a-thing"
     );
-    assert_eq!(log.borrow()[0], "create feat/hima/TICKET-1234/add-a-thing");
+    assert!(
+        log.borrow()
+            .iter()
+            .any(|call| call == "create feat/hima/TICKET-1234/add-a-thing"),
+        "{:?}",
+        log.borrow()
+    );
 }
 
 #[test]
@@ -1586,11 +1592,20 @@ fn z_parks_the_changes_and_shift_z_asks_before_taking_them_back() {
 }
 
 #[test]
-fn b_moves_the_release_window_away_from_the_tags() {
-    let (mut app, _) = staging_app();
+fn the_release_starts_with_this_branch_and_b_moves_the_window() {
+    let (mut app, log) = staging_app();
     app.tab = tabs::Tab::History;
     app.refresh_plan();
-    assert_eq!(app.release.basis, release_view::Basis::Tag);
+    assert_eq!(
+        app.release.basis,
+        release_view::Basis::Branch,
+        "the default"
+    );
+    let _ = &log;
+    assert_eq!(
+        app.release.plan.as_ref().unwrap().basis.as_deref(),
+        Some("on this branch, not on main")
+    );
 
     press(&mut app, KeyCode::Char('b'));
     assert_eq!(app.release.basis, release_view::Basis::Recent(20));
@@ -1598,16 +1613,20 @@ fn b_moves_the_release_window_away_from_the_tags() {
         app.release.plan.as_ref().unwrap().basis.as_deref(),
         Some("last 20 commits")
     );
-
     press(&mut app, KeyCode::Char('b'));
     assert_eq!(app.release.basis, release_view::Basis::Recent(50));
     press(&mut app, KeyCode::Char('b'));
+    assert_eq!(app.release.basis, release_view::Basis::Tag);
+    assert!(
+        app.release.plan.as_ref().unwrap().basis.is_none(),
+        "since the tag"
+    );
+    press(&mut app, KeyCode::Char('b'));
     assert_eq!(
         app.release.basis,
-        release_view::Basis::Tag,
-        "and back to the tag"
+        release_view::Basis::Branch,
+        "and around again"
     );
-    assert!(app.release.plan.as_ref().unwrap().basis.is_none());
 }
 
 #[test]

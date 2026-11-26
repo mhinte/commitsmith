@@ -140,6 +140,13 @@ pub trait GitRepository {
         since: Option<&str>,
         limit: usize,
     ) -> Result<Vec<crate::domain::history::PastCommit>, GitError>;
+    /// Commits on `HEAD` that are not on `base` yet: the branch's own work,
+    /// found through the merge base rather than by guesswork.
+    fn commits_not_on(
+        &self,
+        base: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::domain::history::PastCommit>, GitError>;
     /// Ahead/behind per local branch, against its upstream. Branches without an
     /// upstream are not in the list — that is the caller's business to show.
     fn branch_sync(&self) -> Result<Vec<(String, usize, usize)>, GitError>;
@@ -299,6 +306,17 @@ mod tests {
             _since: Option<&str>,
             _limit: usize,
         ) -> Result<Vec<crate::domain::history::PastCommit>, GitError> {
+            Ok(Vec::new())
+        }
+
+        fn commits_not_on(
+            &self,
+            base: &str,
+            _limit: usize,
+        ) -> Result<Vec<crate::domain::history::PastCommit>, GitError> {
+            self.calls
+                .borrow_mut()
+                .push(format!("commits_not_on {base}"));
             Ok(Vec::new())
         }
 

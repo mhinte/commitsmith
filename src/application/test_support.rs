@@ -220,6 +220,16 @@ impl GitRepository for RecordingGit {
             .collect())
     }
 
+    fn commits_not_on(
+        &self,
+        base: &str,
+        _limit: usize,
+    ) -> Result<Vec<commitsmith::domain::history::PastCommit>, GitError> {
+        // A read, not an action: it stays out of the call log.
+        let _ = base;
+        Ok(self.commits.borrow().clone())
+    }
+
     fn fetch(&self) -> Result<(), GitError> {
         self.calls.borrow_mut().push("fetch".to_string());
         Ok(())
