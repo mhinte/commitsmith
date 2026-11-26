@@ -34,7 +34,7 @@ impl Tab {
     /// Short name for the tab bar.
     pub fn label(self) -> &'static str {
         match self {
-            Self::Commit => "Commit & Stage",
+            Self::Commit => "Commit",
             Self::Branches => "Branches",
             Self::History => "Historie & Release",
         }
