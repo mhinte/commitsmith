@@ -214,34 +214,6 @@ fn draw_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-/// Something to look at on a tab that is not built yet.
-#[allow(dead_code)]
-fn draw_placeholder(frame: &mut Frame, area: Rect, title: &str, text: &str) {
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::DarkGray))
-        .title(Span::styled(
-            format!(" {title} "),
-            Style::default().fg(Color::Gray),
-        ));
-    let mut lines = vec![Line::raw("")];
-    lines.push(Line::styled(
-        format!("  {text}"),
-        Style::default().fg(Color::DarkGray),
-    ));
-    lines.push(Line::raw(""));
-    lines.push(Line::styled(
-        "  1 back to the composer",
-        Style::default().fg(Color::Gray),
-    ));
-    frame.render_widget(
-        Paragraph::new(Text::from(lines))
-            .block(block)
-            .wrap(Wrap { trim: false }),
-        area,
-    );
-}
-
 /// Draws the form and returns the terminal cursor position, if any.
 fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
     let inner = area.inner(ratatui::layout::Margin::new(1, 1));
