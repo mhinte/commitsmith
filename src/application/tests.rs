@@ -1400,3 +1400,23 @@ fn custom_profile_types_are_accepted() {
     app.commit.subject = "add thing".into();
     assert!(!app.issues.iter().any(|i| i.field == "type"));
 }
+
+#[test]
+fn switching_to_the_branches_tab_costs_two_git_commands() {
+    // The tab needs the branch list and `git status`; nothing else. A switch used
+    // to probe ahead/behind as well, which was two more processes for arrows that
+    // were not on screen yet.
+    let (mut app, log) = staging_app();
+    log.borrow_mut().clear();
+    app.tab = tabs::Tab::Commit;
+    app.panel = Panel::Files;
+    press(&mut app, KeyCode::Char('2'));
+    assert_eq!(app.tab, tabs::Tab::Branches, "2 goes to the branches");
+    let calls = log.borrow().clone();
+    let expensive: Vec<&String> = calls
+        .iter()
+        .filter(|call| call.as_str() != "changes" && call.as_str() != "branches")
+        .collect();
+    assert!(expensive.is_empty(), "unexpected git calls: {expensive:?}");
+    assert!(calls.len() <= 2, "more than two calls: {calls:?}");
+}
