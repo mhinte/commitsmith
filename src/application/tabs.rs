@@ -163,8 +163,12 @@ impl Tab {
                 ("", "HEAD and remote-only branches cannot be deleted"),
             ],
             Self::History => vec![
-                ("", "the conventional log, its filters and the release"),
-                ("", "toolbox arrive with Epic 5"),
+                ("↓ ↑", "through the log"),
+                ("/", "filter by type, scope or ticket"),
+                ("c", "clear the filter"),
+                ("y", "write CHANGELOG.md for the next version"),
+                ("b", "basis: last tag, last 20 or last 50 commits"),
+                ("e", "export the section as RELEASE-NOTES-<version>.md"),
             ],
         }
     }
@@ -307,8 +311,16 @@ mod tests {
         );
 
         let history = Tab::History.help(false);
-        assert!(history.iter().all(|(key, _)| key.is_empty()));
-        assert!(history.iter().any(|(_, text)| text.contains("Epic 5")));
+        for expected in ["filter", "write CHANGELOG.md", "basis", "export"] {
+            assert!(
+                history.iter().any(|(_, text)| text.contains(expected)),
+                "{expected} missing: {history:?}"
+            );
+        }
+        assert!(
+            !history.iter().any(|(key, _)| *key == "Ctrl+S"),
+            "committing is not a key of this tab: {history:?}"
+        );
     }
 
     #[test]

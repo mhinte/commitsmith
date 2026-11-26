@@ -1584,3 +1584,55 @@ fn z_parks_the_changes_and_shift_z_asks_before_taking_them_back() {
         log.borrow()
     );
 }
+
+#[test]
+fn b_moves_the_release_window_away_from_the_tags() {
+    let (mut app, _) = staging_app();
+    app.tab = tabs::Tab::History;
+    app.refresh_plan();
+    assert_eq!(app.release.basis, release_view::Basis::Tag);
+
+    press(&mut app, KeyCode::Char('b'));
+    assert_eq!(app.release.basis, release_view::Basis::Recent(20));
+    assert_eq!(
+        app.release.plan.as_ref().unwrap().basis.as_deref(),
+        Some("last 20 commits")
+    );
+
+    press(&mut app, KeyCode::Char('b'));
+    assert_eq!(app.release.basis, release_view::Basis::Recent(50));
+    press(&mut app, KeyCode::Char('b'));
+    assert_eq!(
+        app.release.basis,
+        release_view::Basis::Tag,
+        "and back to the tag"
+    );
+    assert!(app.release.plan.as_ref().unwrap().basis.is_none());
+}
+
+#[test]
+fn e_writes_the_release_notes_to_a_file() {
+    let dir = std::env::temp_dir().join(format!("commitsmith-export-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (mut app, _) = staging_app();
+    app.tab = tabs::Tab::History;
+    app.set_changelog_root(dir.clone());
+    app.refresh_plan();
+    press(&mut app, KeyCode::Char('e'));
+
+    let written: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.to_string_lossy().contains("RELEASE-NOTES-"))
+        .collect();
+    assert_eq!(
+        written.len(),
+        1,
+        "one file, not a directory full: {}",
+        app.status
+    );
+    let text = std::fs::read_to_string(&written[0]).unwrap();
+    assert!(text.contains("## "), "the section has a heading: {text}");
+    std::fs::remove_dir_all(&dir).ok();
+}

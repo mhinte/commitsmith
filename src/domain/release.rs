@@ -124,6 +124,9 @@ pub struct ReleasePlan {
     pub bump: Bump,
     /// Newest first, as they come from the log.
     pub commits: Vec<PastCommit>,
+    /// Where the window came from when it is not the last tag, e.g.
+    /// "last 20 commits". `None` means "since the tag".
+    pub basis: Option<String>,
 }
 
 impl ReleasePlan {
@@ -144,6 +147,7 @@ impl ReleasePlan {
             next,
             bump,
             commits,
+            basis: None,
         }
     }
 
@@ -172,9 +176,10 @@ impl ReleasePlan {
 
     /// Title of the preview: what would be written and why.
     pub fn headline(&self) -> String {
-        let since = match &self.last_tag {
-            Some(tag) => format!("since {tag}"),
-            None => "no tag yet · starting at 0.1.0".to_string(),
+        let since = match (&self.basis, &self.last_tag) {
+            (Some(basis), _) => basis.clone(),
+            (None, Some(tag)) => format!("since {tag}"),
+            (None, None) => "no tag yet · starting at 0.1.0".to_string(),
         };
         format!(
             "{} → {} ({}) · {} · {} commits",

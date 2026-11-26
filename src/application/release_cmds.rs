@@ -1,5 +1,6 @@
 //! Tab 3: the log's keyboard, its lint marks and the release write.
 
+use super::release_view::Basis;
 use super::*;
 
 impl App {
@@ -42,14 +43,14 @@ impl App {
         };
         let tags = git.tags().unwrap_or_default();
         let last = commitsmith::domain::release::ReleasePlan::latest_tag(&tags);
-        let limit = self.config.history_depth.min(2000);
-        let commits = git
-            .commits_since(last.as_deref(), limit)
-            .unwrap_or_default();
-        self.release.plan = Some(commitsmith::domain::release::ReleasePlan::build(
-            last.as_deref(),
-            commits,
-        ));
+        let (window, limit) = match self.release.basis {
+            Basis::Tag => (last.as_deref(), self.config.history_depth.min(2000)),
+            Basis::Recent(count) => (None, count),
+        };
+        let commits = git.commits_since(window, limit).unwrap_or_default();
+        let mut plan = commitsmith::domain::release::ReleasePlan::build(last.as_deref(), commits);
+        plan.basis = self.release.basis.label();
+        self.release.plan = Some(plan);
     }
 
     /// How a past commit's message would be judged today: the same rules the
@@ -133,6 +134,22 @@ impl App {
             KeyCode::End => self.release.log.selected = len.saturating_sub(1),
             KeyCode::Char('/') => self.release.log.open_filter(),
             KeyCode::Char('c') => self.release.log.clear_filter(),
+            // `b` moves the window: last tag, last 20, last 50. A repository
+            // without tags still gets an answer that is not "everything".
+            KeyCode::Char('b') => {
+                self.release.basis = self.release.basis.next();
+                self.refresh_plan();
+                let label = self
+                    .release
+                    .plan
+                    .as_ref()
+                    .map(|plan| plan.headline())
+                    .unwrap_or_default();
+                self.status = label;
+            }
+            // `e` writes the section to a file: a TUI list cannot be selected
+            // with the mouse, and the text is what people paste into a release.
+            KeyCode::Char('e') => self.export_plan(),
             KeyCode::Char('y') => {
                 self.release.confirm = true;
                 let next = self
@@ -145,6 +162,28 @@ impl App {
                     format!("write CHANGELOG.md for {next}? Enter confirms · Esc cancels");
             }
             _ => {}
+        }
+    }
+
+    /// Write the plan to `RELEASE-NOTES-<version>.md` next to the changelog.
+    pub(crate) fn export_plan(&mut self) {
+        let Some(plan) = self.release.plan.clone() else {
+            self.status = "no plan to export yet".to_string();
+            return;
+        };
+        let Some(root) = self.release.changelog_root.clone() else {
+            self.status = "no directory to write to".to_string();
+            return;
+        };
+        let name = format!("RELEASE-NOTES-{}.md", plan.next);
+        let path = root.join(name);
+        let text = commitsmith::domain::release::render_section(
+            &plan,
+            Some(commitsmith::infrastructure::clock::today()).as_deref(),
+        );
+        match std::fs::write(&path, text) {
+            Ok(()) => self.status = format!("wrote {}", path.display()),
+            Err(error) => self.status = format!("cannot write {}: {error}", path.display()),
         }
     }
 
