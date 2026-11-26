@@ -374,6 +374,12 @@ fn run_setup_dialog(config: &Config) -> Result<(), String> {
         .with_template(&config.branch_template)
         .unwrap_or_else(|_| commitsmith::domain::setup::SetupAnswers::defaults(&profiles));
 
+    // The wizard asks the same questions as `commitsmith init`, so it starts from
+    // the values in effect instead of from defaults.
+    let mut current = current;
+    current.profile = config.profile.clone();
+    current.emoji = config.emoji;
+    current.co_author = config.co_author;
     let mut wizard = ui::wizard::Wizard::new(current, profiles);
     let mut terminal = ratatui::init();
     let outcome = ui::wizard::run(&mut terminal, &mut wizard);

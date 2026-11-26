@@ -32,16 +32,18 @@ enum Step {
     Template,
     Profile,
     Emoji,
+    Footer,
     Alias,
 }
 
-const STEPS: [Step; 7] = [
+const STEPS: [Step; 8] = [
     Step::Author,
     Step::Prefix,
     Step::Reference,
     Step::Template,
     Step::Profile,
     Step::Emoji,
+    Step::Footer,
     Step::Alias,
 ];
 
@@ -54,6 +56,7 @@ impl Step {
             Self::Template => "Branch template ({type}/{author}/{ticket}/{slug})",
             Self::Profile => "Commit profile",
             Self::Emoji => "Emojis in the type picker? (y/n)",
+            Self::Footer => "Add `Co-authored-by:` to the commit footer? (y/n)",
             Self::Alias => "Install `git smith` alias? (y/n)",
         }
     }
@@ -66,6 +69,7 @@ impl Step {
             Self::Template => answers.branch_template.as_str().to_string(),
             Self::Profile => answers.profile.clone(),
             Self::Emoji => yes_no(answers.emoji),
+            Self::Footer => yes_no(answers.co_author),
             Self::Alias => yes_no(answers.git_alias),
         }
     }
@@ -127,6 +131,11 @@ impl Wizard {
             Step::Emoji => {
                 let mut next = self.answers.clone();
                 next.emoji = truthy(&value, self.answers.emoji);
+                Ok(next)
+            }
+            Step::Footer => {
+                let mut next = self.answers.clone();
+                next.co_author = truthy(&value, self.answers.co_author);
                 Ok(next)
             }
             Step::Alias => {
@@ -294,6 +303,7 @@ mod tests {
             ("{type}/{author}/{slug}", Step::Template),
             ("angular", Step::Profile),
             ("y", Step::Emoji),
+            ("n", Step::Footer),
             ("n", Step::Alias),
         ] {
             assert_eq!(wizard.current(), step);
@@ -306,6 +316,8 @@ mod tests {
                 assert_eq!(answers.ticket_prefix, "ABC");
                 assert_eq!(answers.profile, "angular");
                 assert!(answers.emoji);
+                // The footer question is part of the same dialog now.
+                assert!(!answers.co_author);
                 assert!(!answers.git_alias);
             }
             _ => panic!("expected a saved outcome"),
