@@ -90,7 +90,7 @@ fn draw_full(frame: &mut Frame, app: &App, area: Rect) {
         Tab::Branches => {
             // The wizard sits beside the list, not on top of it: while it is
             // open the branches stay visible for reference.
-            if app.wizard.open {
+            if app.branches.wizard.open {
                 // The wizard opens as a pane under the list, like the diff under
                 // the files: the branches and the files stay in view.
                 let [tree, right] =
@@ -110,7 +110,7 @@ fn draw_full(frame: &mut Frame, app: &App, area: Rect) {
                     frame,
                     app,
                     files,
-                    app.panel == crate::application::Panel::Files,
+                    app.branches.panel == crate::application::Panel::Files,
                 );
                 if app.staging.show_diff {
                     staging::draw_diff(frame, app, diff);
@@ -131,7 +131,7 @@ fn draw_full(frame: &mut Frame, app: &App, area: Rect) {
                     frame,
                     app,
                     files,
-                    app.panel == crate::application::Panel::Files,
+                    app.branches.panel == crate::application::Panel::Files,
                 );
                 if app.staging.show_diff {
                     staging::draw_diff(frame, app, diff);

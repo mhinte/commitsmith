@@ -67,24 +67,27 @@ fn space_stages_and_v_shows_the_diff() {
 #[test]
 fn the_arrows_move_through_the_branch_list() {
     let mut app = app_on_the_branch_tab(RecordingGit::new(&["main", "feature"], "main"));
-    assert_eq!(app.branches.selected, 0, "HEAD stays on top");
+    assert_eq!(app.branches.list.selected, 0, "HEAD stays on top");
     press(&mut app, KeyCode::Down);
-    assert_eq!(app.branches.selected, 1);
+    assert_eq!(app.branches.list.selected, 1);
     press(&mut app, KeyCode::Down);
-    assert_eq!(app.branches.selected, 1, "the list ends here");
+    assert_eq!(app.branches.list.selected, 1, "the list ends here");
     press(&mut app, KeyCode::Up);
-    assert_eq!(app.branches.selected, 0);
+    assert_eq!(app.branches.list.selected, 0);
     press(&mut app, KeyCode::End);
-    assert_eq!(app.branches.selected, 1);
+    assert_eq!(app.branches.list.selected, 1);
     press(&mut app, KeyCode::Home);
-    assert_eq!(app.branches.selected, 0);
+    assert_eq!(app.branches.list.selected, 0);
 }
 
 #[test]
 fn j_and_k_no_longer_move_the_branch_list() {
     let mut app = app_on_the_branch_tab(RecordingGit::new(&["main", "feature"], "main"));
     type_text(&mut app, "jk");
-    assert_eq!(app.branches.selected, 0, "letters are not navigation here");
+    assert_eq!(
+        app.branches.list.selected, 0,
+        "letters are not navigation here"
+    );
 }
 
 #[test]
@@ -95,7 +98,10 @@ fn enter_checks_out_the_selected_branch() {
     press(&mut app, KeyCode::Enter);
     assert_eq!(app.status, "checked out feature");
     assert_eq!(app.repo.line, "feature · 0 staged");
-    assert!(app.branches.current().unwrap().is_head, "list reloaded");
+    assert!(
+        app.branches.list.current().unwrap().is_head,
+        "list reloaded"
+    );
 }
 
 #[test]
@@ -104,17 +110,17 @@ fn deleting_a_branch_takes_a_second_press() {
     press(&mut app, KeyCode::Down);
     press(&mut app, KeyCode::Char('d'));
     assert_eq!(
-        app.branches.confirming.as_deref(),
+        app.branches.list.confirming.as_deref(),
         Some("feature"),
         "the first press only asks"
     );
     assert!(app.status.contains("press d again"), "{}", app.status);
-    assert_eq!(app.branches.len(), 2, "nothing deleted yet");
+    assert_eq!(app.branches.list.len(), 2, "nothing deleted yet");
 
     press(&mut app, KeyCode::Char('d'));
-    assert_eq!(app.branches.len(), 1, "the second press deletes");
+    assert_eq!(app.branches.list.len(), 1, "the second press deletes");
     assert_eq!(app.status, "deleted feature");
-    assert!(app.branches.confirming.is_none());
+    assert!(app.branches.list.confirming.is_none());
 }
 
 #[test]
@@ -124,8 +130,8 @@ fn esc_cancels_the_deletion_instead_of_quitting() {
     press(&mut app, KeyCode::Char('d'));
     press(&mut app, KeyCode::Esc);
     assert!(!app.should_quit, "Esc only cancels the pending deletion");
-    assert!(app.branches.confirming.is_none());
-    assert_eq!(app.branches.len(), 2);
+    assert!(app.branches.list.confirming.is_none());
+    assert_eq!(app.branches.list.len(), 2);
 
     press(&mut app, KeyCode::Esc);
     assert!(app.should_quit, "a second Esc leaves");
@@ -137,7 +143,7 @@ fn the_checked_out_branch_cannot_be_deleted() {
     let mut app = app_on_the_branch_tab(git);
     press(&mut app, KeyCode::Char('d'));
     assert!(app.status.contains("is checked out"), "{}", app.status);
-    assert_eq!(app.branches.len(), 2);
+    assert_eq!(app.branches.list.len(), 2);
 }
 
 #[test]
@@ -150,7 +156,7 @@ fn a_merge_conflict_is_reported_and_the_app_stays_usable() {
     assert!(!app.status.is_empty());
     assert!(!app.should_quit);
     press(&mut app, KeyCode::Up);
-    assert_eq!(app.branches.selected, 0, "still navigable");
+    assert_eq!(app.branches.list.selected, 0, "still navigable");
 }
 
 #[test]
@@ -190,9 +196,9 @@ fn wizard_app(git: RecordingGit) -> App {
 fn n_opens_the_wizard_and_esc_closes_it_again() {
     let mut app = wizard_app(RecordingGit::new(&["main"], "main"));
     press(&mut app, KeyCode::Char('n'));
-    assert!(app.wizard.open);
+    assert!(app.branches.wizard.open);
     press(&mut app, KeyCode::Esc);
-    assert!(!app.wizard.open, "Esc closes the wizard");
+    assert!(!app.branches.wizard.open, "Esc closes the wizard");
     assert!(!app.should_quit, "and does not leave the program");
 }
 
@@ -208,7 +214,7 @@ fn enter_creates_the_branch_and_checks_it_out() {
     press(&mut app, KeyCode::Enter);
 
     assert_eq!(app.status, "created and checked out feat/hima/add-a-thing");
-    assert!(!app.wizard.open, "the wizard closes on success");
+    assert!(!app.branches.wizard.open, "the wizard closes on success");
     assert_eq!(
         log.borrow().as_slice(),
         [
@@ -247,8 +253,11 @@ fn a_duplicate_branch_keeps_the_wizard_open() {
     type_text(&mut app, "thing");
     press(&mut app, KeyCode::Enter);
 
-    assert!(app.wizard.open, "the user can correct and try again");
-    assert!(app.wizard.error.is_some());
+    assert!(
+        app.branches.wizard.open,
+        "the user can correct and try again"
+    );
+    assert!(app.branches.wizard.error.is_some());
     assert!(app.status.contains("already exists"), "{}", app.status);
 }
 
@@ -257,11 +266,11 @@ fn the_wizard_takes_the_keys_away_from_the_list() {
     let mut app = wizard_app(RecordingGit::new(&["main", "feature"], "main"));
     press(&mut app, KeyCode::Char('n'));
     press(&mut app, KeyCode::Char('j'));
-    assert_eq!(app.branches.selected, 0, "j does not move the list");
+    assert_eq!(app.branches.list.selected, 0, "j does not move the list");
     press(&mut app, KeyCode::Tab);
     press(&mut app, KeyCode::Tab);
     press(&mut app, KeyCode::Char('j'));
-    assert_eq!(app.wizard.description, "j");
+    assert_eq!(app.branches.wizard.description, "j");
     // `j` is text, not navigation — in the wizard and outside it.
 }
 
@@ -277,21 +286,21 @@ fn wizard_on_description(git: RecordingGit) -> App {
 fn arrows_in_the_wizard_move_through_the_text() {
     let mut app = wizard_on_description(RecordingGit::new(&["main"], "main"));
     type_text(&mut app, "abc");
-    let field = app.wizard.field;
+    let field = app.branches.wizard.field;
     press(&mut app, KeyCode::Left);
-    assert_eq!(app.wizard.field, field, "left stays in the field");
-    assert_eq!(app.wizard.cursor(), 2);
+    assert_eq!(app.branches.wizard.field, field, "left stays in the field");
+    assert_eq!(app.branches.wizard.cursor(), 2);
     press(&mut app, KeyCode::Char('X'));
     assert_eq!(
-        app.wizard.description, "abXc",
+        app.branches.wizard.description, "abXc",
         "typing happens at the caret"
     );
     press(&mut app, KeyCode::Home);
-    assert_eq!(app.wizard.cursor(), 0);
+    assert_eq!(app.branches.wizard.cursor(), 0);
     press(&mut app, KeyCode::Delete);
-    assert_eq!(app.wizard.description, "bXc");
+    assert_eq!(app.branches.wizard.description, "bXc");
     press(&mut app, KeyCode::End);
-    assert_eq!(app.wizard.cursor(), 3);
+    assert_eq!(app.branches.wizard.cursor(), 3);
 }
 
 #[test]
@@ -299,13 +308,22 @@ fn arrows_in_an_empty_wizard_field_move_between_fields() {
     let mut app = wizard_on_description(RecordingGit::new(&["main"], "main"));
     // Down/Up are the field keys, also inside an empty field.
     press(&mut app, KeyCode::Up);
-    assert_eq!(app.wizard.field, branch_wizard::WizardField::Ticket);
+    assert_eq!(
+        app.branches.wizard.field,
+        branch_wizard::WizardField::Ticket
+    );
     press(&mut app, KeyCode::Down);
-    assert_eq!(app.wizard.field, branch_wizard::WizardField::Description);
+    assert_eq!(
+        app.branches.wizard.field,
+        branch_wizard::WizardField::Description
+    );
     // Left/Right stay on the (empty) text.
     press(&mut app, KeyCode::Left);
-    assert_eq!(app.wizard.field, branch_wizard::WizardField::Description);
-    assert_eq!(app.wizard.cursor(), 0);
+    assert_eq!(
+        app.branches.wizard.field,
+        branch_wizard::WizardField::Description
+    );
+    assert_eq!(app.branches.wizard.cursor(), 0);
 }
 
 #[test]
@@ -313,21 +331,21 @@ fn arrows_on_the_kind_field_cycle_it() {
     let mut app = wizard_app(RecordingGit::new(&["main"], "main"));
     press(&mut app, KeyCode::Char('n'));
     assert_eq!(
-        app.wizard.kind,
+        app.branches.wizard.kind,
         commitsmith::domain::branch::BranchKind::Feat
     );
     press(&mut app, KeyCode::Right);
     assert_eq!(
-        app.wizard.kind,
+        app.branches.wizard.kind,
         commitsmith::domain::branch::BranchKind::Fix
     );
     press(&mut app, KeyCode::Left);
     assert_eq!(
-        app.wizard.kind,
+        app.branches.wizard.kind,
         commitsmith::domain::branch::BranchKind::Feat
     );
     assert_eq!(
-        app.wizard.field,
+        app.branches.wizard.field,
         branch_wizard::WizardField::Kind,
         "and stay"
     );
@@ -1427,7 +1445,7 @@ fn switching_to_the_branches_tab_costs_two_git_commands() {
     let (mut app, log) = staging_app();
     log.borrow_mut().clear();
     app.tab = tabs::Tab::Commit;
-    app.panel = Panel::Files;
+    app.branches.panel = Panel::Files;
     press(&mut app, KeyCode::Char('2'));
     assert_eq!(app.tab, tabs::Tab::Branches, "2 goes to the branches");
     let calls = log.borrow().clone();

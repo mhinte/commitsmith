@@ -152,7 +152,7 @@ pub fn draw_diff(frame: &mut Frame, app: &App, area: Rect) {
         Some(path) => format!(" diff · {path} "),
         None => " diff ".to_string(),
     };
-    let lit = app.panel == crate::application::Panel::Diff;
+    let lit = app.branches.panel == crate::application::Panel::Diff;
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(if lit {

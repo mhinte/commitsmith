@@ -71,11 +71,12 @@ impl App {
                 self.refresh_sync();
                 let changed = self
                     .branches
+                    .list
                     .items
                     .iter()
                     .filter(|branch| !branch.is_remote)
                     .filter(|branch| {
-                        matches!(self.branches.sync.get(&branch.name), Some((ahead, behind)) if *ahead > 0 || *behind > 0)
+                        matches!(self.branches.list.sync.get(&branch.name), Some((ahead, behind)) if *ahead > 0 || *behind > 0)
                     })
                     .count();
                 self.status = match changed {

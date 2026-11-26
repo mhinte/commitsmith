@@ -30,7 +30,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    if app.branches.is_empty() {
+    if app.branches.list.is_empty() {
         lines.push(Line::raw(""));
         lines.push(Line::styled("  no local branches yet", MUTED));
         frame.render_widget(Paragraph::new(Text::from(lines)).block(block(app)), area);
@@ -42,11 +42,12 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let height = area.height.saturating_sub(2) as usize;
     let offset = app
         .branches
+        .list
         .selected
         .saturating_sub(height.saturating_sub(1));
     let mut remote_heading_drawn = false;
 
-    for (index, branch) in app.branches.items.iter().enumerate().skip(offset) {
+    for (index, branch) in app.branches.list.items.iter().enumerate().skip(offset) {
         if lines.len() >= height {
             break;
         }
@@ -54,7 +55,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             remote_heading_drawn = true;
             lines.push(Line::styled("  remotes", MUTED));
         }
-        let selected = index == app.branches.selected;
+        let selected = index == app.branches.list.selected;
         let marker = if selected { "▸ " } else { "  " };
         let head = if branch.is_head { "● " } else { "○ " };
         let width = area.width.saturating_sub(12) as usize;
@@ -84,6 +85,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             // say more than `origin/main` and fit in a narrow panel.
             Span::styled(
                 app.branches
+                    .list
                     .sync_label(branch)
                     .map(|label| format!(" {label}"))
                     .unwrap_or_default(),
@@ -102,7 +104,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         });
     }
 
-    if let Some(name) = &app.branches.confirming {
+    if let Some(name) = &app.branches.list.confirming {
         lines.push(Line::raw(""));
         lines.push(Line::from(vec![
             Span::styled(" delete ", theme::warn()),
@@ -114,7 +116,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn block(app: &App) -> Block<'static> {
-    let count = app.branches.len();
+    let count = app.branches.list.len();
     let title = if count == 1 {
         " branches · 1 ".to_string()
     } else {
@@ -122,7 +124,8 @@ fn block(app: &App) -> Block<'static> {
     };
     // The wizard and the other panes take the bright border when they have the
     // keyboard; the list is only lit while it is the one being used.
-    let lit = !app.wizard.open && app.panel == crate::application::Panel::Branches;
+    let lit =
+        !app.branches.wizard.open && app.branches.panel == crate::application::Panel::Branches;
     let (border, title_style) = if lit {
         (theme::focused_panel(), theme::focused_panel())
     } else {

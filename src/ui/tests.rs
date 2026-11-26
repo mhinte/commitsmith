@@ -812,7 +812,7 @@ fn the_bright_border_follows_the_keyboard_to_the_file_list() {
 
     // Tab walks the panes; the bright border walks with it.
     press(&mut app, KeyCode::Tab);
-    assert_eq!(app.panel, crate::application::Panel::Files);
+    assert_eq!(app.branches.panel, crate::application::Panel::Files);
     terminal.draw(|frame| draw(frame, &app)).unwrap();
     let branches_after = style_of(&terminal, "branches");
     let staging_after = style_of(&terminal, "files");

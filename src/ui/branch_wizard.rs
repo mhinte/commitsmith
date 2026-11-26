@@ -20,7 +20,7 @@ const VALUE_OFFSET: u16 = 1 + 1 + 12 + 2;
 
 /// Draws the wizard and returns the caret, when a text field has it.
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
-    let wizard = &app.wizard;
+    let wizard = &app.branches.wizard;
     let mut lines = Vec::new();
 
     for field in WizardField::ALL {

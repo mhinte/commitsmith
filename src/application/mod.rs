@@ -7,6 +7,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 pub mod branch_wizard;
 pub mod branches;
+pub mod branches_view;
 pub mod composer;
 pub mod form;
 pub mod history_view;
@@ -26,6 +27,7 @@ use std::collections::HashMap;
 
 use crate::commit::Commit;
 
+use branches_view::BranchesView;
 use form::Form;
 use history_view::History;
 use release_view::Release;
@@ -228,6 +230,8 @@ pub struct App {
     pub history: History,
     /// Tab 3: the log and the release toolbox.
     pub release: Release,
+    /// Tab 2: branches, panes, wizard.
+    pub branches: BranchesView,
     pub rules: Rules,
     pub scopes: ScopeInfo,
     /// The commit being written and where the cursor sits.
@@ -245,16 +249,10 @@ pub struct App {
     pub setup_request: bool,
     /// Which of the three surfaces is showing.
     pub tab: tabs::Tab,
-    /// Branch explorer state.
-    pub branches: BranchList,
-    /// Which pane has the keyboard on tab 2.
-    pub panel: Panel,
     /// Staging list of tab 1.
     pub staging: Staging,
     /// Where the toggle is written, once the caller supplied one.
     config_store: Option<Box<dyn ConfigStore>>,
-    /// The conventional branch wizard on tab 2.
-    pub wizard: BranchWizard,
     pub should_quit: bool,
     pub show_help: bool,
 }
@@ -284,6 +282,7 @@ impl App {
             repo: RepoState::default(),
             history: History::default(),
             release: Release::default(),
+            branches: BranchesView::default(),
             rules,
             scopes,
             config_store: None,
@@ -294,10 +293,7 @@ impl App {
             commit_mode: false,
             setup_request: false,
             tab: tabs::Tab::Commit,
-            branches: BranchList::default(),
-            panel: Panel::default(),
             staging: Staging::default(),
-            wizard: BranchWizard::default(),
             should_quit: false,
             show_help: false,
         };
@@ -450,17 +446,17 @@ impl App {
                 if self.staging.show_diff {
                     // Second press: close it and keep the list.
                     self.staging.show_diff = false;
-                    self.panel = Panel::Files;
+                    self.branches.panel = Panel::Files;
                     return;
                 }
                 // Only now is the diff worth a process.
                 self.staging.show_diff = true;
-                self.panel = Panel::Diff;
+                self.branches.panel = Panel::Diff;
                 if let Some(git) = self.repo.git.as_deref() {
                     let _ = self.staging.refresh_diff(git);
                 }
             }
-            KeyCode::Esc => self.panel = Panel::Branches,
+            KeyCode::Esc => self.branches.panel = Panel::Branches,
             _ => {}
         }
     }
@@ -518,7 +514,13 @@ impl App {
     /// Re-read the branch list, the branch line in the footer, and the context
     /// the composer takes from the branch.
     pub fn reload_branches(&mut self) {
-        if let Some(branch) = self.branches.items.iter().find(|branch| branch.is_head) {
+        if let Some(branch) = self
+            .branches
+            .list
+            .items
+            .iter()
+            .find(|branch| branch.is_head)
+        {
             let name = Some(branch.name.clone());
             if self.repo.branch_name != name {
                 self.repo.branch_name = name;
@@ -526,7 +528,7 @@ impl App {
             }
         }
         let failure = {
-            let (git, branches) = (&self.repo.git, &mut self.branches);
+            let (git, branches) = (&self.repo.git, &mut self.branches.list);
             let Some(git) = git.as_deref() else {
                 return;
             };
@@ -578,7 +580,7 @@ impl App {
     /// Keys of the second and third tab. The composer's keys must not fire here.
     fn branch_key(&mut self, key: KeyEvent) {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        if self.wizard.open {
+        if self.branches.wizard.open {
             self.wizard_key(key);
             return;
         }
@@ -586,11 +588,11 @@ impl App {
         // every tab, so the hand learns one gesture.
         if key.code == KeyCode::Tab || key.code == KeyCode::BackTab {
             let back = key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
-            if self.panel == Panel::Branches {
+            if self.branches.panel == Panel::Branches {
                 // Coming back to the files: they may have changed in the editor.
                 self.reload_staging();
             }
-            self.panel = match (self.panel, back) {
+            self.branches.panel = match (self.branches.panel, back) {
                 (Panel::Branches, false) => Panel::Files,
                 (Panel::Files, false) => {
                     if self.staging.show_diff {
@@ -612,16 +614,16 @@ impl App {
             };
             return;
         }
-        if self.panel == Panel::Files {
+        if self.branches.panel == Panel::Files {
             self.files_key(key);
             return;
         }
-        if self.panel == Panel::Diff {
+        if self.branches.panel == Panel::Diff {
             let page = 10usize;
             match key.code {
                 KeyCode::Esc | KeyCode::Char('v') => {
                     self.staging.show_diff = false;
-                    self.panel = Panel::Files;
+                    self.branches.panel = Panel::Files;
                 }
                 KeyCode::Down => self.staging.scroll_diff(1, page),
                 KeyCode::Up => self.staging.scroll_diff(-1, page),
@@ -639,33 +641,33 @@ impl App {
             // Only the arrows move through the list: `j`/`k` and `g`/`G` were a
             // second vocabulary nobody asked for.
             KeyCode::Down => {
-                self.branches.confirming = None;
+                self.branches.list.confirming = None;
                 self.status.clear();
-                self.branches.move_by(1);
+                self.branches.list.move_by(1);
             }
             KeyCode::Up => {
-                self.branches.confirming = None;
+                self.branches.list.confirming = None;
                 self.status.clear();
-                self.branches.move_by(-1);
+                self.branches.list.move_by(-1);
             }
             KeyCode::Home => {
-                self.branches.confirming = None;
-                self.branches.jump_to_start();
+                self.branches.list.confirming = None;
+                self.branches.list.jump_to_start();
             }
             KeyCode::End => {
-                self.branches.confirming = None;
-                self.branches.jump_to_end();
+                self.branches.list.confirming = None;
+                self.branches.list.jump_to_end();
             }
             KeyCode::Enter => self.checkout_selected(),
             KeyCode::Char('m') => self.merge_selected(),
             KeyCode::Char('d') => self.delete_selected(),
             KeyCode::Char('r') => self.reload_branches(),
             KeyCode::Char('f') => self.fetch_remote(),
-            KeyCode::Char('n') => self.wizard.start(),
+            KeyCode::Char('n') => self.branches.wizard.start(),
             KeyCode::Esc => {
                 // Esc is the cancel key while a deletion waits for its second
                 // press; otherwise it leaves the program as everywhere else.
-                if self.branches.confirming.take().is_none() {
+                if self.branches.list.confirming.take().is_none() {
                     self.should_quit = true;
                 }
             }
@@ -677,31 +679,35 @@ impl App {
     fn wizard_key(&mut self, key: KeyEvent) {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
-            KeyCode::Esc => self.wizard.close(),
+            KeyCode::Esc => self.branches.wizard.close(),
             KeyCode::Char('c') if ctrl => {
-                self.wizard.close();
+                self.branches.wizard.close();
                 self.should_quit = true;
             }
-            KeyCode::Tab => self.wizard.field = self.wizard.field.next(),
-            KeyCode::BackTab => self.wizard.field = self.wizard.field.previous(),
+            KeyCode::Tab => self.branches.wizard.field = self.branches.wizard.field.next(),
+            KeyCode::BackTab => self.branches.wizard.field = self.branches.wizard.field.previous(),
             // The same rules as in the composer: `←`/`→` are the text, `↑`/`↓`
             // walk the fields, `Tab` does both the obvious way.
             KeyCode::Left | KeyCode::Right => {
-                let has_text = self.wizard.current_text().is_some();
+                let has_text = self.branches.wizard.current_text().is_some();
                 match navigation::horizontal(key.code, has_text) {
-                    Some(navigation::Horizontal::Caret(delta)) => self.wizard.move_cursor(delta),
-                    Some(navigation::Horizontal::Value(delta)) => self.wizard.cycle_kind(delta > 0),
+                    Some(navigation::Horizontal::Caret(delta)) => {
+                        self.branches.wizard.move_cursor(delta)
+                    }
+                    Some(navigation::Horizontal::Value(delta)) => {
+                        self.branches.wizard.cycle_kind(delta > 0)
+                    }
                     None => {}
                 }
             }
-            KeyCode::Up => self.wizard.step(-1),
-            KeyCode::Down => self.wizard.step(1),
-            KeyCode::Home => self.wizard.jump(false),
-            KeyCode::End => self.wizard.jump(true),
-            KeyCode::Delete => self.wizard.delete(),
-            KeyCode::Backspace => self.wizard.backspace(),
+            KeyCode::Up => self.branches.wizard.step(-1),
+            KeyCode::Down => self.branches.wizard.step(1),
+            KeyCode::Home => self.branches.wizard.jump(false),
+            KeyCode::End => self.branches.wizard.jump(true),
+            KeyCode::Delete => self.branches.wizard.delete(),
+            KeyCode::Backspace => self.branches.wizard.backspace(),
             KeyCode::Enter => self.create_branch(),
-            KeyCode::Char(c) if !ctrl => self.wizard.push_char(c),
+            KeyCode::Char(c) if !ctrl => self.branches.wizard.push_char(c),
             _ => {}
         }
     }
@@ -714,7 +720,7 @@ impl App {
             .or_else(|| self.config.prefix.clone());
         let prefix = self.config.ticket_prefix.clone();
         let template = self.config.branch_template.clone();
-        let (git, wizard) = (&self.repo.git, &mut self.wizard);
+        let (git, wizard) = (&self.repo.git, &mut self.branches.wizard);
         let Some(git) = git.as_deref() else {
             self.status = "no repository".to_string();
             return;
@@ -729,7 +735,7 @@ impl App {
     }
 
     fn selected_branch(&mut self) -> Option<commitsmith::domain::ports::BranchInfo> {
-        self.branches.current().cloned()
+        self.branches.list.current().cloned()
     }
 
     fn checkout_selected(&mut self) {
@@ -789,8 +795,8 @@ impl App {
             );
             return;
         }
-        if self.branches.confirming.as_deref() != Some(branch.name.as_str()) {
-            self.branches.confirming = Some(branch.name.clone());
+        if self.branches.list.confirming.as_deref() != Some(branch.name.as_str()) {
+            self.branches.list.confirming = Some(branch.name.clone());
             self.status = format!("press d again to delete {}", branch.name);
             return;
         }
@@ -798,7 +804,7 @@ impl App {
             self.status = "no repository".to_string();
             return;
         };
-        self.branches.confirming = None;
+        self.branches.list.confirming = None;
         match git.delete_branch(&branch.name) {
             Ok(()) => {
                 self.status = format!("deleted {}", branch.name);
@@ -994,7 +1000,8 @@ impl App {
         }
         // Digits are text while a field is being typed into — in the composer
         // and in the branch wizard, where a ticket number starts with one.
-        let typing = (self.tab == tabs::Tab::Commit && self.is_editing()) || self.wizard.open;
+        let typing =
+            (self.tab == tabs::Tab::Commit && self.is_editing()) || self.branches.wizard.open;
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Char(digit @ '1'..='3') if !ctrl && !typing => {
@@ -1014,7 +1021,7 @@ impl App {
                         // tab that is merely being looked at.
                         // Every tab opens on its main pane, never on whatever was
                         // focused the last time it was looked at.
-                        self.panel = Panel::Branches;
+                        self.branches.panel = Panel::Branches;
                     }
                     return true;
                 }
