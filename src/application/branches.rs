@@ -71,17 +71,16 @@ impl BranchList {
         if branch.is_remote {
             return None;
         }
-        match (branch.upstream.as_ref(), self.sync.get(&branch.name)) {
-            // Short forms: the branch pane is narrow, and "no upstream" was
-            // truncated to "no u…" — a dash says the same without the noise.
-            (None, _) => Some("–".to_string()),
-            (Some(_), Some((0, 0))) | (Some(_), None) => Some("✓".to_string()),
-            (Some(_), Some((ahead, behind))) => match (*ahead, *behind) {
-                (ahead, 0) => Some(format!("↑{ahead}")),
-                (0, behind) => Some(format!("↓{behind}")),
-                (ahead, behind) => Some(format!("↑{ahead}↓{behind}")),
-            },
+        if branch.upstream.is_none() {
+            // "no upstream" was truncated to "no u…" in the narrow pane; a dash
+            // says the same without the noise.
+            return Some("–".to_string());
         }
+        let pair = self.sync.get(&branch.name).copied();
+        Some(match pair {
+            Some((0, 0)) | None => "✓".to_string(),
+            other => commitsmith::domain::branch::sync_label(other).unwrap_or_default(),
+        })
     }
 
     pub fn current(&self) -> Option<&BranchInfo> {

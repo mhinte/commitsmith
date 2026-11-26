@@ -395,13 +395,7 @@ impl App {
     /// Short state for the footer: `↑2 ↓1`, `in sync`, or `no upstream`.
     pub fn sync_label(&self) -> Option<String> {
         self.repo.git.as_ref()?;
-        Some(match self.repo.sync {
-            Some((0, 0)) => "✓".to_string(),
-            Some((ahead, 0)) => format!("↑{ahead}"),
-            Some((0, behind)) => format!("↓{behind}"),
-            Some((ahead, behind)) => format!("↑{ahead}↓{behind}"),
-            None => "–".to_string(),
-        })
+        commitsmith::domain::branch::sync_label(self.repo.sync)
     }
 
     /// Keys of the file list on tab 2: the same Space stages, the same arrows move.
@@ -1158,15 +1152,6 @@ impl App {
         // takes the arrows.
         if self.tab == tabs::Tab::History {
             self.history_key(key);
-            return;
-        }
-
-        // The file list lives on tab 2 now; Ctrl+L is the shortcut that takes
-        // the keyboard there, since it used to hand it over within tab 1.
-        if self.tab == tabs::Tab::Commit && key.code == KeyCode::Char('l') && ctrl {
-            self.tab = tabs::Tab::Branches;
-            self.branches.panel = Panel::Files;
-            self.reload_staging();
             return;
         }
 

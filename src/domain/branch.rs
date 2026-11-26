@@ -457,3 +457,31 @@ mod tests {
         assert_eq!(branch.to_string(), "docs/mmu/T-7/readme");
     }
 }
+
+/// How a branch stands against its upstream, in the two cells the pane has.
+///
+/// `None` means there is no upstream to compare with. Shared by the footer and
+/// the branch list, which used to format this differently in two places.
+pub fn sync_label(sync: Option<(usize, usize)>) -> Option<String> {
+    Some(match sync {
+        Some((0, 0)) => "✓".to_string(),
+        Some((ahead, 0)) => format!("↑{ahead}"),
+        Some((0, behind)) => format!("↓{behind}"),
+        Some((ahead, behind)) => format!("↑{ahead}↓{behind}"),
+        None => "–".to_string(),
+    })
+}
+
+#[cfg(test)]
+mod sync_label_tests {
+    use super::sync_label;
+
+    #[test]
+    fn the_short_forms_say_the_same_as_the_long_ones() {
+        assert_eq!(sync_label(Some((0, 0))).as_deref(), Some("✓"));
+        assert_eq!(sync_label(Some((2, 0))).as_deref(), Some("↑2"));
+        assert_eq!(sync_label(Some((0, 3))).as_deref(), Some("↓3"));
+        assert_eq!(sync_label(Some((2, 1))).as_deref(), Some("↑2↓1"));
+        assert_eq!(sync_label(None).as_deref(), Some("–"));
+    }
+}

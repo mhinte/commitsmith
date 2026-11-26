@@ -33,17 +33,6 @@ fn staging_app() -> (App, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
 }
 
 #[test]
-fn ctrl_l_takes_the_keyboard_to_the_file_list() {
-    let (mut app, _) = staging_app();
-    assert_eq!(app.tab, tabs::Tab::Commit);
-    press(&mut app, KeyCode::Char('l')); // plain l is text in the composer
-    assert_eq!(app.tab, tabs::Tab::Commit, "typing an l stays on tab 1");
-    ctrl(&mut app, 'l');
-    assert_eq!(app.tab, tabs::Tab::Branches, "the file list lives on tab 2");
-    assert_eq!(app.branches.panel, Panel::Files, "and it has the keyboard");
-}
-
-#[test]
 fn space_stages_and_v_shows_the_diff() {
     let (mut app, log) = staging_app();
     // The files live on tab 2 now; Tab puts the keyboard on them.
