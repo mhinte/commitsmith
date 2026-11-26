@@ -194,6 +194,8 @@ impl App {
             PickerKind::Profile => {
                 self.config.profile = choice;
                 self.rules = crate::validate::rules_from_config(&self.config);
+                // The log's marks were judged against the old rules.
+                self.history.rebuild_marks(&self.rules);
                 if !self.config.type_names().contains(&self.form.commit.kind) {
                     self.form.commit.kind = self
                         .config

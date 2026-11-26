@@ -69,28 +69,21 @@ impl App {
     /// How a past commit's message would be judged today: the same rules the
     /// composer and `commitsmith check` use.
     pub(crate) fn log_mark(&self, commit: &PastCommit) -> Severity {
-        let issues = self.log_issues(commit);
-        if issues.iter().any(|issue| issue.severity == Severity::Error) {
-            Severity::Error
-        } else if issues
-            .iter()
-            .any(|issue| issue.severity == Severity::Warning)
-        {
-            Severity::Warning
-        } else {
-            Severity::Info
-        }
+        self.history
+            .mark(commit)
+            .map(|mark| mark.severity)
+            .unwrap_or_else(|| history_view::severity_of(&self.log_issues(commit)))
     }
 
     /// The concrete findings for a past commit, so the detail pane can say which
     /// rule broke instead of only that something did.
     pub(crate) fn log_issues(&self, commit: &PastCommit) -> Vec<Issue> {
-        let mut text = commit.header();
-        if !commit.body.trim().is_empty() {
-            text.push_str("\n\n");
-            text.push_str(commit.body.trim_end());
+        match self.history.mark(commit) {
+            Some(mark) => mark.issues.clone(),
+            // A commit that arrived after the last rebuild: judge it once, the
+            // caller does not care where the answer came from.
+            None => validate::lint_with(&history_view::lint_text(commit), &self.rules),
         }
-        validate::lint_with(&text, &self.rules)
     }
 
     /// Keys of tab 3. While the filter line is open it swallows the characters,

@@ -380,6 +380,7 @@ impl App {
     /// Replace the list of recent commits offered as templates.
     pub fn set_history(&mut self, history: Vec<PastCommit>) {
         self.history.commits = history;
+        self.history.rebuild_marks(&self.rules);
     }
 
     /// Hand the application the repository it may act on, and fill the branch

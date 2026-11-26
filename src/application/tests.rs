@@ -877,6 +877,58 @@ fn past(id: &str, kind: &str, scope: Option<&str>, summary: &str, body: &str) ->
     }
 }
 
+#[test]
+fn the_log_reads_its_marks_from_the_cache() {
+    // The event loop redraws five times a second; judging the visible rows
+    // inside `draw` parsed the same messages again and again. The marks are
+    // computed once and only looked up afterwards — proven by poisoning the
+    // cache: the drawn mark follows the cache, not a fresh parse.
+    let mut app = App::default();
+    app.set_history(vec![
+        past("aaaaaaa1111111", "feat", Some("ui"), "add a picker", ""),
+        past("bbbbbbb2222222", "fix", None, "stop the crash", ""),
+    ]);
+    assert_eq!(app.history.marks.len(), 2, "one entry per commit");
+    let clean = app.history.commits[0].clone();
+    assert_eq!(app.log_mark(&clean), Severity::Info);
+
+    app.history.marks.insert(
+        clean.id.clone(),
+        crate::application::history_view::LintMark {
+            severity: Severity::Error,
+            issues: Vec::new(),
+        },
+    );
+    assert_eq!(
+        app.log_mark(&clean),
+        Severity::Error,
+        "the drawn mark must come from the cache"
+    );
+
+    // Judging again (new rules, new list) clears it.
+    app.history.rebuild_marks(&app.rules);
+    assert_eq!(app.log_mark(&clean), Severity::Info);
+}
+
+#[test]
+fn a_commit_that_arrived_late_is_judged_on_demand() {
+    let mut app = App::default();
+    app.set_history(vec![past("aaaaaaa1111111", "feat", None, "first", "")]);
+    let late = past("ccccccc3333333", "feat", None, "second", "");
+    assert!(app.history.mark(&late).is_none(), "not in the cache yet");
+    // No panic, and the same answer the cache would hold.
+    let issues = app.log_issues(&late);
+    let fresh = crate::validate::lint_with(
+        &crate::application::history_view::lint_text(&late),
+        &app.rules,
+    );
+    assert_eq!(issues, fresh, "on demand equals what the cache computes");
+    assert_eq!(
+        app.log_mark(&late),
+        crate::application::history_view::severity_of(&fresh)
+    );
+}
+
 fn app_with_history() -> App {
     let mut app = App::default();
     app.set_history(vec![
