@@ -593,7 +593,6 @@ fn a_cancelled_release_writes_nothing() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 
-    use crate::application::test_support::RecordingGit;
     let git = RecordingGit::new(&["main"], "main");
     let calls = git.calls();
     let mut app = App::with_config(Config::conventional(), Vec::new());
@@ -624,7 +623,6 @@ fn a_confirmed_release_writes_the_file_and_no_tag() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 
-    use crate::application::test_support::RecordingGit;
     let git = RecordingGit::new(&["main"], "main");
     git.commits
         .borrow_mut()
@@ -664,7 +662,6 @@ fn a_confirmed_release_writes_the_file_and_no_tag() {
 
 #[test]
 fn the_plan_names_the_next_version() {
-    use crate::application::test_support::RecordingGit;
     let git = RecordingGit::new(&["main"], "main");
     git.commits
         .borrow_mut()
@@ -1713,7 +1710,7 @@ fn e_writes_the_release_notes_to_a_file() {
 
     let written: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
-        .filter_map(|entry| entry.ok())
+        .filter_map(std::result::Result::ok)
         .map(|entry| entry.path())
         .filter(|path| path.to_string_lossy().contains("RELEASE-NOTES-"))
         .collect();

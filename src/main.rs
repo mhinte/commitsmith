@@ -377,7 +377,7 @@ fn run_setup_dialog(config: &Config) -> Result<(), String> {
     // The wizard asks the same questions as `commitsmith init`, so it starts from
     // the values in effect instead of from defaults.
     let mut current = current;
-    current.profile = config.profile.clone();
+    current.profile.clone_from(&config.profile);
     current.emoji = config.emoji;
     current.co_author = config.co_author;
     let mut wizard = ui::wizard::Wizard::new(current, profiles);
@@ -602,13 +602,10 @@ fn init_config(defaults: bool, force: bool) -> ExitCode {
         None
     };
 
-    let answers = match ui::init::ask(&ui::init::Options { defaults }, &profiles, current.as_ref())
-    {
-        Some(answers) => answers,
-        None => {
-            eprintln!("commitsmith: setup aborted, nothing written");
-            return ExitCode::FAILURE;
-        }
+    let Some(answers) = ui::init::ask(&ui::init::Options { defaults }, &profiles, current.as_ref())
+    else {
+        eprintln!("commitsmith: setup aborted, nothing written");
+        return ExitCode::FAILURE;
     };
 
     match commitsmith::infrastructure::config_toml::save_setup(&store, &answers) {

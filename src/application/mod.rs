@@ -144,7 +144,7 @@ impl Picker {
     pub fn preview(&self) -> Option<&str> {
         let visible = self.filtered();
         let idx = *visible.get(self.selected.min(visible.len().saturating_sub(1)))?;
-        self.previews.get(idx).map(|text| text.as_str())
+        self.previews.get(idx).map(std::string::String::as_str)
     }
 
     /// `1`..`9` jump straight to that entry, `0` to the last one. Only while the
@@ -306,7 +306,7 @@ impl App {
         // ticket-shaped word, because a renamed branch still carries one.
         ConventionalBranchName::parse(name)
             .ok()
-            .and_then(|parsed| parsed.ticket().map(|ticket| ticket.to_string()))
+            .and_then(|parsed| parsed.ticket().map(std::string::ToString::to_string))
             .or_else(|| commitsmith::domain::ticket::in_text(name))
     }
 
@@ -350,7 +350,7 @@ impl App {
         }
         match self.suggested_footer() {
             Some(footer) => {
-                self.form.commit.footer = footer.clone();
+                self.form.commit.footer.clone_from(&footer);
                 self.form.cursors[FIELDS.iter().position(|f| *f == Field::Footer).unwrap_or(0)] =
                     self.form.commit.footer.chars().count();
                 self.form.footer_seed = Some(footer);
@@ -652,7 +652,7 @@ impl App {
                 self.reload_staging();
             }
             self.branches.panel = match (self.branches.panel, back) {
-                (Panel::Branches, false) => Panel::Files,
+                (Panel::Branches, false) | (Panel::Diff, true) => Panel::Files,
                 (Panel::Files, false) => {
                     if self.branches.files.show_diff {
                         Panel::Diff
@@ -660,7 +660,6 @@ impl App {
                         Panel::Branches
                     }
                 }
-                (Panel::Diff, false) => Panel::Branches,
                 (Panel::Branches, true) => {
                     if self.branches.files.show_diff {
                         Panel::Diff
@@ -668,8 +667,7 @@ impl App {
                         Panel::Files
                     }
                 }
-                (Panel::Files, true) => Panel::Branches,
-                (Panel::Diff, true) => Panel::Files,
+                (Panel::Diff, false) | (Panel::Files, true) => Panel::Branches,
             };
             return;
         }
@@ -695,7 +693,7 @@ impl App {
             return;
         }
         match key.code {
-            KeyCode::Char('c') | KeyCode::Char('q') if ctrl => self.should_quit = true,
+            KeyCode::Char('c' | 'q') if ctrl => self.should_quit = true,
             KeyCode::Char('?') => self.show_help = true,
             // Only the arrows move through the list: `j`/`k` and `g`/`G` were a
             // second vocabulary nobody asked for.
@@ -1217,11 +1215,11 @@ impl App {
             && self.picker.is_none()
         {
             match key.code {
-                KeyCode::Char('p') | KeyCode::Char('P') => {
+                KeyCode::Char('p' | 'P') => {
                     self.sync_with_remote(true);
                     return;
                 }
-                KeyCode::Char('u') | KeyCode::Char('U') => {
+                KeyCode::Char('u' | 'U') => {
                     self.sync_with_remote(false);
                     return;
                 }
@@ -1275,13 +1273,12 @@ impl App {
                 self.setup_request = true;
                 self.should_quit = true;
             }
-            KeyCode::Char('c') | KeyCode::Char('q') if ctrl => self.should_quit = true,
+            KeyCode::Char('c' | 'q') if ctrl => self.should_quit = true,
             KeyCode::Char('s') if ctrl => self.finish(),
             // The IDE pair: what Ctrl+Space and Ctrl+Enter do in an editor.
             // Terminals send Ctrl+Space as NUL, which some of them report as
             // `Null` and others as `Char('\0')` — both mean "suggestions".
-            KeyCode::Null => self.open_suggestions(),
-            KeyCode::Char('\0') => self.open_suggestions(),
+            KeyCode::Null | KeyCode::Char('\0') => self.open_suggestions(),
             KeyCode::Char(' ') if ctrl => self.open_suggestions(),
             KeyCode::Enter if ctrl => self.finish(),
             KeyCode::Char('k') if ctrl => self.clear_field(),

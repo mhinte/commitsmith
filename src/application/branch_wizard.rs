@@ -176,7 +176,7 @@ impl BranchWizard {
     ) -> Result<String, String> {
         let preview = self
             .preview(author, ticket_prefix, template)
-            .map_err(describe)?;
+            .map_err(|error| describe(&error))?;
         if !preview.is_complete {
             let message = "describe the change first".to_string();
             self.error = Some(message.clone());
@@ -184,8 +184,11 @@ impl BranchWizard {
         }
         let checkout_failure = repo
             .create_branch(&preview.name)
-            .map_err(describe_git)
-            .and_then(|()| repo.checkout(&preview.name).map_err(describe_git));
+            .map_err(|error| describe_git(&error))
+            .and_then(|()| {
+                repo.checkout(&preview.name)
+                    .map_err(|error| describe_git(&error))
+            });
         if let Err(message) = checkout_failure {
             self.error = Some(message.clone());
             return Err(message);
@@ -329,12 +332,12 @@ impl BranchWizard {
 }
 
 /// Show a domain error in the wizard without the enum wrapper.
-fn describe(error: BranchError) -> String {
+fn describe(error: &BranchError) -> String {
     error.to_string()
 }
 
 /// Same for the git error: the message is what the user reads.
-fn describe_git(error: GitError) -> String {
+fn describe_git(error: &GitError) -> String {
     error.to_string()
 }
 

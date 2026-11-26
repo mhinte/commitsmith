@@ -111,9 +111,9 @@ fn confirm(label: &str, default: bool) -> bool {
         return default;
     }
     match line.trim().to_lowercase().as_str() {
-        "" => default,
         "y" | "yes" | "j" | "ja" => true,
         "n" | "no" | "nein" => false,
+        // An empty answer or anything unrecognised keeps the default.
         _ => default,
     }
 }

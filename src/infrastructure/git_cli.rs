@@ -645,7 +645,9 @@ mod tests {
         repo.unstage_move("a.txt", "b.txt").unwrap();
         let after = repo.changes().unwrap();
         assert!(
-            !after.iter().any(|file| file.is_staged()),
+            !after
+                .iter()
+                .any(crate::domain::ports::ChangedFile::is_staged),
             "nothing may stay staged: {after:?}"
         );
         assert!(
@@ -658,7 +660,13 @@ mod tests {
         // the old path alone has to work as well.
         repo.stage("a.txt").unwrap();
         repo.unstage("a.txt").unwrap();
-        assert!(!repo.changes().unwrap().iter().any(|file| file.is_staged()));
+        assert!(
+            !repo
+                .changes()
+                .unwrap()
+                .iter()
+                .any(crate::domain::ports::ChangedFile::is_staged)
+        );
 
         // Both sides together bring the rename back into the index.
         repo.stage_move("a.txt", "b.txt").unwrap();

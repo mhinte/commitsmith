@@ -94,7 +94,7 @@ impl App {
             self.show_help = true;
             return;
         }
-        if matches!(key.code, KeyCode::Char('c') | KeyCode::Char('q')) && ctrl {
+        if matches!(key.code, KeyCode::Char('c' | 'q')) && ctrl {
             self.should_quit = true;
             return;
         }
@@ -149,7 +149,7 @@ impl App {
                     .release
                     .plan
                     .as_ref()
-                    .map(|plan| plan.headline())
+                    .map(commitsmith::domain::ReleasePlan::headline)
                     .unwrap_or_default();
                 self.status = label;
             }

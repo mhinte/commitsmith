@@ -688,9 +688,9 @@ pub fn run(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
                 // A pasted block of text goes into the active field, line
                 // breaks included, instead of being replayed as key presses.
                 Some(Event::Paste(text)) => app.handle_paste(&text),
-                // A resize is not a state change, but it is a reason to draw.
-                Some(Event::Resize(_, _)) => {}
-                Some(_) | None => {}
+                // A resize is not a state change, but it is a reason to draw;
+                // everything else (and a tick without input) changes nothing.
+                _ => {}
             }
             app.should_quit
         },

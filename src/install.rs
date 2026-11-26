@@ -4,6 +4,7 @@
 //! fail. The binary knows its own path, so it can do the job itself and it works
 //! the same on Windows, macOS and Linux.
 
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 /// What the operation did, for the message the CLI prints.
@@ -120,7 +121,6 @@ fn is_our_binary(path: &Path) -> bool {
         return false;
     };
     let mut head = [0u8; 2];
-    use std::io::Read;
     if file.read_exact(&mut head).is_err() {
         return false;
     }
@@ -308,7 +308,6 @@ fn add_to_path(directory: &Path) -> Result<bool, String> {
             .append(true)
             .open(&file)
             .map_err(|error| format!("cannot write {}: {error}", file.display()))?;
-        use std::io::Write;
         writeln!(handle, "{prefix}# added by commitsmith --install\n{line}")
             .map_err(|error| format!("cannot write {}: {error}", file.display()))?;
         touched = true;

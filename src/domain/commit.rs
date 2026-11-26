@@ -119,12 +119,9 @@ pub fn parse(input: &str) -> Parsed {
         .collect();
 
     let mut parsed = Parsed::default();
-    let header_idx = match lines.iter().position(|line| !line.trim().is_empty()) {
-        Some(idx) => idx,
-        None => {
-            parsed.problems.push("message is empty".to_string());
-            return parsed;
-        }
+    let Some(header_idx) = lines.iter().position(|line| !line.trim().is_empty()) else {
+        parsed.problems.push("message is empty".to_string());
+        return parsed;
     };
 
     let header = lines[header_idx];

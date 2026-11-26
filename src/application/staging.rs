@@ -112,7 +112,7 @@ impl Staging {
     pub fn selected_is_staged(&self) -> bool {
         self.items
             .get(self.selected)
-            .map(|file| file.is_staged())
+            .map(commitsmith::domain::ports::ChangedFile::is_staged)
             .unwrap_or(false)
     }
 
@@ -273,7 +273,7 @@ mod tests {
         assert!(
             staging
                 .selected_file()
-                .map(|f| f.is_staged())
+                .map(commitsmith::domain::ports::ChangedFile::is_staged)
                 .unwrap_or(false)
         );
         staging.toggle(&repo).unwrap();

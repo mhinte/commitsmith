@@ -131,7 +131,7 @@ pub fn validate_with(commit: &Commit, rules: &Rules) -> Vec<Issue> {
             "scope should be one word, e.g. `api` or `parser`",
         ));
     }
-    if scope.chars().any(|c| c.is_uppercase()) {
+    if scope.chars().any(char::is_uppercase) {
         issues.push(Issue::warning("scope", "write the scope in lower case"));
     }
     if commit.scope.contains('(') || commit.scope.contains(')') {
@@ -157,7 +157,7 @@ pub fn validate_with(commit: &Commit, rules: &Rules) -> Vec<Issue> {
         if subject.ends_with('.') {
             issues.push(Issue::warning("subject", "drop the trailing period"));
         }
-        if subject.chars().next().is_some_and(|c| c.is_uppercase()) {
+        if subject.chars().next().is_some_and(char::is_uppercase) {
             issues.push(Issue::warning(
                 "subject",
                 "start the subject in lower case, the type already sets the tone",

@@ -194,7 +194,7 @@ mod tests {
     fn a_prefix_needs_to_start_with_a_letter() {
         assert!(matches!(
             TicketId::parse("123-456", ""),
-            Err(TicketIdError::BadPrefix(_)) | Err(TicketIdError::MissingPrefix)
+            Err(TicketIdError::BadPrefix(_) | TicketIdError::MissingPrefix)
         ));
         assert!(matches!(
             TicketId::parse("TICK ET-12", ""),

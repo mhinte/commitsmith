@@ -85,7 +85,7 @@ impl App {
             .history
             .commits
             .iter()
-            .map(|commit| commit.preview())
+            .map(commitsmith::domain::history::PastCommit::preview)
             .collect();
         // Start on the newest conventional commit: a plain message has no
         // type or scope to reuse.
@@ -93,7 +93,7 @@ impl App {
             .history
             .commits
             .iter()
-            .position(|commit| commit.conventional())
+            .position(commitsmith::domain::history::PastCommit::conventional)
             .unwrap_or(0);
         self.picker = Some(Picker {
             kind: PickerKind::History,

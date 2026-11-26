@@ -142,7 +142,7 @@ impl ReleasePlan {
             current.bump(bump)
         };
         Self {
-            last_tag: last_tag.map(|tag| tag.to_string()),
+            last_tag: last_tag.map(std::string::ToString::to_string),
             current,
             next,
             bump,
@@ -201,7 +201,7 @@ pub fn bump_for(commits: &[PastCommit]) -> Bump {
         } else {
             match commit.kind.as_deref() {
                 Some("feat") => Bump::Minor,
-                Some("fix") | Some("perf") => Bump::Patch,
+                Some("fix" | "perf") => Bump::Patch,
                 _ => Bump::None,
             }
         };
@@ -328,7 +328,7 @@ mod tests {
             summary: summary.to_string(),
             body: body.to_string(),
             kind: Some(kind.to_string()),
-            scope: scope.map(|value| value.to_string()),
+            scope: scope.map(std::string::ToString::to_string),
             files: Vec::new(),
         }
     }

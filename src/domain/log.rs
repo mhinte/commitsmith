@@ -145,8 +145,8 @@ mod tests {
             date: "today".to_string(),
             summary: summary.to_string(),
             body: body.to_string(),
-            kind: kind.map(|value| value.to_string()),
-            scope: scope.map(|value| value.to_string()),
+            kind: kind.map(std::string::ToString::to_string),
+            scope: scope.map(std::string::ToString::to_string),
             files: Vec::new(),
         }
     }

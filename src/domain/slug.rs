@@ -47,14 +47,12 @@ impl BranchSlug {
             // below only needs the lower-case spellings.
             for lower in ch.to_lowercase() {
                 match lower {
-                    'ä' => push_letters(&mut slug, "ae"),
-                    'ö' => push_letters(&mut slug, "oe"),
-                    'ü' => push_letters(&mut slug, "ue"),
-                    'ß' => push_letters(&mut slug, "ss"),
                     // Not diacritics, but they belong to the same family of
                     // names a commit subject may carry.
-                    'æ' => push_letters(&mut slug, "ae"),
-                    'œ' => push_letters(&mut slug, "oe"),
+                    'ä' | 'æ' => push_letters(&mut slug, "ae"),
+                    'ö' | 'œ' => push_letters(&mut slug, "oe"),
+                    'ü' => push_letters(&mut slug, "ue"),
+                    'ß' => push_letters(&mut slug, "ss"),
                     'þ' => push_letters(&mut slug, "th"),
                     'ð' | 'đ' => push_letters(&mut slug, "d"),
                     'ł' => push_letters(&mut slug, "l"),

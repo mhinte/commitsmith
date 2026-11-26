@@ -171,6 +171,8 @@ pub fn run(terminal: &mut DefaultTerminal) -> io::Result<Outcome> {
 }
 
 fn draw(frame: &mut ratatui::Frame, setup: &Setup) {
+    // Field text starts two columns in; the same constant positions the cursor.
+    const PAD: u16 = 2;
     let area = frame.area();
     let [_, body, _] = Layout::vertical([
         Constraint::Length(1),
@@ -196,8 +198,6 @@ fn draw(frame: &mut ratatui::Frame, setup: &Setup) {
         Layout::vertical([Constraint::Min(4), Constraint::Length(3)]).areas(inner);
 
     // Field text starts two columns in; the same constant positions the cursor.
-    const PAD: u16 = 2;
-
     let prefix_line = match setup.prefix() {
         Some(prefix) => Line::from(vec![
             Span::styled("  handle   ", theme::muted()),

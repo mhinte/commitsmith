@@ -133,11 +133,7 @@ fn transliterate(word: &str) -> String {
             c if c.is_ascii_alphanumeric() => out.push(c.to_ascii_lowercase()),
             // Accented latin letters: keep the base letter.
             c if c.is_alphanumeric() => {
-                if let Some(base) = c
-                    .to_lowercase()
-                    .next()
-                    .filter(|b| b.is_ascii_alphanumeric())
-                {
+                if let Some(base) = c.to_lowercase().next().filter(char::is_ascii_alphanumeric) {
                     out.push(base);
                 }
             }

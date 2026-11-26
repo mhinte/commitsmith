@@ -50,7 +50,7 @@ impl App {
             Some(idx) => (idx + types.len() - 1) % types.len(),
             None => 0,
         };
-        self.form.commit.kind = types[idx].clone();
+        self.form.commit.kind.clone_from(&types[idx]);
         self.form.type_touched = true;
         self.revalidate();
     }

@@ -116,7 +116,7 @@ mod sync_tests {
             name: name.to_string(),
             is_head: false,
             is_remote: remote,
-            upstream: upstream.map(|value| value.to_string()),
+            upstream: upstream.map(std::string::ToString::to_string),
         }
     }
 

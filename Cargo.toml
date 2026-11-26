@@ -23,6 +23,23 @@ unicode-width = "0.2"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_UI_WindowsAndMessaging"] }
 
+# The whole `pedantic` group is 435 findings, most of them noise (`must_use`,
+# `missing_errors_doc`, `use_self`) that makes a real finding invisible. These are
+# the ones that found actual problems in this tree; the rest stays off on purpose.
+[lints.clippy]
+# Not `match_same_arms`: it fires on the guarded `KeyCode` arms below, whose
+# bodies match but whose guards differ — the fix is the key dispatch table that
+# E6-20 owns. Same for `needless_pass_by_value`, which would reshape public
+# constructors with dozens of call sites.
+assigning_clones = "warn"
+redundant_closure_for_method_calls = "warn"
+literal_string_with_formatting_args = "warn"
+unused_self = "warn"
+items_after_statements = "warn"
+manual_let_else = "warn"
+unnested_or_patterns = "warn"
+explicit_iter_loop = "warn"
+
 [profile.release]
 lto = "thin"
 strip = true

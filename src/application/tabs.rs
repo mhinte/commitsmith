@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn digits_and_arrows_agree_with_the_order() {
-        assert_eq!(Tab::ALL.map(|tab| tab.number()), ['1', '2', '3']);
+        assert_eq!(Tab::ALL.map(super::Tab::number), ['1', '2', '3']);
         for (index, tab) in Tab::ALL.into_iter().enumerate() {
             assert_eq!(tab.index(), index);
             assert_eq!(Tab::from_digit(tab.number()), Some(tab));
