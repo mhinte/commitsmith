@@ -1171,6 +1171,13 @@ impl App {
             }
             KeyCode::Char('c') | KeyCode::Char('q') if ctrl => self.should_quit = true,
             KeyCode::Char('s') if ctrl => self.finish(),
+            // The IDE pair: what Ctrl+Space and Ctrl+Enter do in an editor.
+            // Terminals send Ctrl+Space as NUL, which some of them report as
+            // `Null` and others as `Char('\0')` — both mean "suggestions".
+            KeyCode::Null => self.open_suggestions(),
+            KeyCode::Char('\0') => self.open_suggestions(),
+            KeyCode::Char(' ') if ctrl => self.open_suggestions(),
+            KeyCode::Enter if ctrl => self.finish(),
             KeyCode::Char('k') if ctrl => self.clear_field(),
             KeyCode::Char('n') if ctrl => self.open_suggestions(),
             KeyCode::Char('t') if ctrl => self.open_type_picker(),

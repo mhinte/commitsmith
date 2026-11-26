@@ -396,6 +396,10 @@ fn ctrl(app: &mut App, c: char) {
     app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL));
 }
 
+fn press_with(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    app.handle_key(KeyEvent::new(code, modifiers));
+}
+
 #[test]
 fn ctrl_o_folds_the_optional_fields_and_keeps_their_text() {
     let mut app = App::with_config(Config::conventional(), Vec::new());
@@ -1439,4 +1443,53 @@ fn switching_to_the_branches_tab_costs_two_git_commands() {
         .collect();
     assert!(expensive.is_empty(), "unexpected git calls: {expensive:?}");
     assert!(calls.len() <= 2, "more than two calls: {calls:?}");
+}
+
+#[test]
+fn ctrl_enter_writes_the_message_like_ctrl_s() {
+    let (mut app, _) = staging_app();
+    press(&mut app, KeyCode::Tab); // type -> scope
+    press(&mut app, KeyCode::Tab); // scope -> subject
+    for c in "add the button".chars() {
+        press(&mut app, KeyCode::Char(c));
+    }
+    press_with(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
+    assert!(
+        app.output
+            .as_deref()
+            .unwrap_or_default()
+            .contains("add the button"),
+        "Ctrl+Enter hands the message over: {:?}",
+        app.status
+    );
+}
+
+#[test]
+fn ctrl_space_opens_the_suggestions_for_the_field() {
+    let (mut app, _) = staging_app();
+    app.set_scopes(ScopeInfo {
+        history: vec!["ui".into(), "api".into()],
+        configured: Vec::new(),
+    });
+    press(&mut app, KeyCode::Tab); // scope is the field with a list
+    press_with(&mut app, KeyCode::Char(' '), KeyModifiers::CONTROL);
+    assert!(
+        app.picker.is_some(),
+        "Ctrl+Space opens the list: {}",
+        app.status
+    );
+
+    let (mut app, _) = staging_app();
+    app.set_scopes(ScopeInfo {
+        history: vec!["ui".into()],
+        configured: Vec::new(),
+    });
+    press(&mut app, KeyCode::Tab);
+    // A terminal that sends NUL: crossterm may report it either way.
+    press_with(&mut app, KeyCode::Null, KeyModifiers::NONE);
+    assert!(
+        app.picker.is_some(),
+        "a bare NUL means the same: {}",
+        app.status
+    );
 }

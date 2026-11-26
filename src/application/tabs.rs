@@ -72,6 +72,10 @@ impl Tab {
                 ("A-u", "push"),
                 // Folding is a convenience; it yields to the keys people need.
                 ("C-o", "fold"),
+                // The IDE pair rides at the end: Ctrl+S already commits, so these
+                // two give up their place first when the line is narrow.
+                ("C-Enter", if commit_mode { "commit" } else { "message" }),
+                ("C-Space", "suggest"),
             ],
             // The first four are always shown; `d` and `m` are the actions
             // people look for, so they come before the wizard.
@@ -114,6 +118,11 @@ impl Tab {
                 ("Ctrl+P", "switch the type profile"),
                 ("Ctrl+R", "reuse a recent commit"),
                 ("Ctrl+K", "clear this field, the type stays"),
+                (
+                    "Ctrl+Space",
+                    "suggestions for this field (a terminal may send NUL)",
+                ),
+                ("Ctrl+Enter", "write the message, like Ctrl+S"),
                 ("S", "setup: author, ticket prefix, template, profile"),
                 (
                     "Ctrl+S",
