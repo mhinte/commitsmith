@@ -2,7 +2,9 @@
 
 #![allow(clippy::too_many_lines)]
 
+use super::form::*;
 use super::*;
+
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 #[test]
