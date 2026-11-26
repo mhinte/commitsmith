@@ -4,6 +4,7 @@
 //! shortcut that does nothing on the active tab must not be advertised, and a
 //! pane that grows a key only edits its own entry.
 
+use super::Panel;
 use commitsmith::domain::keymap::Keymap;
 
 /// The top-level surfaces of the program.
@@ -179,6 +180,50 @@ impl Tab {
     }
 }
 
+impl Tab {
+    /// The footer on tab 2 follows the pane, not the tab: `Space` stages in the
+    /// file list and does nothing in the branch list.
+    pub fn pane_keys(
+        self,
+        panel: Panel,
+        commit_mode: bool,
+        keymap: Keymap,
+    ) -> Vec<(&'static str, &'static str)> {
+        if self != Self::Branches {
+            return self.keys(commit_mode, keymap);
+        }
+        let mut keys = match panel {
+            Panel::Branches => vec![
+                ("↓ ↑", "move"),
+                ("Enter", "checkout"),
+                ("d", "delete"),
+                ("m", "merge"),
+                ("n", "new branch"),
+                ("f", "fetch"),
+                ("Tab", "pane"),
+            ],
+            Panel::Files => vec![
+                ("↓ ↑", "move"),
+                ("Space", "stage"),
+                ("v", "diff"),
+                ("r", "unstage"),
+                ("x", "discard"),
+                ("z", "stash"),
+                ("Tab", "pane"),
+            ],
+            Panel::Diff => vec![
+                ("↓ ↑", "scroll"),
+                ("PgUp PgDn", "page"),
+                ("Esc", "close"),
+                ("Tab", "pane"),
+            ],
+        };
+        keys.push(("1-3", "tabs"));
+        keys.push(("?", "help"));
+        keys
+    }
+}
+
 /// Move the entry with this key to `index`, keeping the rest in order.
 fn promote(keys: &mut Vec<(&'static str, &'static str)>, key: &str, index: usize) {
     if let Some(position) = keys.iter().position(|(name, _)| *name == key) {
@@ -190,6 +235,29 @@ fn promote(keys: &mut Vec<(&'static str, &'static str)>, key: &str, index: usize
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_footer_on_tab_2_follows_the_pane() {
+        let files = Tab::Branches.pane_keys(Panel::Files, false, Keymap::Default);
+        assert!(
+            files.iter().any(|(key, _)| *key == "r"),
+            "unstage is offered here"
+        );
+        assert!(files.iter().any(|(key, _)| *key == "x"), "discard too");
+
+        let branches = Tab::Branches.pane_keys(Panel::Branches, false, Keymap::Default);
+        assert!(
+            !branches.iter().any(|(key, _)| *key == "r"),
+            "not in the branch list"
+        );
+        assert!(branches.iter().any(|(key, _)| *key == "m"), "merge is");
+
+        let diff = Tab::Branches.pane_keys(Panel::Diff, false, Keymap::Default);
+        assert!(
+            diff.iter().any(|(key, _)| *key == "Esc"),
+            "the diff closes with Esc"
+        );
+    }
 
     #[test]
     fn the_ide_profile_leads_with_its_own_pair() {
