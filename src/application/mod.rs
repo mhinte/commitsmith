@@ -8,6 +8,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 pub mod branch_wizard;
 pub mod branches;
 pub mod composer;
+pub mod form;
 pub mod log;
 pub mod navigation;
 pub mod picker;
@@ -21,6 +22,8 @@ pub mod test_support;
 use std::collections::HashMap;
 
 use crate::commit::Commit;
+
+use form::Form;
 
 /// Reads a commit's file list when the history preview needs it.
 pub type FilesLoader = Box<dyn Fn(&str) -> Vec<String> + Send + Sync>;
@@ -217,10 +220,8 @@ pub struct App {
     pub repo_line: String,
     pub rules: Rules,
     pub scopes: ScopeInfo,
-    pub commit: Commit,
-    pub field: usize,
-    /// Cursor position per field, counted in characters, not bytes.
-    cursors: [usize; FIELDS.len()],
+    /// The commit being written and where the cursor sits.
+    pub form: Form,
     pub issues: Vec<Issue>,
     pub picker: Option<Picker>,
     /// Recent commits, offered by the history picker.
@@ -255,14 +256,6 @@ pub struct App {
     pub staging: Staging,
     /// Short name of the checked-out branch, for the context bridge.
     pub branch_name: Option<String>,
-    /// True once the user chose a type; the branch must not override it.
-    type_touched: bool,
-    /// What `seed_footer` last wrote, so a later suggestion may replace its own
-    /// text but never what the user typed.
-    footer_seed: Option<String>,
-    /// Body, breaking and footer folded away. Read from the config, written back
-    /// when `Ctrl+O` toggles it.
-    pub compact: bool,
     /// `(ahead, behind)` against the upstream; `None` when there is no upstream.
     pub sync: Option<(usize, usize)>,
     /// Where the toggle is written, once the caller supplied one.
@@ -289,7 +282,6 @@ impl Default for App {
 impl App {
     pub fn with_config(config: Config, warnings: Vec<String>) -> Self {
         let compact = config.compact_form;
-        let config_compact = compact;
         let rules = crate::validate::rules_from_config(&config);
         let scopes = crate::git::empty_scope_info(&config.scopes);
         let kind = config
@@ -298,17 +290,14 @@ impl App {
             .map(|t| t.name.clone())
             .unwrap_or_default();
         let mut app = Self {
-            commit: Commit {
-                kind,
-                ..Default::default()
+            form: Form {
+                compact,
+                ..Form::with_kind(kind)
             },
             config,
             repo_line: String::new(),
             rules,
             scopes,
-            field: 0,
-            cursors: [0; FIELDS.len()],
-            compact: config_compact,
             sync: None,
             config_store: None,
             issues: Vec::new(),
@@ -328,8 +317,6 @@ impl App {
             changelog_root: None,
             staging: Staging::default(),
             branch_name: None,
-            type_touched: false,
-            footer_seed: None,
             wizard: BranchWizard::default(),
             in_repository: false,
             files_loader: None,
@@ -386,24 +373,24 @@ impl App {
     /// "Untouched" means empty or exactly what an earlier suggestion wrote, so
     /// switching branches updates the reference but never overwrites typing.
     pub fn seed_footer(&mut self) {
-        let untouched = self.commit.footer.trim().is_empty()
-            || self.footer_seed.as_deref() == Some(self.commit.footer.as_str());
+        let untouched = self.form.commit.footer.trim().is_empty()
+            || self.form.footer_seed.as_deref() == Some(self.form.commit.footer.as_str());
         if !untouched {
             return;
         }
         match self.suggested_footer() {
             Some(footer) => {
-                self.commit.footer = footer.clone();
-                self.cursors[FIELDS.iter().position(|f| *f == Field::Footer).unwrap_or(0)] =
-                    self.commit.footer.chars().count();
-                self.footer_seed = Some(footer);
+                self.form.commit.footer = footer.clone();
+                self.form.cursors[FIELDS.iter().position(|f| *f == Field::Footer).unwrap_or(0)] =
+                    self.form.commit.footer.chars().count();
+                self.form.footer_seed = Some(footer);
             }
             None => {
                 // The suggestion is gone (no ticket, no co-author): clear what it
                 // wrote, but only that.
-                if self.footer_seed.is_some() {
-                    self.commit.footer.clear();
-                    self.footer_seed = None;
+                if self.form.footer_seed.is_some() {
+                    self.form.commit.footer.clear();
+                    self.form.footer_seed = None;
                 }
             }
         }
@@ -591,7 +578,7 @@ impl App {
     /// Take the commit type from the branch kind — but only while the user has
     /// not chosen a type themselves.
     fn apply_branch_type(&mut self) {
-        if self.type_touched {
+        if self.form.type_touched {
             return;
         }
         let Some(name) = self.branch_name.as_deref() else {
@@ -605,8 +592,8 @@ impl App {
         if !self.config.type_names().contains(&kind) {
             return;
         }
-        if self.commit.kind != kind {
-            self.commit.kind = kind;
+        if self.form.commit.kind != kind {
+            self.form.commit.kind = kind;
             self.revalidate();
         }
     }
@@ -904,44 +891,44 @@ impl App {
     }
 
     pub fn active_field(&self) -> Field {
-        FIELDS[self.field.min(FIELDS.len() - 1)]
+        FIELDS[self.form.field.min(FIELDS.len() - 1)]
     }
 
     /// Cursor of the active field.
     pub fn cursor(&self) -> usize {
-        self.cursors[self.field]
+        self.form.cursors[self.form.field]
     }
 
     /// Value of a field, for rendering.
     pub fn value(&self, field: Field) -> &str {
         match field {
-            Field::Type => &self.commit.kind,
-            Field::Scope => &self.commit.scope,
-            Field::Subject => &self.commit.subject,
-            Field::Body => &self.commit.body,
-            Field::Breaking => &self.commit.breaking,
-            Field::Footer => &self.commit.footer,
+            Field::Type => &self.form.commit.kind,
+            Field::Scope => &self.form.commit.scope,
+            Field::Subject => &self.form.commit.subject,
+            Field::Body => &self.form.commit.body,
+            Field::Breaking => &self.form.commit.breaking,
+            Field::Footer => &self.form.commit.footer,
         }
     }
 
     fn value_mut(&mut self, field: Field) -> &mut String {
         match field {
-            Field::Type => &mut self.commit.kind,
-            Field::Scope => &mut self.commit.scope,
-            Field::Subject => &mut self.commit.subject,
-            Field::Body => &mut self.commit.body,
-            Field::Breaking => &mut self.commit.breaking,
-            Field::Footer => &mut self.commit.footer,
+            Field::Type => &mut self.form.commit.kind,
+            Field::Scope => &mut self.form.commit.scope,
+            Field::Subject => &mut self.form.commit.subject,
+            Field::Body => &mut self.form.commit.body,
+            Field::Breaking => &mut self.form.commit.breaking,
+            Field::Footer => &mut self.form.commit.footer,
         }
     }
 
     pub fn revalidate(&mut self) {
-        self.issues = validate::validate_with(&self.commit, &self.rules);
+        self.issues = validate::validate_with(&self.form.commit, &self.rules);
     }
 
     /// Name, emoji and description of the current type, for the header.
     pub fn type_label(&self) -> String {
-        let commit = &self.commit;
+        let commit = &self.form.commit;
         let found = self.config.types().iter().find(|t| t.name == commit.kind);
         match found {
             Some(t) if self.config.emoji => match &t.emoji {
@@ -992,8 +979,8 @@ impl App {
     /// `Ctrl+O`: fold the optional fields away, or bring them back. The choice is
     /// written to the user config right away, so it survives the restart.
     fn toggle_compact_form(&mut self) {
-        self.compact = !self.compact;
-        self.config.compact_form = self.compact;
+        self.form.compact = !self.form.compact;
+        self.config.compact_form = self.form.compact;
         if !self.field_visible(self.active_field()) {
             // The subject stays visible in both states; it is where typing
             // continues after folding.
@@ -1010,7 +997,7 @@ impl App {
                 .map_err(|error| error.to_string()),
             None => Ok(()),
         };
-        self.status = match (self.compact, saved) {
+        self.status = match (self.form.compact, saved) {
             (true, Ok(())) => "compact form · Ctrl+O shows body, breaking and footer".to_string(),
             (false, Ok(())) => "full form · Ctrl+O folds it back".to_string(),
             (_, Err(error)) => format!("compact form not saved: {error}"),
@@ -1092,7 +1079,7 @@ impl App {
             };
             return;
         }
-        self.output = Some(self.commit.render());
+        self.output = Some(self.form.commit.render());
         self.should_quit = true;
         self.status = "handing the message over".to_string();
     }
@@ -1102,24 +1089,24 @@ impl App {
         if field == Field::Type {
             return;
         }
-        let cursor = self.cursors[self.field];
+        let cursor = self.form.cursors[self.form.field];
         let value = self.value_mut(field);
         let mut chars: Vec<char> = value.chars().collect();
         chars.insert(cursor.min(chars.len()), c);
         *value = chars.into_iter().collect();
-        self.cursors[self.field] = (cursor + 1).min(value.chars().count());
+        self.form.cursors[self.form.field] = (cursor + 1).min(value.chars().count());
         self.revalidate();
     }
 
     fn move_cursor(&mut self, delta: isize) {
         let len = self.value(self.active_field()).chars().count();
-        let cursor = self.cursors[self.field];
+        let cursor = self.form.cursors[self.form.field];
         let next = if delta < 0 {
             cursor.saturating_sub(delta.unsigned_abs())
         } else {
             (cursor + delta as usize).min(len)
         };
-        self.cursors[self.field] = next;
+        self.form.cursors[self.form.field] = next;
     }
 
     /// `↑`/`↓` inside a multiline field stay on the line where possible, and
@@ -1135,7 +1122,7 @@ impl App {
             return;
         }
         let value = self.value(field).to_string();
-        let cursor = self.cursors[self.field];
+        let cursor = self.form.cursors[self.form.field];
         let chars: Vec<char> = value.chars().collect();
         let line_start = chars[..cursor.min(chars.len())]
             .iter()
@@ -1155,7 +1142,7 @@ impl App {
                 .map(|idx| idx + 1)
                 .unwrap_or(0);
             let prev_len = line_start - 1 - prev_start;
-            self.cursors[self.field] = prev_start + column.min(prev_len);
+            self.form.cursors[self.form.field] = prev_start + column.min(prev_len);
         } else {
             let rest: Vec<char> = chars[cursor.min(chars.len())..].to_vec();
             match rest.iter().position(|c| *c == '\n') {
@@ -1166,7 +1153,7 @@ impl App {
                         .iter()
                         .position(|c| *c == '\n')
                         .unwrap_or(chars.len() - next_start);
-                    self.cursors[self.field] = next_start + column.min(next_len);
+                    self.form.cursors[self.form.field] = next_start + column.min(next_len);
                 }
                 None => self.next_field(),
             }

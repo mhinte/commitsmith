@@ -23,7 +23,7 @@ impl App {
 
     pub(crate) fn open_scope_picker(&mut self) {
         // Offer what the user already typed in the scope field first.
-        let typed = self.commit.scope.trim().to_string();
+        let typed = self.form.commit.scope.trim().to_string();
         let mut items = Vec::new();
         let mut values = Vec::new();
         for scope in self.scopes.matching(&typed) {
@@ -109,27 +109,27 @@ impl App {
         if let Some(kind) = template.kind {
             if self.rules.types.is_empty() || self.rules.types.contains(&kind) {
                 applied.push("type");
-                self.commit.kind = kind;
-                self.type_touched = true;
+                self.form.commit.kind = kind;
+                self.form.type_touched = true;
             }
         }
         if let Some(scope) = template.scope {
             if !scope.is_empty() {
                 applied.push("scope");
-                self.commit.scope = scope;
+                self.form.commit.scope = scope;
             }
         }
         // Subject and body come from the commit, not from a rendered template:
         // the template carries the whole message, which used to land in the body
         // while the subject stayed empty.
         // A subject the user already typed wins; the reused one only fills a gap.
-        if self.commit.subject.trim().is_empty() && !past.summary.trim().is_empty() {
+        if self.form.commit.subject.trim().is_empty() && !past.summary.trim().is_empty() {
             applied.push("subject");
-            self.commit.subject = past.summary.clone();
+            self.form.commit.subject = past.summary.clone();
         }
         if !past.body.trim().is_empty() {
             applied.push("body");
-            self.commit.body = past.body.clone();
+            self.form.commit.body = past.body.clone();
         }
 
         if applied.is_empty() {
@@ -154,7 +154,7 @@ impl App {
     ) {
         let current = match kind {
             PickerKind::Profile => self.config.profile.clone(),
-            _ => self.commit.kind.clone(),
+            _ => self.form.commit.kind.clone(),
         };
         let selected = values
             .iter()
@@ -174,16 +174,16 @@ impl App {
     pub(crate) fn apply_picker_choice(&mut self, kind: PickerKind, choice: String) {
         match kind {
             PickerKind::Type => {
-                self.commit.kind = choice;
-                self.type_touched = true;
+                self.form.commit.kind = choice;
+                self.form.type_touched = true;
                 self.next_field();
             }
-            PickerKind::Scope => self.commit.scope = choice,
+            PickerKind::Scope => self.form.commit.scope = choice,
             PickerKind::Profile => {
                 self.config.profile = choice;
                 self.rules = crate::validate::rules_from_config(&self.config);
-                if !self.config.type_names().contains(&self.commit.kind) {
-                    self.commit.kind = self
+                if !self.config.type_names().contains(&self.form.commit.kind) {
+                    self.form.commit.kind = self
                         .config
                         .type_names()
                         .first()

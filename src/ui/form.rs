@@ -21,7 +21,7 @@ pub(crate) fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16
         if !app.field_visible(*field) {
             continue;
         }
-        let active = idx == app.field && app.picker.is_none() && !app.show_help;
+        let active = idx == app.form.field && app.picker.is_none() && !app.show_help;
         let label_style = if active {
             Style::default()
                 .fg(Color::Cyan)
@@ -172,7 +172,10 @@ pub(crate) fn draw_form(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16
 
 /// Characters in the subject, and the limit they are measured against.
 pub(crate) fn subject_len(app: &App) -> (usize, usize) {
-    (app.commit.subject.chars().count(), app.rules.max_subject)
+    (
+        app.form.commit.subject.chars().count(),
+        app.rules.max_subject,
+    )
 }
 
 /// Soft-wrap a field value to `width`.

@@ -7,16 +7,16 @@ use super::*;
 
 impl App {
     pub(crate) fn focus(&mut self, index: usize) {
-        self.field = index % FIELDS.len();
+        self.form.field = index % FIELDS.len();
         let len = self.value(self.active_field()).chars().count();
-        self.cursors[self.field] = self.cursors[self.field].min(len);
+        self.form.cursors[self.form.field] = self.form.cursors[self.form.field].min(len);
     }
 
     /// Move to the next field that is actually on screen. Hidden fields keep
     /// their content, so walking past them must not clear or skip anything else.
     pub(crate) fn step_field(&mut self, delta: isize) {
         let len = FIELDS.len() as isize;
-        let mut index = self.field as isize;
+        let mut index = self.form.field as isize;
         for _ in 0..len {
             index = (index + delta).rem_euclid(len);
             if self.field_visible(FIELDS[index as usize]) {
@@ -36,7 +36,7 @@ impl App {
 
     /// A field is on screen unless it is optional and the form is compact.
     pub(crate) fn field_visible(&self, field: Field) -> bool {
-        !self.compact || !field.optional()
+        !self.form.compact || !field.optional()
     }
 
     pub(crate) fn cycle_type(&mut self, forward: bool) {
@@ -44,14 +44,14 @@ impl App {
         if types.is_empty() {
             return;
         }
-        let current = types.iter().position(|kind| *kind == self.commit.kind);
+        let current = types.iter().position(|kind| *kind == self.form.commit.kind);
         let idx = match current {
             Some(idx) if forward => (idx + 1) % types.len(),
             Some(idx) => (idx + types.len() - 1) % types.len(),
             None => 0,
         };
-        self.commit.kind = types[idx].clone();
-        self.type_touched = true;
+        self.form.commit.kind = types[idx].clone();
+        self.form.type_touched = true;
         self.revalidate();
     }
 
@@ -82,9 +82,9 @@ impl App {
 
     pub(crate) fn home(&mut self) {
         let value = self.value(self.active_field()).to_string();
-        let cursor = self.cursors[self.field].min(value.chars().count());
+        let cursor = self.form.cursors[self.form.field].min(value.chars().count());
         let chars: Vec<char> = value.chars().collect();
-        self.cursors[self.field] = chars[..cursor]
+        self.form.cursors[self.form.field] = chars[..cursor]
             .iter()
             .rposition(|c| *c == '\n')
             .map(|idx| idx + 1)
@@ -93,9 +93,9 @@ impl App {
 
     pub(crate) fn end(&mut self) {
         let value = self.value(self.active_field()).to_string();
-        let cursor = self.cursors[self.field].min(value.chars().count());
+        let cursor = self.form.cursors[self.form.field].min(value.chars().count());
         let chars: Vec<char> = value.chars().collect();
-        self.cursors[self.field] = chars[cursor..]
+        self.form.cursors[self.form.field] = chars[cursor..]
             .iter()
             .position(|c| *c == '\n')
             .map(|offset| cursor + offset)
@@ -107,7 +107,7 @@ impl App {
         if field == Field::Type {
             return;
         }
-        let cursor = self.cursors[self.field];
+        let cursor = self.form.cursors[self.form.field];
         if cursor == 0 {
             return;
         }
@@ -115,7 +115,7 @@ impl App {
         let mut chars: Vec<char> = value.chars().collect();
         chars.remove(cursor - 1);
         *value = chars.into_iter().collect();
-        self.cursors[self.field] = cursor - 1;
+        self.form.cursors[self.form.field] = cursor - 1;
         self.revalidate();
     }
 
@@ -124,7 +124,7 @@ impl App {
         if field == Field::Type {
             return;
         }
-        let cursor = self.cursors[self.field];
+        let cursor = self.form.cursors[self.form.field];
         let value = self.value_mut(field);
         let mut chars: Vec<char> = value.chars().collect();
         if cursor < chars.len() {
@@ -147,7 +147,7 @@ impl App {
             return;
         }
         *self.value_mut(field) = String::new();
-        self.cursors[self.field] = 0;
+        self.form.cursors[self.form.field] = 0;
         self.revalidate();
         self.status = format!("cleared {}", field.label());
     }

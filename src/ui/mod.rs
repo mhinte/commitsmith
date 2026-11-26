@@ -220,11 +220,12 @@ fn draw_tab_bar(frame: &mut Frame, app: &App, area: Rect) {
 /// One pane for the message and its checks: the preview is what would be
 /// committed, and the findings belong right under it, not in a second box.
 fn draw_content(frame: &mut Frame, app: &App, area: Rect) {
-    let message = app.commit.render();
+    let message = app.form.commit.render();
     // Only a completely blank composer gets the hints. With just a scope typed
     // the message is already worth showing — that was the "preview does not
     // update" complaint: the placeholder stayed until a subject existed.
-    let empty = app.commit.subject.trim().is_empty() && app.commit.scope.trim().is_empty();
+    let empty =
+        app.form.commit.subject.trim().is_empty() && app.form.commit.scope.trim().is_empty();
     let mut lines: Vec<Line> = message
         .lines()
         .map(|line| Line::raw(line.to_string()))
@@ -296,7 +297,7 @@ fn draw_compact(frame: &mut Frame, app: &App, area: Rect) {
     .areas(area);
 
     let (errors, warnings) = validate::count(&app.issues);
-    let step = format!("{}/{}", app.field + 1, FIELDS.len());
+    let step = format!("{}/{}", app.form.field + 1, FIELDS.len());
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(MUTED)
@@ -310,11 +311,11 @@ fn draw_compact(frame: &mut Frame, app: &App, area: Rect) {
         );
 
     let header_line = Line::from(vec![
-        Span::styled(format!(" {} ", app.commit.kind), theme::accent()),
+        Span::styled(format!(" {} ", app.form.commit.kind), theme::accent()),
         Span::styled(
             format!(
                 "{} chars · {}",
-                app.commit.subject.chars().count(),
+                app.form.commit.subject.chars().count(),
                 app.active_field().label()
             ),
             MUTED,
@@ -345,7 +346,7 @@ fn draw_compact(frame: &mut Frame, app: &App, area: Rect) {
     lines.push(Line::styled(
         format!(
             "→ {}",
-            app.commit.render().lines().next().unwrap_or_default()
+            app.form.commit.render().lines().next().unwrap_or_default()
         ),
         MUTED,
     ));

@@ -189,7 +189,7 @@ fn the_subject_counter_sits_next_to_the_subject() {
     use ratatui::backend::TestBackend;
 
     let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
-    app.commit.subject = "add the thing".to_string();
+    app.form.commit.subject = "add the thing".to_string();
     app.revalidate();
     let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
@@ -326,7 +326,7 @@ fn every_field_and_the_whole_footer_fit() {
     use ratatui::backend::TestBackend;
 
     let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
-    app.commit.footer = "Refs TICKET-42\nCo-authored-by: hima".to_string();
+    app.form.commit.footer = "Refs TICKET-42\nCo-authored-by: hima".to_string();
     let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
     let screen = rows(&terminal).join("\n");
@@ -643,7 +643,7 @@ fn typing_a_scope_updates_the_preview_on_screen() {
     for c in "ui".chars() {
         press(&mut app, KeyCode::Char(c));
     }
-    app.commit.subject = "add the button".to_string();
+    app.form.commit.subject = "add the button".to_string();
 
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();

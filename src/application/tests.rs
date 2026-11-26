@@ -348,7 +348,7 @@ fn the_composer_follows_the_same_rules() {
     assert_eq!(app.active_field(), Field::Scope);
     assert_eq!(app.cursor(), 2);
     press(&mut app, KeyCode::Char('X'));
-    assert_eq!(app.commit.scope, "abXc");
+    assert_eq!(app.form.commit.scope, "abXc");
 
     // Up/Down are the fields.
     press(&mut app, KeyCode::Down);
@@ -380,7 +380,10 @@ fn tab_and_shift_tab_step_through_every_field() {
 fn the_composer_never_sees_keys_from_the_branch_tab() {
     let mut app = app_on_the_branch_tab(RecordingGit::new(&["main"], "main"));
     type_text(&mut app, "wxyz");
-    assert_eq!(app.commit.subject, "", "typing must not reach the subject");
+    assert_eq!(
+        app.form.commit.subject, "",
+        "typing must not reach the subject"
+    );
 }
 
 fn press(app: &mut App, code: KeyCode) {
@@ -401,7 +404,7 @@ fn ctrl_o_folds_the_optional_fields_and_keeps_their_text() {
     app.handle_paste("body text");
 
     ctrl(&mut app, 'o');
-    assert!(app.compact, "Ctrl+O folds");
+    assert!(app.form.compact, "Ctrl+O folds");
     assert_eq!(app.value(Field::Body), "body text");
     assert_ne!(
         app.active_field(),
@@ -410,15 +413,15 @@ fn ctrl_o_folds_the_optional_fields_and_keeps_their_text() {
     );
 
     // The folded text is still part of the message and still validated.
-    app.commit.subject = "add a thing".to_string();
-    let rendered = app.commit.render();
+    app.form.commit.subject = "add a thing".to_string();
+    let rendered = app.form.commit.render();
     assert!(
         rendered.contains("body text"),
         "a folded body still goes into the commit: {rendered}"
     );
 
     ctrl(&mut app, 'o');
-    assert!(!app.compact, "Ctrl+O unfolds again");
+    assert!(!app.form.compact, "Ctrl+O unfolds again");
     assert_eq!(app.value(Field::Body), "body text");
 }
 
@@ -426,7 +429,7 @@ fn ctrl_o_folds_the_optional_fields_and_keeps_their_text() {
 fn tab_skips_folded_fields_in_both_directions() {
     let mut app = App::with_config(Config::conventional(), Vec::new());
     ctrl(&mut app, 'o');
-    assert!(app.compact);
+    assert!(app.form.compact);
 
     let order: Vec<Field> = (0..4)
         .map(|_| {
@@ -686,7 +689,7 @@ fn the_scope_reaches_the_message_while_typing() {
     let mut app = App::with_config(Config::conventional(), Vec::new());
     press(&mut app, KeyCode::Tab); // scope
     type_text(&mut app, "ui");
-    let rendered = app.commit.render();
+    let rendered = app.form.commit.render();
     assert!(rendered.contains("feat(ui):"), "{rendered}");
 }
 
@@ -737,9 +740,9 @@ fn the_footer_takes_its_ticket_from_the_branch() {
         Some("feat/hima/TICKET-42/add-a-thing")
     );
     assert!(
-        app.commit.footer.contains("Refs TICKET-42"),
+        app.form.commit.footer.contains("Refs TICKET-42"),
         "footer: {:?}",
-        app.commit.footer
+        app.form.commit.footer
     );
 }
 
@@ -754,19 +757,19 @@ fn starts_on_the_type_field() {
     let app = App::default();
     assert_eq!(app.active_field(), Field::Type);
     assert!(!app.is_editing());
-    assert_eq!(app.commit.kind, "feat");
+    assert_eq!(app.form.commit.kind, "feat");
 }
 
 #[test]
 fn cycles_types_with_arrows() {
     let mut app = App::default();
     press(&mut app, KeyCode::Right);
-    assert_eq!(app.commit.kind, "fix");
+    assert_eq!(app.form.commit.kind, "fix");
     press(&mut app, KeyCode::Left);
-    assert_eq!(app.commit.kind, "feat");
+    assert_eq!(app.form.commit.kind, "feat");
     press(&mut app, KeyCode::Left);
     assert_eq!(
-        app.commit.kind, "security",
+        app.form.commit.kind, "security",
         "wraps around the full type list"
     );
 }
@@ -779,7 +782,7 @@ fn space_opens_the_type_picker() {
     type_text(&mut app, "refak");
     press(&mut app, KeyCode::Backspace);
     press(&mut app, KeyCode::Enter);
-    assert_eq!(app.commit.kind, "refactor");
+    assert_eq!(app.form.commit.kind, "refactor");
     assert_eq!(app.active_field(), Field::Scope);
 }
 
@@ -788,14 +791,14 @@ fn digit_selects_the_nth_entry() {
     let mut app = App::default();
     press(&mut app, KeyCode::Char(' '));
     press(&mut app, KeyCode::Char('2'));
-    assert_eq!(app.commit.kind, "fix");
+    assert_eq!(app.form.commit.kind, "fix");
     assert!(app.picker.is_none());
     assert_eq!(app.active_field(), Field::Scope);
 
     press(&mut app, KeyCode::BackTab);
     press(&mut app, KeyCode::Char(' '));
     press(&mut app, KeyCode::Char('0'));
-    assert_eq!(app.commit.kind, "security", "0 selects the last entry");
+    assert_eq!(app.form.commit.kind, "security", "0 selects the last entry");
 }
 
 #[test]
@@ -818,7 +821,7 @@ fn picker_filter_narrows_the_list() {
     assert!(visible >= 1);
     press(&mut app, KeyCode::Esc);
     assert!(app.picker.is_none());
-    assert_eq!(app.commit.kind, "feat");
+    assert_eq!(app.form.commit.kind, "feat");
 }
 
 #[test]
@@ -833,7 +836,7 @@ fn ctrl_n_offers_scopes_from_history() {
     ctrl(&mut app, 'n');
     press(&mut app, KeyCode::Down);
     press(&mut app, KeyCode::Enter);
-    assert_eq!(app.commit.scope, "ui");
+    assert_eq!(app.form.commit.scope, "ui");
 }
 
 fn past(id: &str, kind: &str, scope: Option<&str>, summary: &str, body: &str) -> PastCommit {
@@ -895,13 +898,13 @@ fn history_without_commits_reports_instead_of_opening() {
 #[test]
 fn confirming_history_reuses_type_scope_and_body() {
     let mut app = app_with_history();
-    app.commit.subject = "already typed".into();
+    app.form.commit.subject = "already typed".into();
     ctrl(&mut app, 'r');
     press(&mut app, KeyCode::Enter);
-    assert_eq!(app.commit.kind, "feat");
-    assert_eq!(app.commit.scope, "composer");
-    assert!(app.commit.body.contains("previews the highlighted"));
-    assert_eq!(app.commit.subject, "already typed", "subject stays");
+    assert_eq!(app.form.commit.kind, "feat");
+    assert_eq!(app.form.commit.scope, "composer");
+    assert!(app.form.commit.body.contains("previews the highlighted"));
+    assert_eq!(app.form.commit.subject, "already typed", "subject stays");
     assert_eq!(app.active_field(), Field::Subject);
     assert!(app.status.contains("reused: type, scope, body"));
 }
@@ -913,8 +916,11 @@ fn history_filter_finds_a_commit_by_text() {
     type_text(&mut app, "crash");
     assert_eq!(app.picker.as_ref().unwrap().filtered().len(), 1);
     press(&mut app, KeyCode::Enter);
-    assert_eq!(app.commit.kind, "fix");
-    assert_eq!(app.commit.scope, "", "plain commit keeps the scope empty");
+    assert_eq!(app.form.commit.kind, "fix");
+    assert_eq!(
+        app.form.commit.scope, "",
+        "plain commit keeps the scope empty"
+    );
 }
 
 #[test]
@@ -923,10 +929,10 @@ fn unknown_types_from_history_are_not_applied() {
     app.set_history(vec![past("ccccccc3333333", "wip", None, "scratch", "")]);
     ctrl(&mut app, 'r');
     press(&mut app, KeyCode::Enter);
-    assert_eq!(app.commit.kind, "feat", "wip is not in the profile");
+    assert_eq!(app.form.commit.kind, "feat", "wip is not in the profile");
     // The type is not applied, but the subject still is: it is a commit
     // message, and the user may want its wording.
-    assert_eq!(app.commit.subject, "scratch");
+    assert_eq!(app.form.commit.subject, "scratch");
     assert!(app.status.contains("reused: subject"), "{}", app.status);
 }
 
@@ -937,7 +943,7 @@ fn ctrl_p_switches_profile_and_types() {
     type_text(&mut app, "ang");
     press(&mut app, KeyCode::Enter);
     assert_eq!(app.config.profile, "angular");
-    assert_eq!(app.commit.kind, app.config.type_names()[0]);
+    assert_eq!(app.form.commit.kind, app.config.type_names()[0]);
     ctrl(&mut app, 'p');
     type_text(&mut app, "atomic");
     press(&mut app, KeyCode::Enter);
@@ -949,7 +955,7 @@ fn typing_lands_in_the_active_field() {
     let mut app = App::default();
     press(&mut app, KeyCode::Tab);
     type_text(&mut app, "api");
-    assert_eq!(app.commit.scope, "api");
+    assert_eq!(app.form.commit.scope, "api");
     assert_eq!(app.cursor(), 3);
 }
 
@@ -960,9 +966,9 @@ fn backspace_and_delete_edit_around_the_cursor() {
     type_text(&mut app, "abc");
     press(&mut app, KeyCode::Left);
     press(&mut app, KeyCode::Backspace);
-    assert_eq!(app.commit.scope, "ac");
+    assert_eq!(app.form.commit.scope, "ac");
     press(&mut app, KeyCode::Delete);
-    assert_eq!(app.commit.scope, "a");
+    assert_eq!(app.form.commit.scope, "a");
 }
 
 #[test]
@@ -974,7 +980,7 @@ fn enter_in_body_starts_a_new_line() {
     type_text(&mut app, "first");
     press(&mut app, KeyCode::Enter);
     type_text(&mut app, "second");
-    assert_eq!(app.commit.body, "first\nsecond");
+    assert_eq!(app.form.commit.body, "first\nsecond");
     press(&mut app, KeyCode::Up);
     assert_eq!(app.cursor(), 5);
 }
@@ -1067,7 +1073,7 @@ fn a_digit_inside_a_field_stays_text() {
     press(&mut app, KeyCode::Tab);
     press(&mut app, KeyCode::Tab);
     type_text(&mut app, "1st try");
-    assert_eq!(app.commit.subject, "1st try");
+    assert_eq!(app.form.commit.subject, "1st try");
     assert_eq!(app.tab, tabs::Tab::Commit, "typing must not change the tab");
 }
 
@@ -1083,7 +1089,7 @@ fn the_tab_keeps_what_was_typed_in_it() {
     assert_eq!(app.tab, tabs::Tab::Branches);
     app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::CONTROL));
     assert_eq!(app.tab, tabs::Tab::Commit);
-    assert_eq!(app.commit.subject, "add composer");
+    assert_eq!(app.form.commit.subject, "add composer");
 }
 
 #[test]
@@ -1092,7 +1098,7 @@ fn a_digit_typed_in_a_field_does_not_leak_into_the_tab_bar() {
     press(&mut app, KeyCode::Tab);
     press(&mut app, KeyCode::Tab);
     type_text(&mut app, "fix 2 bugs");
-    assert_eq!(app.commit.subject, "fix 2 bugs");
+    assert_eq!(app.form.commit.subject, "fix 2 bugs");
     assert_eq!(app.tab, tabs::Tab::Commit);
 }
 
@@ -1185,7 +1191,7 @@ fn q_quits_only_outside_a_text_field() {
     let mut app = App::default();
     press(&mut app, KeyCode::Tab);
     press(&mut app, KeyCode::Char('q'));
-    assert_eq!(app.commit.scope, "q");
+    assert_eq!(app.form.commit.scope, "q");
     assert!(!app.should_quit);
     press(&mut app, KeyCode::Esc);
     assert!(app.should_quit);
@@ -1222,7 +1228,7 @@ fn footer_is_seeded_with_the_author_handle() {
     config.user = Some("Marc Hinte".into());
     config.prefix = Some("hima".into());
     let app = App::with_config(config, Vec::new());
-    assert_eq!(app.commit.footer, "Co-authored-by: hima");
+    assert_eq!(app.form.commit.footer, "Co-authored-by: hima");
 }
 
 fn app_on_branch(config: Config, branch: &str) -> App {
@@ -1238,7 +1244,10 @@ fn the_branch_ticket_lands_in_the_footer() {
     let mut config = Config::conventional();
     config.prefix = Some("hima".into());
     let app = app_on_branch(config, "feat/hima/TICKET-42/add-a-thing");
-    assert_eq!(app.commit.footer, "Refs TICKET-42\nCo-authored-by: hima");
+    assert_eq!(
+        app.form.commit.footer,
+        "Refs TICKET-42\nCo-authored-by: hima"
+    );
 }
 
 #[test]
@@ -1247,7 +1256,7 @@ fn the_co_author_can_be_switched_off() {
     config.prefix = Some("hima".into());
     config.co_author = false;
     let app = app_on_branch(config, "feat/hima/TICKET-42/add-a-thing");
-    assert_eq!(app.commit.footer, "Refs TICKET-42");
+    assert_eq!(app.form.commit.footer, "Refs TICKET-42");
 }
 
 #[test]
@@ -1257,7 +1266,7 @@ fn a_custom_co_author_name_is_used() {
     config.co_author_name = Some("Marc Hinte <marc@example.com>".into());
     let app = app_on_branch(config, "main");
     assert_eq!(
-        app.commit.footer,
+        app.form.commit.footer,
         "Co-authored-by: Marc Hinte <marc@example.com>"
     );
 }
@@ -1267,7 +1276,7 @@ fn a_branch_without_a_ticket_carries_no_reference() {
     let mut config = Config::conventional();
     config.prefix = Some("hima".into());
     let app = app_on_branch(config, "fix/old");
-    assert_eq!(app.commit.footer, "Co-authored-by: hima");
+    assert_eq!(app.form.commit.footer, "Co-authored-by: hima");
 }
 
 #[test]
@@ -1278,12 +1287,12 @@ fn typing_in_the_footer_survives_a_branch_change() {
     let mut app = App::with_config(config, Vec::new());
     app.set_in_repository(true);
     app.set_git(Box::new(git));
-    app.commit.footer = "Closes OTHER-9".to_string();
+    app.form.commit.footer = "Closes OTHER-9".to_string();
 
     press(&mut app, KeyCode::Char('2'));
     press(&mut app, KeyCode::Down);
     press(&mut app, KeyCode::Enter);
-    assert_eq!(app.commit.footer, "Closes OTHER-9", "typing wins");
+    assert_eq!(app.form.commit.footer, "Closes OTHER-9", "typing wins");
 }
 
 #[test]
@@ -1293,7 +1302,7 @@ fn the_footer_follows_a_branch_the_wizard_created() {
     config.author = Some("hima".into());
     config.ticket_prefix = "TICKET".into();
     let mut app = app_on_branch(config, "main");
-    assert_eq!(app.commit.footer, "Co-authored-by: hima");
+    assert_eq!(app.form.commit.footer, "Co-authored-by: hima");
 
     press(&mut app, KeyCode::Char('2'));
     press(&mut app, KeyCode::Char('n'));
@@ -1303,7 +1312,7 @@ fn the_footer_follows_a_branch_the_wizard_created() {
     type_text(&mut app, "add a thing");
     press(&mut app, KeyCode::Enter);
     assert_eq!(
-        app.commit.footer, "Refs TICKET-42\nCo-authored-by: hima",
+        app.form.commit.footer, "Refs TICKET-42\nCo-authored-by: hima",
         "the branch's ticket and the co-author follow each other"
     );
 }
@@ -1312,13 +1321,16 @@ fn the_footer_follows_a_branch_the_wizard_created() {
 fn the_branch_kind_sets_the_commit_type() {
     let config = Config::conventional();
     let app = app_on_branch(config, "hotfix/hima/TICKET-1/urgent");
-    assert_eq!(app.commit.kind, "fix", "a hotfix is a fix for the message");
+    assert_eq!(
+        app.form.commit.kind, "fix",
+        "a hotfix is a fix for the message"
+    );
 }
 
 #[test]
 fn a_docs_branch_sets_docs() {
     let app = app_on_branch(Config::conventional(), "docs/hima/TICKET-2/readme");
-    assert_eq!(app.commit.kind, "docs");
+    assert_eq!(app.form.commit.kind, "docs");
 }
 
 #[test]
@@ -1329,14 +1341,14 @@ fn a_typed_type_is_never_overwritten_by_a_branch() {
     app.set_git(Box::new(git));
     // The user picks a type themselves.
     press(&mut app, KeyCode::Right);
-    let chosen = app.commit.kind.clone();
+    let chosen = app.form.commit.kind.clone();
     assert_ne!(chosen, "chore");
 
     press(&mut app, KeyCode::Char('2'));
     press(&mut app, KeyCode::Down);
     press(&mut app, KeyCode::Enter);
     assert_eq!(
-        app.commit.kind, chosen,
+        app.form.commit.kind, chosen,
         "the branch must not win over the user"
     );
 }
@@ -1352,14 +1364,14 @@ fn a_branch_kind_missing_from_the_profile_is_ignored() {
     assert!(!config.type_names().contains(&"docs".to_string()));
 
     let app = app_on_branch(config, "docs/hima/TICKET-4/readme");
-    assert_ne!(app.commit.kind, "docs", "the profile has no such type");
-    assert_eq!(app.commit.kind, "feat", "the default stays");
+    assert_ne!(app.form.commit.kind, "docs", "the profile has no such type");
+    assert_eq!(app.form.commit.kind, "feat", "the default stays");
 }
 
 #[test]
 fn a_non_conventional_branch_leaves_the_type_alone() {
     let app = app_on_branch(Config::conventional(), "main");
-    assert_eq!(app.commit.kind, "feat", "the default stays");
+    assert_eq!(app.form.commit.kind, "feat", "the default stays");
 }
 
 #[test]
@@ -1370,7 +1382,7 @@ fn a_branch_from_the_wizard_sets_the_type_too() {
     config.ticket_prefix = "TICKET".into();
     config.branch_template = "{type}/{author}/{ticket}/{slug}".into();
     let mut app = app_on_branch(config, "main");
-    assert_eq!(app.commit.kind, "feat");
+    assert_eq!(app.form.commit.kind, "feat");
 
     press(&mut app, KeyCode::Char('2'));
     press(&mut app, KeyCode::Char('n'));
@@ -1381,14 +1393,20 @@ fn a_branch_from_the_wizard_sets_the_type_too() {
     type_text(&mut app, "broken thing");
     press(&mut app, KeyCode::Enter);
 
-    assert_eq!(app.commit.kind, "fix", "the new branch is a fix branch");
-    assert_eq!(app.commit.footer, "Refs TICKET-12\nCo-authored-by: hima");
+    assert_eq!(
+        app.form.commit.kind, "fix",
+        "the new branch is a fix branch"
+    );
+    assert_eq!(
+        app.form.commit.footer,
+        "Refs TICKET-12\nCo-authored-by: hima"
+    );
 }
 
 #[test]
 fn no_handle_means_no_footer_noise() {
     let app = App::default();
-    assert_eq!(app.commit.footer, "");
+    assert_eq!(app.form.commit.footer, "");
     assert_eq!(app.suggested_footer(), None);
 }
 
@@ -1397,7 +1415,7 @@ fn custom_profile_types_are_accepted() {
     let mut config = Config::conventional();
     config.profile = "atomic".into();
     let mut app = App::with_config(config, Vec::new());
-    app.commit.subject = "add thing".into();
+    app.form.commit.subject = "add thing".into();
     assert!(!app.issues.iter().any(|i| i.field == "type"));
 }
 
