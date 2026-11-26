@@ -140,6 +140,16 @@ pub struct BranchTemplate {
     raw: String,
 }
 
+/// What goes into the placeholders. Borrowed, because a preview is drawn on
+/// every keystroke and copying five strings per frame is not necessary.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct BranchParts<'a> {
+    pub kind: &'a str,
+    pub author: &'a str,
+    pub slug: &'a str,
+    pub ticket: Option<&'a str>,
+}
+
 impl BranchTemplate {
     /// `{type}/{author}/{ticket}/{slug}`
     pub fn standard() -> Self {
@@ -153,6 +163,42 @@ impl BranchTemplate {
         Self {
             raw: "{type}/{author}/{slug}".to_string(),
         }
+    }
+
+    /// Fill the template in one pass.
+    ///
+    /// One pass, not four `replace` calls: with four, a value that itself looks
+    /// like a placeholder — `{slug}` sitting in a configured author — was
+    /// replaced again by the step after it, and the branch name came out with a
+    /// description inside the author segment.
+    pub fn fill(&self, parts: &BranchParts<'_>) -> String {
+        let mut out = String::with_capacity(self.raw.len() + 32);
+        let mut rest = self.raw.as_str();
+        while let Some(start) = rest.find('{') {
+            out.push_str(&rest[..start]);
+            let after = &rest[start..];
+            let Some(end) = after.find('}') else {
+                // Unclosed: `parse` rejects this, a hand-written template may not.
+                out.push_str(after);
+                return out;
+            };
+            let name = &after[1..end];
+            let value = match name {
+                "type" => Some(parts.kind),
+                "author" => Some(parts.author),
+                "slug" => Some(parts.slug),
+                "ticket" => parts.ticket,
+                _ => None,
+            };
+            match value {
+                Some(value) => out.push_str(value),
+                // Not a placeholder we know: keep the text as it is.
+                None => out.push_str(&after[..=end]),
+            }
+            rest = &after[end + 1..];
+        }
+        out.push_str(rest);
+        out
     }
 
     pub fn parse(raw: &str) -> Result<Self, BranchError> {
@@ -277,14 +323,13 @@ impl ConventionalBranchName {
         if template.uses_ticket() && self.ticket.is_none() {
             return Err(BranchError::MissingTicket);
         }
-        let mut name = template.as_str().to_string();
-        name = name.replace("{type}", self.kind.as_str());
-        name = name.replace("{author}", self.author.as_str());
-        name = name.replace("{slug}", self.slug.as_str());
-        if let Some(ticket) = &self.ticket {
-            name = name.replace("{ticket}", &ticket.to_string());
-        }
-        Ok(name)
+        let ticket = self.ticket.as_ref().map(ToString::to_string);
+        Ok(template.fill(&BranchParts {
+            kind: self.kind.as_str(),
+            author: self.author.as_str(),
+            slug: self.slug.as_str(),
+            ticket: ticket.as_deref(),
+        }))
     }
 
     /// Read a branch name back. Accepts the three-part and four-part form and
@@ -353,6 +398,46 @@ mod tests {
         description: &str,
     ) -> ConventionalBranchName {
         ConventionalBranchName::from_parts(kind, "mmu", ticket, description).unwrap()
+    }
+
+    #[test]
+    fn a_value_that_looks_like_a_placeholder_is_not_filled_again() {
+        // `{slug}` in the author segment used to be replaced by the step after
+        // it, so the name carried the description twice.
+        let template = BranchTemplate::parse("{type}/{author}/{slug}").unwrap();
+        let filled = template.fill(&BranchParts {
+            kind: "feat",
+            author: "{slug}",
+            slug: "add-a-thing",
+            ticket: None,
+        });
+        assert_eq!(filled, "feat/{slug}/add-a-thing");
+    }
+
+    #[test]
+    fn an_unknown_placeholder_stays_as_it_is() {
+        // `parse` rejects these, but a template read from an old config is not
+        // sent through `parse` on every frame.
+        let template = BranchTemplate::parse("{type}/{slug}").unwrap();
+        let filled = template.fill(&BranchParts {
+            kind: "feat",
+            author: "x",
+            slug: "{ticket}",
+            ticket: Some("TICKET-7"),
+        });
+        assert_eq!(filled, "feat/{ticket}", "the value is text, not a template");
+    }
+
+    #[test]
+    fn fills_every_placeholder_exactly_once() {
+        let template = BranchTemplate::standard();
+        let filled = template.fill(&BranchParts {
+            kind: "fix",
+            author: "mmu",
+            slug: "a-b",
+            ticket: Some("TICKET-1"),
+        });
+        assert_eq!(filled, "fix/mmu/TICKET-1/a-b");
     }
 
     #[test]

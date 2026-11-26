@@ -135,16 +135,20 @@ impl BranchWizard {
         // An empty description is not an error, it is an unfinished form: show
         // the shape the name will have instead of scolding the user.
         if self.description.trim().is_empty() {
-            let mut shape = template.as_str().to_string();
-            shape = shape.replace("{type}", self.kind.as_str());
-            shape = shape.replace("{author}", author);
-            shape = shape.replace("{slug}", "<description>");
-            if let Some((value, prefix)) = ticket {
-                let ticket = TicketId::parse(value, prefix)?;
-                shape = shape.replace("{ticket}", &ticket.to_string());
-            }
+            // The same renderer the real name uses, so the shape on screen
+            // cannot drift from what Enter would create.
+            let ticket = match ticket {
+                Some((value, prefix)) => Some(TicketId::parse(value, prefix)?.to_string()),
+                None => None,
+            };
+            let name = template.fill(&commitsmith::domain::branch::BranchParts {
+                kind: self.kind.as_str(),
+                author,
+                slug: "<description>",
+                ticket: ticket.as_deref(),
+            });
             return Ok(WizardPreview {
-                name: shape,
+                name,
                 is_complete: false,
             });
         }
