@@ -235,3 +235,41 @@ mod tests {
         assert!(message.contains("not a ticket number"), "{message}");
     }
 }
+
+/// Find a ticket-shaped word in free text, e.g. in a branch name.
+///
+/// Deliberately not tied to the branch template: a rename or a hand-made branch
+/// still carries `TICKET-42`, and that is what the footer wants.
+pub fn in_text(text: &str) -> Option<String> {
+    for word in text.split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_') {
+        let Some((prefix, number)) = word.rsplit_once('-') else {
+            continue;
+        };
+        if prefix.is_empty() || number.is_empty() {
+            continue;
+        }
+        if prefix.chars().all(|c| c.is_ascii_uppercase())
+            && number.chars().all(|c| c.is_ascii_digit())
+            && prefix.len() >= 2
+        {
+            return Some(format!("{prefix}-{number}"));
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod in_text_tests {
+    use super::in_text;
+
+    #[test]
+    fn a_ticket_is_found_wherever_it_sits() {
+        assert_eq!(
+            in_text("feat/hima/TICKET-42/add-a-thing").as_deref(),
+            Some("TICKET-42")
+        );
+        assert_eq!(in_text("TICKET-7").as_deref(), Some("TICKET-7"));
+        assert_eq!(in_text("feat/hima/add-a-thing"), None);
+        assert_eq!(in_text("feature/abc-12"), None, "lowercase is not a ticket");
+    }
+}

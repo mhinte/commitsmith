@@ -341,9 +341,12 @@ impl App {
     /// The ticket of the branch we are on, when its name carries one.
     pub fn branch_ticket(&self) -> Option<String> {
         let name = self.branch_name.as_deref()?;
+        // The template first, so its rules win; then a plain look for a
+        // ticket-shaped word, because a renamed branch still carries one.
         ConventionalBranchName::parse(name)
             .ok()
             .and_then(|parsed| parsed.ticket().map(|ticket| ticket.to_string()))
+            .or_else(|| commitsmith::domain::ticket::in_text(name))
     }
 
     /// Who the co-author line names: the configured text, else the handle.
@@ -479,6 +482,19 @@ impl App {
             last.as_deref(),
             commits,
         ));
+    }
+
+    /// Rewrite the "branch · N staged" line after something was staged.
+    fn refresh_repo_line(&mut self) {
+        let Some(git) = self.git.as_deref() else {
+            return;
+        };
+        let staged = git
+            .changes()
+            .map(|files| files.iter().filter(|file| file.is_staged()).count())
+            .unwrap_or(0);
+        let branch = self.branch_label();
+        self.repo_line = format!("{branch} · {staged} staged");
     }
 
     /// Read `(ahead, behind)` once, for the footer and for the wording of the
@@ -689,13 +705,25 @@ impl App {
                 }
             }
             KeyCode::Char(' ') | KeyCode::Enter => {
-                let Some(git) = self.git.as_deref() else {
-                    return;
+                let outcome = match self.git.as_deref() {
+                    Some(git) => self
+                        .staging
+                        .toggle(git)
+                        .map(|message| (message, self.staging.show_diff)),
+                    None => return,
                 };
-                match self.staging.toggle(git) {
-                    Ok(message) => {
+                match outcome {
+                    Ok((message, diff_open)) => {
                         self.status = message;
+                        // The list cleared its diff when it reloaded; with the
+                        // pane open that looked like an empty file.
+                        if diff_open {
+                            if let Some(git) = self.git.as_deref() {
+                                let _ = self.staging.refresh_diff(git);
+                            }
+                        }
                         self.refresh_sync();
+                        self.refresh_repo_line();
                     }
                     Err(error) => self.status = error.to_string(),
                 }
@@ -1568,7 +1596,9 @@ impl App {
                         // Files change outside the program; the list is read again
                         // whenever it comes into view.
                         self.reload_staging();
-                        self.refresh_sync();
+                        // `refresh_sync` costs two more `git` calls; the arrows
+                        // are read when a branch action needs them, not for a
+                        // tab that is merely being looked at.
                         // Every tab opens on its main pane, never on whatever was
                         // focused the last time it was looked at.
                         self.panel = Panel::Branches;
