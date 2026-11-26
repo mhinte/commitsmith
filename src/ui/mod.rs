@@ -509,7 +509,10 @@ fn window(value: &str, cursor: usize, active: bool, width: usize) -> (String, Op
 /// committed, and the findings belong right under it, not in a second box.
 fn draw_content(frame: &mut Frame, app: &App, area: Rect) {
     let message = app.commit.render();
-    let empty = app.commit.subject.trim().is_empty();
+    // Only a completely blank composer gets the hints. With just a scope typed
+    // the message is already worth showing — that was the "preview does not
+    // update" complaint: the placeholder stayed until a subject existed.
+    let empty = app.commit.subject.trim().is_empty() && app.commit.scope.trim().is_empty();
     let mut lines: Vec<Line> = message
         .lines()
         .map(|line| Line::raw(line.to_string()))
@@ -1690,6 +1693,45 @@ mod tests {
         assert!(top.contains("[1] Commit"), "{top}");
         assert!(top.contains("[2] Branches"), "{top}");
         assert!(top.contains("[3] Historie"), "{top}");
+    }
+
+    #[test]
+    fn a_scope_alone_is_already_shown_in_the_preview() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        press(&mut app, KeyCode::Tab); // scope
+        for c in "ui".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+        assert!(screen.contains("feat(ui)"), "{screen}");
+        assert!(
+            !screen.contains("start with a subject"),
+            "the placeholder gives way: {screen}"
+        );
+    }
+
+    #[test]
+    fn typing_a_scope_updates_the_preview_on_screen() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+        press(&mut app, KeyCode::Tab); // scope
+        for c in "ui".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        app.commit.subject = "add the button".to_string();
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let screen = rows(&terminal).join("\n");
+        assert!(screen.contains("feat(ui): add the button"), "{screen}");
     }
 
     #[test]
