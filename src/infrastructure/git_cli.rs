@@ -50,7 +50,12 @@ impl GitBackend {
             .output()
             .map_err(|error| GitError::io(format!("git {}", args.first().unwrap_or(&"")), error))?;
         if output.status.success() {
-            return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+            // One copy: `from_utf8_lossy(..).to_string()` allocates twice, and a
+            // diff of a large file goes through here.
+            return Ok(match String::from_utf8(output.stdout) {
+                Ok(text) => text,
+                Err(error) => String::from_utf8_lossy(error.as_bytes()).to_string(),
+            });
         }
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         Err(classify(args, &stderr, &self.workdir))

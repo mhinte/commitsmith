@@ -72,7 +72,6 @@ pub fn scope_info(repo: &gix::Repository, configured: &[String], depth: usize) -
     }
 }
 
-/// The last `depth` commits, newest first, as templates.
 /// Commits since a tag, so the changelog does not repeat history.
 ///
 /// The tag is resolved to a commit and the walk stops right before it; an unknown
@@ -92,6 +91,7 @@ pub fn commits_since(repo: &gix::Repository, since: Option<&str>, limit: usize) 
     }
 }
 
+/// The last `depth` commits, newest first, as templates.
 pub fn recent_commits(repo: &gix::Repository, depth: usize) -> Vec<PastCommit> {
     let mut commits = Vec::new();
     let Ok(head) = repo.head_id() else {
@@ -111,21 +111,16 @@ pub fn recent_commits(repo: &gix::Repository, depth: usize) -> Vec<PastCommit> {
         let Ok(commit) = repo.find_commit(info.id) else {
             continue;
         };
-        let summary = commit
-            .message()
-            .map(|message| message.title.to_str_lossy().trim().to_string())
-            .unwrap_or_default();
+        let Ok(message) = commit.message() else {
+            continue;
+        };
+        let summary = message.title.to_str_lossy().trim().to_string();
         if summary.is_empty() {
             continue;
         }
-        let full_message = commit
-            .message()
-            .map(|message| {
-                message
-                    .body
-                    .map(|body| body.to_str_lossy().to_string())
-                    .unwrap_or_default()
-            })
+        let full_message = message
+            .body
+            .map(|body| body.to_str_lossy().to_string())
             .unwrap_or_default();
 
         let (kind, scope) = match parse_event(&summary) {
@@ -224,7 +219,6 @@ fn is_footer_line(line: &str) -> bool {
     }
 }
 
-/// Files touched by a commit, from `git show --name-status`.
 /// Files changed by one commit, read when someone looks at it.
 pub fn commit_files(repo: &gix::Repository, id: gix::ObjectId) -> Vec<String> {
     let Some(workdir) = repo.workdir() else {
@@ -274,7 +268,6 @@ pub fn empty_scope_info(configured: &[String]) -> ScopeInfo {
     }
 }
 
-/// Shorten `text` to `width` characters, adding an ellipsis.
 /// A repository opened for reading.
 ///
 /// The free functions above are what the older code calls directly; the struct
@@ -373,13 +366,9 @@ impl GixRepo {
             .tags()
             .map_err(|error| GitError::invalid_state(error.to_string()))?
             .flatten()
-            .map(|tag| {
-                tag.name()
-                    .shorten()
-                    .to_string()
-                    .trim_start_matches("refs/tags/")
-                    .to_string()
-            })
+            // `shorten()` already drops `refs/tags/`; trimming it again only
+            // hid the case where it did not.
+            .map(|tag| tag.name().shorten().to_string())
             .collect();
         tags.sort();
         Ok(tags)
