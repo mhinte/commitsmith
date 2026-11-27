@@ -588,55 +588,15 @@ fn the_footer_label_says_how_far_the_branch_is() {
 }
 
 #[test]
-fn a_cancelled_release_writes_nothing() {
-    let dir = std::env::temp_dir().join(format!("commitsmith-cancel-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-
-    let git = RecordingGit::new(&["main"], "main");
-    let calls = git.calls();
-    let mut app = App::with_config(Config::conventional(), Vec::new());
-    app.tab = tabs::Tab::History;
-    app.set_changelog_root(dir.clone());
-    app.set_git(Box::new(git));
-    app.refresh_plan();
-
-    press(&mut app, KeyCode::Char('y'));
-    assert!(app.release.confirm);
-    press(&mut app, KeyCode::Esc);
-    assert!(!app.release.confirm);
-    assert!(
-        calls.borrow().iter().all(|call| !call.starts_with("tag ")),
-        "no tag after cancelling: {:?}",
-        calls.borrow()
-    );
-    assert!(
-        !dir.join("CHANGELOG.md").exists(),
-        "no file after cancelling"
-    );
-    let _ = std::fs::remove_dir_all(dir);
-}
-
-#[test]
-fn a_confirmed_release_writes_the_file_and_no_tag() {
-    let dir = std::env::temp_dir().join(format!("commitsmith-write-{}", std::process::id()));
+fn e_exports_the_section_under_a_window_name() {
+    let dir = std::env::temp_dir().join(format!("commitsmith-export-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 
     let git = RecordingGit::new(&["main"], "main");
     git.commits
         .borrow_mut()
-        .push(commitsmith::domain::history::PastCommit {
-            short_id: "abc1234".to_string(),
-            id: "abc1234".to_string(),
-            author: "Marc".to_string(),
-            date: "today".to_string(),
-            summary: "add a button".to_string(),
-            body: String::new(),
-            kind: Some("feat".to_string()),
-            scope: Some("ui".to_string()),
-            files: Vec::new(),
-        });
+        .push(past("abc1234", "feat", Some("ui"), "add a button", ""));
     let calls = git.calls();
     let mut app = App::with_config(Config::conventional(), Vec::new());
     app.tab = tabs::Tab::History;
@@ -644,22 +604,27 @@ fn a_confirmed_release_writes_the_file_and_no_tag() {
     app.set_git(Box::new(git));
     app.refresh_plan();
 
-    press(&mut app, KeyCode::Char('y'));
-    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Char('e'));
 
-    let text = std::fs::read_to_string(dir.join("CHANGELOG.md")).unwrap();
-    assert!(text.contains("## 0.1.0"), "{text}");
+    // The default basis is this branch's own work, so the file says `branch-main`.
+    let path = dir.join("RELEASE-NOTES-BRANCH-MAIN.md");
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+        panic!("expected {}: {}", path.display(), app.status);
+    });
     assert!(text.contains("**ui**: add a button"), "{text}");
-    // No tags until the project decides to use them.
+    assert!(
+        app.status.contains("RELEASE-NOTES-BRANCH-MAIN.md"),
+        "{}",
+        app.status
+    );
+    // The window, not the tag, decided the name; nothing tags the repository.
     assert!(
         calls.borrow().iter().all(|call| !call.starts_with("tag ")),
         "no tag created: {:?}",
         calls.borrow()
     );
-    assert!(app.status.contains("no tag set"), "{}", app.status);
     let _ = std::fs::remove_dir_all(dir);
 }
-
 #[test]
 fn the_plan_names_the_next_version() {
     let git = RecordingGit::new(&["main"], "main");

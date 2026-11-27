@@ -102,7 +102,8 @@ impl Tab {
             Self::History => vec![
                 ("↓ ↑", "move"),
                 ("/", "filter"),
-                ("y", "write release"),
+                ("e", "export notes"),
+                ("b", "window"),
                 ("c", "clear filter"),
             ],
         };
@@ -168,9 +169,14 @@ impl Tab {
                 ("↓ ↑", "through the log"),
                 ("/", "filter by type, scope or ticket"),
                 ("c", "clear the filter"),
-                ("y", "write CHANGELOG.md for the next version"),
-                ("b", "basis: last tag, last 20 or last 50 commits"),
-                ("e", "export the section as RELEASE-NOTES-<version>.md"),
+                (
+                    "b",
+                    "switch the window: this branch, then the last tag, the last 20 and the last 50 commits",
+                ),
+                (
+                    "e",
+                    "export the section as RELEASE-NOTES-<window>.md, e.g. RELEASE-NOTES-branch-main.md",
+                ),
             ],
         }
     }
@@ -313,7 +319,7 @@ mod tests {
         );
 
         let history = Tab::History.help(false);
-        for expected in ["filter", "write CHANGELOG.md", "basis", "export"] {
+        for expected in ["filter", "switch the window", "export"] {
             assert!(
                 history.iter().any(|(_, text)| text.contains(expected)),
                 "{expected} missing: {history:?}"
@@ -322,6 +328,10 @@ mod tests {
         assert!(
             !history.iter().any(|(key, _)| *key == "Ctrl+S"),
             "committing is not a key of this tab: {history:?}"
+        );
+        assert!(
+            !history.iter().any(|(key, _)| *key == "y"),
+            "`y` was dropped in favour of `e`: {history:?}"
         );
     }
 

@@ -4,36 +4,6 @@ use super::release_view::Basis;
 use super::*;
 
 impl App {
-    /// Write the changelog section and tag the release — but only after `y` armed
-    /// it and Enter confirmed.
-    pub(crate) fn write_release(&mut self) {
-        self.release.confirm = false;
-        let Some(plan) = self.release.plan.clone() else {
-            self.status = "no release plan · nothing to write".to_string();
-            return;
-        };
-        let Some(root) = self.release.changelog_root.clone() else {
-            self.status = "no repository · nowhere to write CHANGELOG.md".to_string();
-            return;
-        };
-        let section = commitsmith::domain::release::render_section(
-            &plan,
-            Some(&commitsmith::infrastructure::clock::today()),
-        );
-        match commitsmith::infrastructure::changelog::write_section(&root, &plan.next, &section) {
-            Ok(path) => {
-                // No tag: the project does not use them yet, and inventing one
-                // would be a promise nobody made. The file is the release note.
-                self.status = format!(
-                    "wrote {} · no tag set (git tag v{})",
-                    path.display(),
-                    plan.next
-                );
-            }
-            Err(error) => self.status = format!("changelog not written: {error}"),
-        }
-    }
-
     /// Rebuild the release plan: last version tag, the commits since it, and what
     /// they demand. Reading only — nothing is written until the user asks.
     pub(crate) fn refresh_plan(&mut self) {
@@ -98,18 +68,6 @@ impl App {
             self.should_quit = true;
             return;
         }
-        // The release: `y` asks, Enter writes, Esc or `n` backs out.
-        if self.release.confirm && self.release.log.input.is_none() {
-            match key.code {
-                KeyCode::Enter | KeyCode::Char('y') => self.write_release(),
-                KeyCode::Esc | KeyCode::Char('n') => {
-                    self.release.confirm = false;
-                    self.status = "release cancelled · file and tags untouched".to_string();
-                }
-                _ => {}
-            }
-            return;
-        }
         if self.release.log.input.is_some() {
             match key.code {
                 KeyCode::Esc => self.release.log.cancel_filter(),
@@ -156,17 +114,6 @@ impl App {
             // `e` writes the section to a file: a TUI list cannot be selected
             // with the mouse, and the text is what people paste into a release.
             KeyCode::Char('e') => self.export_plan(),
-            KeyCode::Char('y') => {
-                self.release.confirm = true;
-                let next = self
-                    .release
-                    .plan
-                    .as_ref()
-                    .map(|plan| plan.next.to_string())
-                    .unwrap_or_default();
-                self.status =
-                    format!("write CHANGELOG.md for {next}? Enter confirms · Esc cancels");
-            }
             _ => {}
         }
     }
@@ -191,7 +138,7 @@ impl App {
         None
     }
 
-    /// Write the plan to `RELEASE-NOTES-<version>.md` next to the changelog.
+    /// Write the plan to `RELEASE-NOTES-<window>.md` next to the changelog.
     pub(crate) fn export_plan(&mut self) {
         let Some(plan) = self.release.plan.clone() else {
             self.status = "no plan to export yet".to_string();
@@ -201,7 +148,13 @@ impl App {
             self.status = "no directory to write to".to_string();
             return;
         };
-        let name = format!("RELEASE-NOTES-{}.md", plan.next);
+        // The name says which window produced the file: a release note whose
+        // name is only a version cannot be told apart from another window's.
+        let name = note_name(
+            self.release.basis,
+            plan.last_tag.as_deref(),
+            self.base_branch(),
+        );
         let path = root.join(name);
         let text = commitsmith::domain::release::render_section(
             &plan,
@@ -215,5 +168,62 @@ impl App {
 
     pub(crate) fn set_changelog_root(&mut self, root: std::path::PathBuf) {
         self.release.changelog_root = Some(root);
+    }
+    /// The branch the plan is measured against, for the file name.
+    fn base_branch(&self) -> Option<String> {
+        match self.repo.git.as_deref() {
+            Some(git) => self.main_branch(git),
+            None => None,
+        }
+    }
+}
+
+/// The file name of an exported release note, derived from the window it covers.
+///
+/// `RELEASE-NOTES-0.1.1.md` said nothing about what was counted; the name now
+/// names the window: `RELEASE-NOTES-BRANCH-MAIN.md`,
+/// `RELEASE-NOTES-LAST-20-COMMITS.md`, `RELEASE-NOTES-TAG-V1-2-0.md`.
+fn note_name(basis: Basis, last_tag: Option<&str>, base: Option<String>) -> String {
+    let window = match basis {
+        Basis::Branch => format!("branch-{}", base.unwrap_or_else(|| "this".to_string())),
+        Basis::Recent(count) => format!("last-{count}-commits"),
+        Basis::Tag => match last_tag {
+            Some(tag) => format!("tag-{tag}"),
+            None => "no-tag".to_string(),
+        },
+    };
+    let slug = commitsmith::domain::slug::BranchSlug::from_text(&window)
+        .map(|slug| slug.as_str().to_uppercase())
+        .unwrap_or_else(|_| "ALL".to_string());
+    format!("RELEASE-NOTES-{slug}.md")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_note_name_names_the_window() {
+        assert_eq!(
+            note_name(Basis::Branch, Some("v1.0.0"), Some("main".into())),
+            "RELEASE-NOTES-BRANCH-MAIN.md"
+        );
+        assert_eq!(
+            note_name(Basis::Recent(20), None, Some("main".into())),
+            "RELEASE-NOTES-LAST-20-COMMITS.md"
+        );
+        assert_eq!(
+            note_name(Basis::Tag, Some("v1.2.0"), None),
+            "RELEASE-NOTES-TAG-V1-2-0.md"
+        );
+        assert_eq!(
+            note_name(Basis::Tag, None, None),
+            "RELEASE-NOTES-NO-TAG.md",
+            "a repository without tags says so instead of pretending"
+        );
+        assert_eq!(
+            note_name(Basis::Branch, None, None),
+            "RELEASE-NOTES-BRANCH-THIS.md"
+        );
     }
 }

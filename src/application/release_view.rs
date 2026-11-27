@@ -47,8 +47,6 @@ pub struct Release {
     pub log: LogState,
     /// What the next release would be, from the last tag to `HEAD`.
     pub plan: Option<commitsmith::domain::release::ReleasePlan>,
-    /// True while the write waits for a second keypress.
-    pub confirm: bool,
     /// Where `CHANGELOG.md` lives; `None` outside a repository.
     pub changelog_root: Option<std::path::PathBuf>,
     /// Which commits the plan counts.
