@@ -226,10 +226,10 @@ impl App {
                 self.release.reword = None;
                 self.set_history(commits);
                 self.refresh_plan();
-                self.note(format!(
-                    "rewrote {} · the commits after it moved",
-                    reword.short_id
-                ));
+                // Keep it short enough for the 80-column footer. The long
+                // version lost its first characters there and read like a
+                // garbled message — which looked like nothing had happened.
+                self.note(format!("rewrote {} · history updated", reword.short_id));
             }
             Err(message) => self.problem(message),
         }

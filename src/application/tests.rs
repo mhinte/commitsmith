@@ -2108,3 +2108,32 @@ fn e_writes_the_release_notes_to_a_file() {
     assert!(text.contains("## "), "the section has a heading: {text}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn the_reword_result_fits_in_the_footer() {
+    let mut git = RecordingGit::new(&["main"], "main");
+    git.local = vec!["bbbb222".to_string()];
+    let mut app = App::with_config(Config::conventional(), Vec::new());
+    app.tab = tabs::Tab::History;
+    app.set_in_repository(true);
+    app.set_git(Box::new(git));
+    app.set_history(vec![past("bbbb222", "fix", None, "local wrok", "")]);
+
+    press(&mut app, KeyCode::Char('E'));
+    for _ in 0.."local wrok".len() {
+        press(&mut app, KeyCode::Backspace);
+    }
+    type_text(&mut app, "local work");
+    press(&mut app, KeyCode::Enter);
+
+    assert!(
+        app.status.starts_with("rewrote bbbb222"),
+        "the result is named first: {}",
+        app.status
+    );
+    assert!(
+        app.status.chars().count() <= 40,
+        "the footer fits 80 columns: {}",
+        app.status
+    );
+}
