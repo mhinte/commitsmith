@@ -285,12 +285,7 @@ fn run_hooks_wizard() -> ExitCode {
 /// Silent when the branch says nothing usable (`main`), so the common case is no
 /// output at all.
 fn run_branch_hint() -> ExitCode {
-    let branch = std::process::Command::new("git")
-        .args(["symbolic-ref", "--short", "HEAD"])
-        .output()
-        .ok()
-        .filter(|out| out.status.success())
-        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string());
+    let branch = commitsmith::infrastructure::process::here(&["symbolic-ref", "--short", "HEAD"]);
     // A detached HEAD has nothing to name.
     let Some(branch) = branch.filter(|name| !name.is_empty()) else {
         return ExitCode::SUCCESS;
@@ -404,12 +399,7 @@ fn run_prepare(file: &std::path::Path) -> ExitCode {
     if !commitsmith::domain::prefill::is_free(&text) {
         return ExitCode::SUCCESS;
     }
-    let branch = std::process::Command::new("git")
-        .args(["symbolic-ref", "--short", "HEAD"])
-        .output()
-        .ok()
-        .filter(|out| out.status.success())
-        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string());
+    let branch = commitsmith::infrastructure::process::here(&["symbolic-ref", "--short", "HEAD"]);
     // A detached HEAD has no branch to read: nothing to suggest.
     let Some(branch) = branch else {
         return ExitCode::SUCCESS;
@@ -664,12 +654,12 @@ fn amend_with_git(message: &str) -> ExitCode {
 }
 
 fn git_commit(message: &str, amend: bool) -> ExitCode {
-    let mut command = std::process::Command::new("git");
-    command.arg("commit");
+    let mut args = vec!["commit"];
     if amend {
-        command.arg("--amend");
+        args.push("--amend");
     }
-    let output = command.arg("-m").arg(message).output();
+    args.extend(["-m", message]);
+    let output = commitsmith::infrastructure::process::run(None, &args, &[]);
 
     match output {
         Ok(output) => {
