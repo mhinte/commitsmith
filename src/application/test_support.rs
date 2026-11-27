@@ -88,10 +88,10 @@ impl GitRepository for RecordingGit {
         Ok(self.local.clone())
     }
 
-    fn reword(&self, target: &str, message: &str) -> Result<(), GitError> {
+    fn reword_header(&self, target: &str, header: &str) -> Result<(), GitError> {
         self.calls
             .borrow_mut()
-            .push(format!("reword {target} {message}"));
+            .push(format!("reword {target} {header}"));
         Ok(())
     }
 

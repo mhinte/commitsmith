@@ -649,7 +649,10 @@ fn only_local_commits_can_be_reworded() {
     press(&mut app, KeyCode::Char('E'));
     let reword = app.release.reword.clone().expect("an open reword");
     assert_eq!(reword.target, "bbbb222");
-    assert_eq!(reword.text, "local work");
+    assert_eq!(
+        reword.text, "fix: local work",
+        "the full header, not just the summary"
+    );
 
     // Esc leaves everything as it was.
     press(&mut app, KeyCode::Esc);
@@ -680,21 +683,75 @@ fn a_written_reword_is_handed_to_the_repository() {
 
     press(&mut app, KeyCode::Char('E'));
     // Fix the typo: clear the line and type the correct subject.
-    for _ in 0.."local wrok".len() {
+    for _ in 0.."fix: local wrok".len() {
         press(&mut app, KeyCode::Backspace);
     }
-    type_text(&mut app, "local work");
+    type_text(&mut app, "fix: local work");
     press(&mut app, KeyCode::Enter);
 
     assert!(app.release.reword.is_none(), "the line closes");
     assert!(
         log.borrow()
             .iter()
-            .any(|call| call == "reword bbbb222 local work"),
+            .any(|call| call == "reword bbbb222 fix: local work"),
         "{:?}",
         log.borrow()
     );
     assert!(app.status.contains("rewrote"), "{}", app.status);
+}
+
+#[test]
+fn the_reword_line_starts_with_the_complete_header_including_the_scope() {
+    // The old line started with the summary only ("local wrok"). Writing that
+    // back produced a message with no type at all, which our own hook rejected
+    // and left the user with a failed rebase and no visible reason.
+    let mut git = RecordingGit::new(&["main"], "main");
+    git.local = vec!["bbbb222".to_string()];
+    let mut app = App::with_config(Config::conventional(), Vec::new());
+    app.tab = tabs::Tab::History;
+    app.set_in_repository(true);
+    app.set_git(Box::new(git));
+    app.set_history(vec![past(
+        "bbbb222",
+        "fix",
+        Some("history"),
+        "local wrok",
+        "",
+    )]);
+
+    press(&mut app, KeyCode::Char('E'));
+    let reword = app.release.reword.clone().expect("an open reword");
+    assert_eq!(reword.text, "fix(history): local wrok");
+}
+
+#[test]
+fn an_invalid_header_is_refused_before_git_touches_history() {
+    let mut git = RecordingGit::new(&["main"], "main");
+    git.local = vec!["bbbb222".to_string()];
+    let log = git.calls();
+    let mut app = App::with_config(Config::conventional(), Vec::new());
+    app.tab = tabs::Tab::History;
+    app.set_in_repository(true);
+    app.set_git(Box::new(git));
+    app.set_history(vec![past("bbbb222", "fix", None, "local wrok", "")]);
+
+    press(&mut app, KeyCode::Char('E'));
+    for _ in 0.."fix: local wrok".len() {
+        press(&mut app, KeyCode::Backspace);
+    }
+    type_text(&mut app, "local work");
+    press(&mut app, KeyCode::Enter);
+
+    assert!(
+        app.release.reword.is_some(),
+        "the line stays open for a retry"
+    );
+    assert!(!log.borrow().iter().any(|call| call.starts_with("reword ")));
+    assert!(
+        app.status.contains("not written") || app.status.contains("header"),
+        "a reason is shown: {}",
+        app.status
+    );
 }
 
 #[test]

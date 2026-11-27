@@ -305,7 +305,7 @@ impl GitRepository for GitBackend {
     /// commits *after* the parent (including the parent fails with "Could not
     /// apply"), and a failing `commit-msg` hook aborts the rebase, which then has
     /// to be undone.
-    fn reword(&self, target: &str, message: &str) -> Result<(), GitError> {
+    fn reword_header(&self, target: &str, header: &str) -> Result<(), GitError> {
         let git_path = |name: &str| -> Option<PathBuf> {
             let out = Command::new("git")
                 .current_dir(&self.workdir)
@@ -322,6 +322,10 @@ impl GitRepository for GitBackend {
                 )));
             }
         }
+        // Keep everything below the first line exactly as it is.
+        let original = self.git(&["log", "-1", "--format=%B", target])?;
+        let rest = original.split_once('\n').map_or("", |(_, rest)| rest);
+        let message = format!("{}\n{}", header.trim(), rest.trim_end());
         let parent = self
             .git(&["rev-parse", format!("{target}^").as_str()])?
             .trim()
@@ -329,7 +333,16 @@ impl GitRepository for GitBackend {
         let descendants =
             self.git(&["rev-list", "--reverse", format!("{target}..HEAD").as_str()])?;
 
-        let dir = std::env::temp_dir().join(format!("commitsmith-reword-{}", std::process::id()));
+        // A process id alone collided when two rewords ran in parallel (the
+        // tests do); a shared temp directory then handed one rebase the other's
+        // todo file, and git answered "invalid line 1".
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos());
+        let dir = std::env::temp_dir().join(format!(
+            "commitsmith-reword-{}-{unique}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir)
             .map_err(|error| GitError::io(format!("reword dir {}", dir.display()), error))?;
@@ -345,7 +358,9 @@ impl GitRepository for GitBackend {
 
         let output = Command::new("git")
             .current_dir(&self.workdir)
-            .args(["rebase", "-i", parent.as_str()])
+            // Uncommitted work is normal while fixing a typo; without
+            // --autostash git refuses with "You have unstaged changes".
+            .args(["rebase", "-i", "--autostash", parent.as_str()])
             .env("GIT_SEQUENCE_EDITOR", format!("cp {}", todo.display()))
             .env("GIT_EDITOR", format!("cp {}", msg.display()))
             .env("GIT_TERMINAL_PROMPT", "0")
@@ -360,8 +375,19 @@ impl GitRepository for GitBackend {
             .current_dir(&self.workdir)
             .args(["rebase", "--abort"])
             .output();
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Err(GitError::invalid_state(format!("reword failed: {stderr}")))
+        // The first error line is what fits in the status line; git's advice
+        // lines ("hint: ...") follow it.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let reason = stderr
+            .lines()
+            .map(str::trim)
+            .find(|line| line.starts_with("error:") || line.starts_with("fatal:"))
+            .or_else(|| stderr.lines().map(str::trim).find(|line| !line.is_empty()))
+            .unwrap_or("git rebase failed")
+            .trim_start_matches("error: ")
+            .trim_start_matches("fatal: ")
+            .to_string();
+        Err(GitError::invalid_state(format!("reword failed: {reason}")))
     }
 
     /// `git show --name-status` for one commit. Through the shared `git` helper,
@@ -774,12 +800,9 @@ mod tests {
         let head_tree_before = git(&["rev-parse", "HEAD^{tree}"]);
         let head_before = git(&["rev-parse", "HEAD"]);
 
-        repo.reword(&target, "feat: change 2, reworded").unwrap();
+        repo.reword_header(&target, "feat: change 2, reworded")
+            .unwrap();
 
-        assert_eq!(
-            git(&["log", "-1", "--skip=1", "--format=%s"]),
-            "feat: change 2, reworded"
-        );
         assert_eq!(
             git(&["log", "-1", "--skip=1", "--format=%s"]),
             "feat: change 2, reworded"
@@ -791,6 +814,61 @@ mod tests {
         assert_ne!(git(&["rev-parse", "HEAD"]), head_before);
         assert_eq!(git(&["rev-list", "--count", "HEAD"]), "4", "nothing lost");
         assert_eq!(git(&["status", "--porcelain"]), "", "clean afterwards");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_reword_keeps_the_body_and_the_footers_and_survives_dirty_work() {
+        let (dir, repo) = temp_repo("reword-body");
+        let git = |args: &[&str]| -> String {
+            let out = Command::new("git")
+                .current_dir(&dir)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8_lossy(&out.stdout).to_string()
+        };
+        git(&["add", "a.txt"]);
+        git(&["commit", "-q", "-m", "chore: base"]);
+        std::fs::write(dir.join("b.txt"), "b").unwrap();
+        git(&["add", "."]);
+        git(&[
+            "commit",
+            "-q",
+            "-m",
+            "fix(core): wrong wrod",
+            "-m",
+            "Why this changed, in a second paragraph.",
+            "-m",
+            "Refs: #1234",
+        ]);
+        let target = git(&["rev-parse", "HEAD"]).trim().to_string();
+        // Editing a typo with uncommitted work in progress is the normal case.
+        std::fs::write(dir.join("a.txt"), "dirty but precious\n").unwrap();
+
+        repo.reword_header(&target, "fix(core): wrong word")
+            .unwrap();
+
+        let message = git(&["log", "-1", "--format=%B"]);
+        assert!(message.starts_with("fix(core): wrong word"), "{message}");
+        assert!(
+            message.contains("Why this changed, in a second paragraph."),
+            "the body survives: {message}"
+        );
+        assert!(
+            message.contains("Refs: #1234"),
+            "footers survive: {message}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "dirty but precious\n",
+            "the work in progress survived the rebase"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

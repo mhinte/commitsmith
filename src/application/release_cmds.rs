@@ -172,7 +172,9 @@ impl App {
                 self.release.reword = Some(release_view::Reword {
                     target: commit.id.clone(),
                     short_id: commit.short_id.clone(),
-                    text: commit.summary.clone(),
+                    // The whole header: editing only the summary and writing it
+                    // back as the message dropped type and scope.
+                    text: commit.header(),
                 });
                 self.note(format!(
                     "rewording {} · Enter writes it, Esc cancels",
@@ -196,12 +198,23 @@ impl App {
             self.problem("the message must not be empty");
             return;
         }
+        // The same rules as a new commit: rewriting history to a header the
+        // hook would refuse helps nobody.
+        let rules = validate::rules_from_config(&self.config);
+        let issues = validate::lint_with(&reword.text, &rules);
+        if let Some(issue) = issues
+            .iter()
+            .find(|issue| issue.severity == Severity::Error)
+        {
+            self.problem(format!("not written · {}", issue.message));
+            return;
+        }
         let depth = self.config.history_depth;
         let result = {
             let Some(git) = self.repo.git.as_deref() else {
                 return;
             };
-            match git.reword(&reword.target, &reword.text) {
+            match git.reword_header(&reword.target, &reword.text) {
                 // The ids changed: the history has to be read again, or the log
                 // shows commits that no longer exist under those ids.
                 Ok(()) => git.recent_commits(depth).map_err(|error| error.to_string()),

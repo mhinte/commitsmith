@@ -180,13 +180,15 @@ pub trait GitRepository {
         Ok(Vec::new())
     }
 
-    /// Rewrite the message of one local commit, keeping its tree, its position
-    /// and every commit after it.
+    /// Replace the header (first line) of one local commit, keeping body,
+    /// footers, its tree, its position and every commit after it.
     ///
+    /// Only the header: the log knows the body without its footers, so handing
+    /// a rebuilt message to git dropped `Refs:` and `Co-authored-by:` lines.
     /// Only commits that are not published may be rewritten; the check happens
     /// in the application (`local_commits`), the adapter trusts its caller.
-    fn reword(&self, target: &str, message: &str) -> Result<(), GitError> {
-        let _ = (target, message);
+    fn reword_header(&self, target: &str, header: &str) -> Result<(), GitError> {
+        let _ = (target, header);
         Err(GitError::invalid_state(
             "rewriting history is not supported here",
         ))
