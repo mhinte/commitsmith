@@ -1336,3 +1336,37 @@ fn a_detached_head_says_where_it_is() {
     assert!(screen.contains("detached HEAD at deadbee"), "{screen}");
     assert_eq!(app.branch_label(), "detached at deadbee");
 }
+
+#[test]
+fn the_compact_view_counts_the_fields_it_can_reach_and_shows_a_status() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut config = crate::config::Config::conventional();
+    config.compact_form = true;
+    let mut app = App::with_config(config, Vec::new());
+    app.problem("the working tree is in the way");
+
+    // Below COMPACT_HEIGHT/COMPACT_WIDTH the frame switches over.
+    let mut terminal = Terminal::new(TestBackend::new(
+        (crate::ui::COMPACT_WIDTH - 1) as u16,
+        (crate::ui::COMPACT_HEIGHT - 1) as u16,
+    ))
+    .unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+    let screen = rows(&terminal).join("\n");
+    assert!(
+        screen.contains("1/3"),
+        "only the three reachable fields are counted: {screen}"
+    );
+    assert!(
+        screen.contains("the working tree is in the way"),
+        "the status is the only place a problem can appear here: {screen}"
+    );
+
+    // An amend must be visible, because Ctrl+S then replaces a commit.
+    app.form.amend = true;
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+    let screen = rows(&terminal).join("\n");
+    assert!(screen.contains("amend"), "{screen}");
+}

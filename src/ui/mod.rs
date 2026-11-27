@@ -298,7 +298,22 @@ fn draw_compact(frame: &mut Frame, app: &App, area: Rect) {
     .areas(area);
 
     let (errors, warnings) = validate::count(&app.issues);
-    let step = format!("{}/{}", app.form.field + 1, FIELDS.len());
+    // Count only the fields this mode can reach: the optional ones are hidden,
+    // and "2/6" while three fields are on screen was a lie. An amend has to be
+    // visible here too — Ctrl+S replaces a commit instead of creating one.
+    let visible: Vec<Field> = FIELDS
+        .iter()
+        .copied()
+        .filter(|field| app.field_visible(*field))
+        .collect();
+    let position = visible
+        .iter()
+        .position(|field| *field == app.active_field())
+        .map_or(0, |index| index + 1);
+    let step = match app.form.amend {
+        true => format!("{position}/{} · amend", visible.len()),
+        false => format!("{position}/{}", visible.len()),
+    };
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(MUTED)
@@ -365,7 +380,12 @@ fn draw_compact(frame: &mut Frame, app: &App, area: Rect) {
 
     // The name and version belong in the corner here too, but the narrow form
     // has to fit beside the keys.
-    let version = format!("v{} ", env!("CARGO_PKG_VERSION"));
+    let version = match app.status.is_empty() {
+        // A note or a problem is worth more than the version number, and this
+        // row is the only place the compact form can show one.
+        false => format!("{} ", app.status),
+        true => format!("v{} ", env!("CARGO_PKG_VERSION")),
+    };
     let version_width = if footer.width >= 54 {
         version.chars().count() as u16
     } else {
