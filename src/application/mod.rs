@@ -475,7 +475,6 @@ impl App {
                     let _ = self.branches.files.refresh_diff(git);
                 }
             }
-            KeyCode::Esc => self.branches.panel = Panel::Branches,
             // `r` takes the file out of the index, `x` throws its changes away,
             // `z` parks everything and `Z` takes the newest stash back.
             KeyCode::Char('r') => self.unstage_selected(),
@@ -742,13 +741,6 @@ impl App {
             KeyCode::Char('r') => self.reload_branches(),
             KeyCode::Char('f') => self.fetch_remote(),
             KeyCode::Char('n') => self.branches.wizard.start(),
-            KeyCode::Esc => {
-                // Esc is the cancel key while a deletion waits for its second
-                // press; otherwise it leaves the program as everywhere else.
-                if self.branches.list.confirming.take().is_none() {
-                    self.should_quit = true;
-                }
-            }
             _ => {}
         }
     }
@@ -757,7 +749,6 @@ impl App {
     fn wizard_key(&mut self, key: KeyEvent) {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
-            KeyCode::Esc => self.branches.wizard.close(),
             KeyCode::Char('c') if ctrl => {
                 self.branches.wizard.close();
                 self.should_quit = true;
@@ -1256,6 +1247,43 @@ impl App {
         }
     }
 
+    /// One Esc, one layer. Closes whatever is on top and says whether it handled
+    /// the key; only when nothing is open does Esc leave the program.
+    fn escape(&mut self) -> bool {
+        // A destructive action waiting for its second press is the innermost
+        // layer: Esc cancels it and keeps the program.
+        if self.branches.list.confirming.take().is_some() {
+            self.note("cancelled");
+            return true;
+        }
+        if self.branches.wizard.open {
+            self.branches.wizard.close();
+            return true;
+        }
+        // Tab 3: the filter line first, then the filter itself.
+        if self.release.log.input.is_some() {
+            self.release.log.cancel_filter();
+            self.note("filter line closed · / reopens it");
+            return true;
+        }
+        if !self.release.log.filter.is_empty() {
+            self.release.log.clear_filter();
+            self.note("filter cleared");
+            return true;
+        }
+        // Tab 2: the diff closes, then the pane steps back to the branches.
+        if self.branches.files.show_diff {
+            self.branches.files.show_diff = false;
+            self.branches.panel = Panel::Files;
+            return true;
+        }
+        if self.tab == tabs::Tab::Branches && self.branches.panel != Panel::Branches {
+            self.branches.panel = Panel::Branches;
+            return true;
+        }
+        false
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) {
         if key.kind != KeyEventKind::Press {
             return;
@@ -1335,6 +1363,18 @@ impl App {
                 KeyCode::Esc | KeyCode::Char('?') => self.show_help = false,
                 KeyCode::Char('c') if ctrl => self.should_quit = true,
                 _ => {}
+            }
+            return;
+        }
+
+        // Esc closes one layer per press, in the order the layers were opened.
+        // It used to be decided in four places ("panel back" on tab 2, "cancel
+        // the filter" on tab 3, "quit" at the bottom) and on tab 3 it fell
+        // through to nothing at all.
+        if key.code == KeyCode::Esc {
+            // Nothing left to close: Esc leaves, as it always did.
+            if !self.escape() {
+                self.should_quit = true;
             }
             return;
         }

@@ -108,6 +108,58 @@ fn deleting_a_branch_takes_a_second_press() {
 }
 
 #[test]
+fn esc_closes_one_layer_per_press_on_tab_three() {
+    // Tab 3 had no path for Esc at all: the filter line handled it, and
+    // afterwards the key fell into nothing.
+    let git = RecordingGit::new(&["main"], "main");
+    let mut app = App::with_config(Config::conventional(), Vec::new());
+    app.tab = tabs::Tab::History;
+    app.set_in_repository(true);
+    app.set_git(Box::new(git));
+    app.set_history(vec![past("aaaaaaa1111111", "feat", None, "first", "")]);
+
+    // 1. a typed filter in the line, not yet applied
+    press(&mut app, KeyCode::Char('/'));
+    type_text(&mut app, "feat");
+    press(&mut app, KeyCode::Esc);
+    assert!(app.release.log.input.is_none(), "the line closes");
+    assert!(!app.should_quit, "and the program stays");
+
+    // 2. apply a filter, then Esc clears it
+    press(&mut app, KeyCode::Char('/'));
+    type_text(&mut app, "feat");
+    press(&mut app, KeyCode::Enter);
+    assert!(!app.release.log.filter.is_empty(), "filter applied");
+    press(&mut app, KeyCode::Esc);
+    assert!(app.release.log.filter.is_empty(), "the filter is cleared");
+    assert!(!app.should_quit);
+
+    // 3. nothing left to close: Esc leaves
+    press(&mut app, KeyCode::Esc);
+    assert!(app.should_quit, "the last Esc quits");
+}
+
+#[test]
+fn esc_closes_the_diff_before_it_leaves_the_pane() {
+    let mut app = app_on_the_branch_tab(RecordingGit::new(&["main"], "main"));
+    app.branches.panel = Panel::Diff;
+    app.branches.files.show_diff = true;
+    press(&mut app, KeyCode::Esc);
+    assert!(!app.branches.files.show_diff, "the diff closes first");
+    assert_eq!(app.branches.panel, Panel::Files);
+    assert!(!app.should_quit);
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(
+        app.branches.panel,
+        Panel::Branches,
+        "then the pane steps back"
+    );
+    assert!(!app.should_quit);
+    press(&mut app, KeyCode::Esc);
+    assert!(app.should_quit, "only then does Esc leave");
+}
+
+#[test]
 fn esc_cancels_the_deletion_instead_of_quitting() {
     let mut app = app_on_the_branch_tab(RecordingGit::new(&["main", "feature"], "main"));
     press(&mut app, KeyCode::Down);

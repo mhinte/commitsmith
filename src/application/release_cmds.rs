@@ -78,7 +78,6 @@ impl App {
         }
         if self.release.log.input.is_some() {
             match key.code {
-                KeyCode::Esc => self.release.log.cancel_filter(),
                 KeyCode::Enter => {
                     let types = self.config.type_names();
                     self.release.log.apply_filter(&types);
