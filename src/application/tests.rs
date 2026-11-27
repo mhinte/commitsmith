@@ -578,6 +578,35 @@ fn the_sync_keys_belong_to_the_first_tab() {
 }
 
 #[test]
+fn a_note_disappears_on_the_next_keypress() {
+    // The message after `b` used to sit in the footer until some unrelated
+    // action overwrote it.
+    let git = RecordingGit::new(&["main"], "main");
+    let mut app = App::with_config(Config::conventional(), Vec::new());
+    app.tab = tabs::Tab::History;
+    app.set_in_repository(true);
+    app.set_git(Box::new(git));
+    app.refresh_plan();
+
+    press(&mut app, KeyCode::Char('b'));
+    assert!(!app.status.is_empty(), "the switch says what it shows now");
+    assert!(app.status_is_note);
+
+    press(&mut app, KeyCode::Down);
+    assert_eq!(app.status, "", "a note is gone after one key");
+    assert!(!app.status_is_note);
+}
+
+#[test]
+fn a_problem_stays_until_something_replaces_it() {
+    let mut app = App::default();
+    app.problem("the working tree is in the way");
+    press(&mut app, KeyCode::Down);
+    assert_eq!(app.status, "the working tree is in the way");
+    assert!(!app.status_is_note);
+}
+
+#[test]
 fn the_footer_label_says_how_far_the_branch_is() {
     let (app, _) = app_with_remote(Some((2, 1)));
     assert_eq!(app.sync_label().as_deref(), Some("↑2↓1"));

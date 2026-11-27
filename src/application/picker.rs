@@ -142,7 +142,7 @@ impl App {
         self.form.commit.body = past.body.clone();
         self.form.commit.breaking.clear();
 
-        self.status = format!("{} reused: {}", past.short_id, applied.join(", "));
+        self.note(format!("{} reused: {}", past.short_id, applied.join(", ")));
         self.focus(
             FIELDS
                 .iter()

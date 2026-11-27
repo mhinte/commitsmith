@@ -40,7 +40,7 @@ impl App {
         self.seed_footer();
         self.focus(FIELDS.iter().position(|f| *f == Field::Type).unwrap_or(0));
         self.revalidate();
-        self.status = "new commit · everything cleared".to_string();
+        self.note("new commit · everything cleared");
     }
 
     /// Ctrl+A: load the message of `HEAD`, so Ctrl+S can replace it.
@@ -50,7 +50,7 @@ impl App {
     /// `BREAKING CHANGE:` line, which a rendered template would lose.
     pub(crate) fn begin_amend(&mut self) {
         let Some(git) = self.repo.git.as_deref() else {
-            self.status = "not a git repository · nothing to amend".to_string();
+            self.problem("not a git repository · nothing to amend");
             return;
         };
         match git.head_message() {
@@ -69,11 +69,10 @@ impl App {
                         .unwrap_or(0),
                 );
                 self.revalidate();
-                self.status =
-                    "amend: HEAD message loaded · Ctrl+S replaces that commit".to_string();
+                self.note("amend: HEAD message loaded · Ctrl+S replaces that commit");
             }
-            Ok(None) => self.status = "no commit to amend yet".to_string(),
-            Err(error) => self.status = error.to_string(),
+            Ok(None) => self.problem("no commit to amend yet"),
+            Err(error) => self.problem(error.to_string()),
         }
     }
 
@@ -230,7 +229,7 @@ impl App {
             return;
         }
         if self.value(field).trim().is_empty() {
-            self.status = format!("{} is already empty", field.label());
+            self.note(format!("{} is already empty", field.label()));
             return;
         }
         *self.value_mut(field) = String::new();
@@ -239,7 +238,7 @@ impl App {
             self.reseed_empty_footer();
         }
         self.revalidate();
-        self.status = format!("cleared {}", field.label());
+        self.note(format!("cleared {}", field.label()));
     }
 
     /// Enter inside a multiline field starts a new line, elsewhere it advances.

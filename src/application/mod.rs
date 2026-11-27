@@ -238,6 +238,11 @@ pub struct App {
     pub issues: Vec<Issue>,
     pub picker: Option<Picker>,
     pub status: String,
+    /// True when `status` is a passing note (a key was pressed, a plan was
+    /// rebuilt) rather than an answer the user has to act on. Notes clear on the
+    /// next keypress, problems stay until something replaces them — one rule for
+    /// all three tabs instead of each tab deciding for itself.
+    pub status_is_note: bool,
     /// Set when the user asks to hand the message to git.
     pub output: Option<String>,
     /// True when the program was started with `--commit`, so Ctrl+S really
@@ -286,6 +291,7 @@ impl App {
             issues: Vec::new(),
             picker: None,
             status: warnings.join(" · "),
+            status_is_note: false,
             output: None,
             commit_mode: false,
             setup_request: false,
@@ -341,6 +347,18 @@ impl App {
     ///
     /// "Untouched" means empty or exactly what an earlier suggestion wrote, so
     /// switching branches updates the reference but never overwrites typing.
+    /// Say something that is only worth reading until the next keypress.
+    pub fn note(&mut self, text: impl Into<String>) {
+        self.status = text.into();
+        self.status_is_note = true;
+    }
+
+    /// Say something the user has to act on: it stays until it is replaced.
+    pub fn problem(&mut self, text: impl Into<String>) {
+        self.status = text.into();
+        self.status_is_note = false;
+    }
+
     pub fn seed_footer(&mut self) {
         let untouched = self.form.commit.footer.trim().is_empty()
             || self.form.footer_seed.as_deref() == Some(self.form.commit.footer.as_str());
@@ -1234,6 +1252,11 @@ impl App {
     pub fn handle_key(&mut self, key: KeyEvent) {
         if key.kind != KeyEventKind::Press {
             return;
+        }
+        // A note has done its job once the next key arrives; a problem stays.
+        if self.status_is_note {
+            self.status.clear();
+            self.status_is_note = false;
         }
         // Replacing a published commit asks once: y/Enter go ahead, every other
         // key is "no" and drops the question (the same rule as the destructive

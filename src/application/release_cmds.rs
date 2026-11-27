@@ -76,13 +76,14 @@ impl App {
                     self.release.log.apply_filter(&types);
                     let len = self.release.log.visible(&self.history.commits).len();
                     self.release.log.clamp(len);
-                    self.status = match self.release.log.filter.is_empty() {
+                    let text = match self.release.log.filter.is_empty() {
                         true => "filter cleared".to_string(),
                         false => {
                             let matches = format!("{} matches", len);
                             format!("{} · {}", self.release.log.filter.describe(), matches)
                         }
                     };
+                    self.note(text);
                 }
                 KeyCode::Backspace => self.release.log.backspace(),
                 KeyCode::Char(c) => self.release.log.push(c),
@@ -109,7 +110,9 @@ impl App {
                     .as_ref()
                     .map(commitsmith::domain::ReleasePlan::headline)
                     .unwrap_or_default();
-                self.status = label;
+                // A note: it is informative and must not sit in the footer until
+                // an unrelated action happens to overwrite it.
+                self.note(label);
             }
             // `e` writes the section to a file: a TUI list cannot be selected
             // with the mouse, and the text is what people paste into a release.
