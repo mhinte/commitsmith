@@ -34,7 +34,6 @@ use release_view::Release;
 use repo::RepoState;
 
 /// Reads a commit's file list when the history preview needs it.
-pub type FilesLoader = Box<dyn Fn(&str) -> Vec<String> + Send + Sync>;
 use crate::config::Config;
 use crate::git::{PastCommit, ScopeInfo};
 use crate::validate::{self, Issue, Rules, Severity};
@@ -884,11 +883,6 @@ impl App {
         }
     }
 
-    /// Hand the composer a way to read a commit's file list when it is needed.
-    pub fn set_files_loader(&mut self, loader: FilesLoader) {
-        self.history.loader = Some(loader);
-    }
-
     /// Read the file list for the highlighted history entry, once.
     fn refresh_history_preview(&mut self) {
         let Some(picker) = self.picker.as_ref() else {
@@ -906,10 +900,18 @@ impl App {
         };
 
         if !self.history.cache.contains_key(&id) {
-            let Some(loader) = self.history.loader.as_ref() else {
+            // The repository the tab already holds answers this; the closure is
+            // only for an `App` built without one (tests, the CLI).
+            let Some(git) = self.repo.git.as_deref() else {
                 return;
             };
-            let files = loader(&id);
+            let files = match git.commit_files(&id) {
+                Ok(files) => files,
+                Err(error) => {
+                    self.status = error.to_string();
+                    Vec::new()
+                }
+            };
             self.history.cache.insert(id.clone(), files);
         }
         let files = self.history.cache.get(&id).cloned().unwrap_or_default();

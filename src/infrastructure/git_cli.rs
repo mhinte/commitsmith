@@ -80,6 +80,16 @@ fn parse_track(track: &str) -> (usize, usize) {
     (ahead, behind)
 }
 
+/// Parse `git show --name-status` output into `M path` lines, at most twelve.
+fn parse_name_status(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.replace('\t', " "))
+        .take(12)
+        .collect()
+}
+
 /// Parse `git status --porcelain=v1 -z` into changed files.
 ///
 /// Records are NUL-terminated as `XY <path>`; a rename or copy is followed by
@@ -252,6 +262,21 @@ impl GitRepository for GitBackend {
         // longer needs a 500-commit head start to be sure it is inside the
         // window.
         self.reader.commits_before(sha, limit)
+    }
+
+    /// `git show --name-status` for one commit. Through the shared `git` helper,
+    /// so a failure is classified and reported instead of silently yielding an
+    /// empty list.
+    fn commit_files(&self, id: &str) -> Result<Vec<String>, GitError> {
+        let output = self.git(&[
+            "show",
+            "--no-commit-id",
+            "--name-status",
+            "--format=",
+            "-M",
+            id,
+        ])?;
+        Ok(parse_name_status(&output))
     }
 
     fn diff(&self, path: &str, staged: bool) -> Result<String, GitError> {

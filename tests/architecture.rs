@@ -118,3 +118,30 @@ fn the_domain_layer_is_actually_there() {
         "expected src/domain/ticket.rs, found {files:?}"
     );
 }
+
+#[test]
+fn the_repository_is_discovered_once_not_per_lookup() {
+    // A `gix::discover` per highlighted commit meant a directory walk and a
+    // config read for every keystroke. Discovery belongs to the adapter
+    // (`infrastructure/gix_repo.rs`), nowhere else.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut offenders = Vec::new();
+    for path in sources(&root) {
+        if path.file_name().is_some_and(|name| name == "gix_repo.rs") {
+            continue;
+        }
+        let text = fs::read_to_string(&path).unwrap_or_default();
+        for (number, line) in text.lines().enumerate() {
+            if line.trim().starts_with("//") {
+                continue;
+            }
+            if line.contains("gix::discover") {
+                offenders.push(format!("{}:{}", path.display(), number + 1));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "discovery outside the adapter: {offenders:?}"
+    );
+}

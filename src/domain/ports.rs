@@ -168,6 +168,14 @@ pub trait GitRepository {
     /// Scopes from history, merged with the configured ones.
     fn scopes(&self, configured: &[String], depth: usize) -> Result<ScopeInfo, GitError>;
 
+    /// Files a commit touched, as `M src/app.rs` lines. Read for one commit at a
+    /// time, when someone looks at it: doing this for the whole history is what
+    /// made the start in a long repository slow.
+    fn commit_files(&self, id: &str) -> Result<Vec<String>, GitError> {
+        let _ = id;
+        Ok(Vec::new())
+    }
+
     /// Unified diff of one path: `staged` compares the index with `HEAD`,
     /// otherwise the working tree with the index.
     fn diff(&self, path: &str, staged: bool) -> Result<String, GitError>;

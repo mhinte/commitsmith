@@ -1208,64 +1208,50 @@ fn digits_do_not_switch_tabs_while_a_picker_is_open() {
 
 #[test]
 fn the_history_preview_loads_files_lazily_and_once() {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    let calls = Arc::new(AtomicUsize::new(0));
-    let counter = calls.clone();
+    // The file list comes through the port now, so there is no `gix::discover`
+    // per keystroke — and the read happens once per commit, cached afterwards.
+    let git = RecordingGit::new(&["main"], "main");
+    let log = git.calls();
     let mut app = App::default();
-    app.set_files_loader(Box::new(move |id: &str| {
-        counter.fetch_add(1, Ordering::SeqCst);
-        vec![format!("M {id}.rs")]
-    }));
+    app.set_in_repository(true);
+    app.set_git(Box::new(git));
     app.set_history(vec![
-        PastCommit {
-            id: "aaaa111".into(),
-            short_id: "aaaa111".into(),
-            summary: "first".into(),
-            kind: Some("feat".into()),
-            ..Default::default()
-        },
-        PastCommit {
-            id: "bbbb222".into(),
-            short_id: "bbbb222".into(),
-            summary: "second".into(),
-            kind: Some("fix".into()),
-            ..Default::default()
-        },
+        past("aaaa111", "feat", None, "first", ""),
+        past("bbbb222", "fix", None, "second", ""),
     ]);
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
-    assert_eq!(calls.load(Ordering::SeqCst), 1, "one commit read on open");
+    press_with(&mut app, KeyCode::Char('r'), KeyModifiers::CONTROL);
+    let reads = || -> Vec<String> {
+        log.borrow()
+            .iter()
+            .filter(|call| call.starts_with("commit_files"))
+            .cloned()
+            .collect()
+    };
+    assert_eq!(reads(), ["commit_files aaaa111"], "one commit read on open");
     let preview = app.picker.as_ref().unwrap().preview().unwrap().to_string();
     assert!(preview.contains("M aaaa111.rs"), "{preview}");
 
     // Moving to the next commit reads exactly one more.
-    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    press(&mut app, KeyCode::Down);
+    assert_eq!(reads().len(), 2);
     let preview = app.picker.as_ref().unwrap().preview().unwrap().to_string();
     assert!(preview.contains("M bbbb222.rs"), "{preview}");
 
     // Coming back is a cache hit.
-    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
-        2,
-        "no second read for a cached commit"
-    );
+    press(&mut app, KeyCode::Up);
+    assert_eq!(reads().len(), 2, "no second read for a cached commit");
 }
 
 #[test]
 fn a_commit_without_files_still_previews() {
+    let mut git = RecordingGit::new(&["main"], "main");
+    // A commit whose list is empty: the preview must still render.
+    git.file_lists.insert("cccc333".to_string(), Vec::new());
     let mut app = App::default();
-    app.set_files_loader(Box::new(|_: &str| Vec::new()));
-    app.set_history(vec![PastCommit {
-        id: "cccc333".into(),
-        short_id: "cccc333".into(),
-        summary: "no files".into(),
-        kind: Some("docs".into()),
-        ..Default::default()
-    }]);
+    app.set_in_repository(true);
+    app.set_git(Box::new(git));
+    app.set_history(vec![past("cccc333", "docs", None, "no files", "")]);
     app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
     let preview = app.picker.as_ref().unwrap().preview().unwrap();
     assert!(preview.contains("docs: no files"), "{preview}");

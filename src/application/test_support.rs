@@ -30,6 +30,8 @@ pub struct RecordingGit {
     pub commits: RefCell<Vec<PastCommit>>,
     /// Files the fake reports, with their real index/worktree state.
     pub files: RefCell<Vec<ChangedFile>>,
+    /// What `commit_files` answers per commit id; a miss yields `M <id>.rs`.
+    pub file_lists: std::collections::HashMap<String, Vec<String>>,
 }
 
 impl RecordingGit {
@@ -50,6 +52,7 @@ impl RecordingGit {
             sync_map: std::collections::HashMap::new(),
             commits: RefCell::new(Vec::new()),
             files: RefCell::new(Vec::new()),
+            file_lists: std::collections::HashMap::new(),
         }
     }
 
@@ -72,6 +75,14 @@ impl GitRepository for RecordingGit {
 
     fn branches(&self) -> Result<Vec<BranchInfo>, GitError> {
         Ok(self.branches.borrow().clone())
+    }
+
+    fn commit_files(&self, id: &str) -> Result<Vec<String>, GitError> {
+        self.calls.borrow_mut().push(format!("commit_files {id}"));
+        Ok(match self.file_lists.get(id) {
+            Some(files) => files.clone(),
+            None => vec![format!("M {id}.rs")],
+        })
     }
 
     fn diff(&self, path: &str, staged: bool) -> Result<String, GitError> {

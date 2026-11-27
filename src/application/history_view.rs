@@ -9,8 +9,6 @@ use super::*;
 pub struct History {
     /// Recent commits, offered by the picker and shown in the log.
     pub commits: Vec<PastCommit>,
-    /// Reads a commit's file list when the preview needs it. `None` outside a repo.
-    pub loader: Option<FilesLoader>,
     /// One entry per commit whose files have been read.
     pub cache: HashMap<String, Vec<String>>,
     /// How every commit would be judged today, one entry per commit id.
