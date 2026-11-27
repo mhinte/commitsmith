@@ -91,6 +91,8 @@ enum Command {
     },
     /// List the commit types of the active profile
     Types,
+    /// Print hints about the staged index, for pre-commit hooks
+    Hints,
     /// Start a new message from the branch name, for prepare-commit-msg hooks
     Prepare {
         /// The message file git hands to the hook
@@ -150,6 +152,7 @@ fn main() -> ExitCode {
         Some(Command::Init { defaults, force }) => init_config(defaults, force),
         Some(Command::Hooks { action }) => run_hooks(action),
         Some(Command::Prepare { file }) => run_prepare(&file),
+        Some(Command::Hints) => run_hints(),
         Some(Command::Check {
             file,
             message,
@@ -195,6 +198,44 @@ fn run_hooks(action: HookAction) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// `commitsmith hints`: say what is worth saying about the index, then get out
+/// of the way.
+///
+/// Always exit 0. The hints go to stderr so a hook never writes into a pipe
+/// somebody parses, and a broken installation (no repository, unreadable index)
+/// is not a reason to stop a commit.
+fn run_hints() -> ExitCode {
+    use commitsmith::domain::ports::GitRepository;
+    use commitsmith::infrastructure::git_cli::GitBackend;
+
+    let Ok(root) = std::env::current_dir() else {
+        return ExitCode::SUCCESS;
+    };
+    let Ok(backend) = GitBackend::open(&root) else {
+        return ExitCode::SUCCESS;
+    };
+    let staged: Vec<String> = backend
+        .changes()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(commitsmith::domain::ports::ChangedFile::is_staged)
+        .map(|file| file.path)
+        .collect();
+    if staged.is_empty() {
+        return ExitCode::SUCCESS;
+    }
+    let diff = backend.staged_diff().unwrap_or_default();
+    let branch = backend
+        .current_branch()
+        .ok()
+        .flatten()
+        .map(|branch| branch.name);
+    for hint in commitsmith::domain::hints::for_staged(branch.as_deref(), &staged, &diff) {
+        eprintln!("hint: {hint}");
+    }
+    ExitCode::SUCCESS
 }
 
 /// `commitsmith prepare --file .git/COMMIT_EDITMSG`: leave a starting point for

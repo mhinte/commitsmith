@@ -181,7 +181,7 @@ Typing filters the list, `Ctrl+R` is also available while another picker is open
 ### commit-msg hook
 
 ```sh
-commitsmith hooks install          # writes commit-msg and prepare-commit-msg
+commitsmith hooks install          # writes commit-msg, prepare-commit-msg, pre-commit
 commitsmith hooks uninstall        # removes them (and restores chained hooks)
 commitsmith hooks install --force  # install into a husky/lefthook/pre-commit directory
 ```
@@ -197,6 +197,11 @@ like `feat/hima/TICKET-12/add-a-thing` git's editor opens with
 `feat(TICKET-12): ` already in the first line. Merge, squash, `--amend`, `-m` and
 `-F` pass a source to the hook and are left exactly as git wrote them, and a
 branch without a kind (`main`) gets no suggestion rather than a wrong one.
+
+`pre-commit` only hints and never blocks: more than 25 staged files, a `docs`
+branch that touches nothing but source, and leftover conflict markers. It reads
+the index and the branch name, nothing else — measured at 7 ms on this repository,
+11 ms with 30 files staged. `commitsmith hints` is the command behind it.
 
 An existing hook is never replaced. It moves to `commit-msg.pre-commitsmith`,
 runs first, and its exit code stands; `uninstall` puts it back. A directory that

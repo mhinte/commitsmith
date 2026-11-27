@@ -18,7 +18,7 @@ struct Hook {
     script: &'static str,
 }
 
-const HOOKS: [Hook; 2] = [
+const HOOKS: [Hook; 3] = [
     Hook {
         name: "commit-msg",
         script: SCRIPT_COMMIT_MSG,
@@ -26,6 +26,10 @@ const HOOKS: [Hook; 2] = [
     Hook {
         name: "prepare-commit-msg",
         script: SCRIPT_PREPARE_COMMIT_MSG,
+    },
+    Hook {
+        name: "pre-commit",
+        script: SCRIPT_PRE_COMMIT,
     },
 ];
 
@@ -123,6 +127,47 @@ if ! usable \"$binary\"; then
 fi
 
 exec \"$binary\" prepare --file \"$1\"
+";
+
+/// Hints before the message is written: a large index, a docs branch full of
+/// source, leftover conflict markers.
+///
+/// It warns and never blocks — `exit 0` in every path. A pre-commit hook that
+/// refuses commits is the one people learn to bypass with `--no-verify`; a hook
+/// that occasionally says something useful keeps working.
+const SCRIPT_PRE_COMMIT: &str = "#!/bin/sh
+# commitsmith pre-commit hook - hints only, never a verdict.
+
+# A hook that was here before commitsmith runs first; its verdict stands.
+previous=\"$(dirname \"$0\")/pre-commit.pre-commitsmith\"
+if [ -x \"$previous\" ]; then
+    \"$previous\" \"$@\" || exit $?
+fi
+
+usable() {
+    [ -n \"$1\" ] && [ -x \"$1\" ]
+}
+
+binary=$(git config --get commitsmith.binary 2>/dev/null)
+if ! usable \"$binary\"; then
+    binary=$(command -v commitsmith 2>/dev/null)
+fi
+if ! usable \"$binary\"; then
+    for candidate in \"$HOME/.local/bin/commitsmith\" \"$HOME/.cargo/bin/commitsmith\" \"$LOCALAPPDATA/Programs/commitsmith/commitsmith.exe\"; do
+        if usable \"$candidate\"; then
+            binary=$candidate
+            break
+        fi
+    done
+fi
+
+# No binary: nothing to say, and no delay worth mentioning.
+if ! usable \"$binary\"; then
+    exit 0
+fi
+
+\"$binary\" hints
+exit 0
 ";
 
 /// Where git puts hooks for the current repository (works for worktrees and

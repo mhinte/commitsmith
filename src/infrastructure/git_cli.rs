@@ -405,6 +405,11 @@ impl GitRepository for GitBackend {
         Ok(parse_name_status(&output))
     }
 
+    fn staged_diff(&self) -> Result<String, GitError> {
+        // `-U0` keeps it small: the hints only look at added lines.
+        self.git(&["diff", "--cached", "-U0", "--no-color"])
+    }
+
     fn diff(&self, path: &str, staged: bool) -> Result<String, GitError> {
         // No pager, no colour: the pane decides how to paint the hunks.
         let args: Vec<&str> = if staged {

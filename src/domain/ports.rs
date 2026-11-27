@@ -194,6 +194,13 @@ pub trait GitRepository {
         ))
     }
 
+    /// The whole staged diff in one piece, for the pre-commit hints. Per-file
+    /// diffs would be one process per file, which is the thing the hints must
+    /// not do.
+    fn staged_diff(&self) -> Result<String, GitError> {
+        Ok(String::new())
+    }
+
     /// Files a commit touched, as `M src/app.rs` lines. Read for one commit at a
     /// time, when someone looks at it: doing this for the whole history is what
     /// made the start in a long repository slow.

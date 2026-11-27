@@ -596,7 +596,7 @@ fn installing_the_hook_remembers_where_the_binary_lives() {
 }
 
 #[test]
-fn installing_writes_both_hooks() {
+fn installing_writes_all_three_hooks() {
     let dir = repo("both-hooks");
     let install = bin()
         .args(["hooks", "install"])
@@ -604,7 +604,7 @@ fn installing_writes_both_hooks() {
         .output()
         .unwrap();
     assert!(install.status.success(), "{install:?}");
-    for hook in ["commit-msg", "prepare-commit-msg"] {
+    for hook in ["commit-msg", "prepare-commit-msg", "pre-commit"] {
         let path = dir.join(".git/hooks").join(hook);
         assert!(path.exists(), "{hook} installed: {install:?}");
         assert!(
@@ -761,5 +761,119 @@ fn the_prepare_hook_is_silent_and_harmless_without_a_binary() {
     assert!(hook.status.success(), "{hook:?}");
     assert!(hook.stdout.is_empty() && hook.stderr.is_empty(), "{hook:?}");
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "# comment\n");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_hints_say_nothing_about_a_normal_index() {
+    let dir = repo("hints-quiet");
+    std::fs::write(dir.join("one.txt"), "x").unwrap();
+    run(&dir, "git", &["add", "one.txt"]);
+    let hints = bin().args(["hints"]).current_dir(&dir).output().unwrap();
+    assert!(hints.status.success(), "{hints:?}");
+    assert!(
+        hints.stdout.is_empty() && hints.stderr.is_empty(),
+        "silence is the normal case: {hints:?}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_hints_mention_a_large_index_and_never_block() {
+    let dir = repo("hints-many");
+    for index in 0..26 {
+        std::fs::write(dir.join(format!("f{index}.txt")), "x").unwrap();
+    }
+    run(&dir, "git", &["add", "."]);
+    let hints = bin().args(["hints"]).current_dir(&dir).output().unwrap();
+    assert_eq!(hints.status.code(), Some(0), "never a verdict: {hints:?}");
+    let stderr = String::from_utf8_lossy(&hints.stderr);
+    assert!(stderr.contains("26 files staged"), "{stderr}");
+    assert!(stderr.lines().all(|line| line.len() < 80), "{stderr}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_pre_commit_hook_warns_and_passes_the_verdict_of_a_foreign_hook() {
+    let dir = repo("pre-commit-chain");
+    let hooks = dir.join(".git/hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    let foreign = "#!/bin/sh\necho foreign pre-commit ran >&2\nexit 0\n";
+    std::fs::write(hooks.join("pre-commit"), foreign).unwrap();
+    make_executable(&hooks.join("pre-commit"));
+
+    let install = bin()
+        .args(["hooks", "install"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(install.status.success(), "{install:?}");
+    assert!(hooks.join("pre-commit.pre-commitsmith").exists(), "chained");
+    for index in 0..26 {
+        std::fs::write(dir.join(format!("f{index}.txt")), "x").unwrap();
+    }
+    run(&dir, "git", &["add", "."]);
+
+    let binary = Path::new(env!("CARGO_BIN_EXE_commitsmith"));
+    let hook = Command::new("sh")
+        .arg(hooks.join("pre-commit"))
+        .env(
+            "PATH",
+            format!("{}:/usr/bin:/bin", binary.parent().unwrap().display()),
+        )
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(hook.status.code(), Some(0), "{hook:?}");
+    let stderr = String::from_utf8_lossy(&hook.stderr);
+    assert!(stderr.contains("foreign pre-commit ran"), "{stderr}");
+    assert!(stderr.contains("26 files staged"), "{stderr}");
+
+    // A foreign hook that refuses still stops the commit.
+    std::fs::write(
+        hooks.join("pre-commit.pre-commitsmith"),
+        "#!/bin/sh\nexit 1\n",
+    )
+    .unwrap();
+    make_executable(&hooks.join("pre-commit.pre-commitsmith"));
+    let blocked = Command::new("sh")
+        .arg(hooks.join("pre-commit"))
+        .env(
+            "PATH",
+            format!("{}:/usr/bin:/bin", binary.parent().unwrap().display()),
+        )
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(
+        blocked.status.code(),
+        Some(1),
+        "its verdict stands: {blocked:?}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_pre_commit_hook_says_nothing_without_a_binary() {
+    let dir = repo("pre-commit-silent");
+    let home = dir.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let install = bin_with_home(&home)
+        .args(["hooks", "install"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(install.status.success(), "{install:?}");
+    run(&dir, "git", &["config", "--unset", "commitsmith.binary"]);
+
+    let hook = Command::new("sh")
+        .arg(dir.join(".git/hooks/pre-commit"))
+        .env("PATH", "/usr/bin:/bin")
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(hook.status.success(), "{hook:?}");
+    assert!(hook.stdout.is_empty() && hook.stderr.is_empty(), "{hook:?}");
     let _ = std::fs::remove_dir_all(dir);
 }
