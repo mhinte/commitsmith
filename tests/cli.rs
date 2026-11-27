@@ -222,42 +222,182 @@ fn hook_blocks_a_bad_message_and_then_lets_a_good_one_through() {
     assert!(!dir.join(".git/hooks/commit-msg").exists());
 }
 
+/// Run the installed hook the way git does, with `PATH` pointing at the binary.
+fn run_hook(dir: &Path, hooks: &str, message: &Path) -> std::process::Output {
+    let binary = Path::new(env!("CARGO_BIN_EXE_commitsmith"));
+    Command::new("sh")
+        .arg(dir.join(hooks).join("commit-msg"))
+        .arg(message)
+        .env(
+            "PATH",
+            format!("{}:/usr/bin:/bin", binary.parent().unwrap().display()),
+        )
+        .current_dir(dir)
+        .output()
+        .expect("run the hook")
+}
+
 #[test]
-fn foreign_hooks_are_not_overwritten_without_force() {
+fn a_foreign_hook_is_chained_not_replaced() {
+    // E8-2, variant B: the existing hook keeps running, before ours, and its
+    // verdict stands. Nothing is lost and nothing needs --force.
     let dir = repo("foreign");
-    let hook = dir.join(".git/hooks/commit-msg");
-    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
-    std::fs::write(&hook, "#!/bin/sh\nexit 0\n").unwrap();
+    let hooks = dir.join(".git/hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    let foreign = "#!/bin/sh\necho foreign ran >&2\ngrep -q WIP \"$1\" && exit 3\nexit 0\n";
+    std::fs::write(hooks.join("commit-msg"), foreign).unwrap();
+    make_executable(&hooks.join("commit-msg"));
 
     let install = bin()
         .args(["hooks", "install"])
         .current_dir(&dir)
         .output()
-        .expect("run hooks install");
-    assert!(!install.status.success(), "must refuse to clobber");
-    assert!(String::from_utf8_lossy(&install.stderr).contains("--force"));
-    let content = std::fs::read_to_string(&hook).unwrap();
-    assert_eq!(
-        content, "#!/bin/sh\nexit 0\n",
-        "the foreign hook is untouched"
+        .unwrap();
+    assert!(install.status.success(), "{install:?}");
+    assert!(
+        String::from_utf8_lossy(&install.stdout).contains("runs first"),
+        "the user is told: {install:?}"
     );
+    assert_eq!(
+        std::fs::read_to_string(hooks.join("commit-msg.pre-commitsmith")).unwrap(),
+        foreign,
+        "the foreign hook is kept byte for byte"
+    );
+
+    // Its failure blocks with its own exit code; ours does not even run.
+    let message = dir.join("msg.txt");
+    std::fs::write(&message, "feat: WIP thing\n").unwrap();
+    let blocked = run_hook(&dir, ".git/hooks", &message);
+    assert_eq!(blocked.status.code(), Some(3), "{blocked:?}");
+
+    // When it passes, our check decides.
+    std::fs::write(&message, "feat:no space\n").unwrap();
+    let ours = run_hook(&dir, ".git/hooks", &message);
+    assert!(String::from_utf8_lossy(&ours.stderr).contains("foreign ran"));
+    assert_eq!(ours.status.code(), Some(1), "our lint blocks: {ours:?}");
+    std::fs::write(&message, "feat: a fine message\n").unwrap();
+    assert!(run_hook(&dir, ".git/hooks", &message).status.success());
+
+    // Installing again is the update path and keeps the chain intact.
+    let again = bin()
+        .args(["hooks", "install"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(again.status.success(), "{again:?}");
+    assert!(hooks.join("commit-msg.pre-commitsmith").exists());
+
+    // Uninstall puts the original back.
+    let removed = bin()
+        .args(["hooks", "uninstall"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(removed.status.success(), "{removed:?}");
+    assert_eq!(
+        std::fs::read_to_string(hooks.join("commit-msg")).unwrap(),
+        foreign
+    );
+    assert!(!hooks.join("commit-msg.pre-commitsmith").exists());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_hook_goes_where_core_hooks_path_points() {
+    let dir = repo("hooks-path");
+    run(&dir, "git", &["config", "core.hooksPath", ".githooks"]);
+    let install = bin()
+        .args(["hooks", "install"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(install.status.success(), "{install:?}");
+    assert!(
+        dir.join(".githooks/commit-msg").exists(),
+        "where git reads hooks"
+    );
+    assert!(
+        !dir.join(".git/hooks/commit-msg").exists(),
+        "not where git ignores them"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_managed_hook_directory_needs_force() {
+    // husky regenerates .husky/_ on every install; a hook placed there would
+    // vanish without a word, so the user has to ask for it.
+    let dir = repo("husky");
+    run(&dir, "git", &["config", "core.hooksPath", ".husky/_"]);
+    let refused = bin()
+        .args(["hooks", "install"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains("husky") && stderr.contains("--force"),
+        "{stderr}"
+    );
+    assert!(stderr.lines().all(|line| line.len() < 80), "{stderr}");
+    assert!(!dir.join(".husky/_/commit-msg").exists());
 
     let forced = bin()
         .args(["hooks", "install", "--force"])
         .current_dir(&dir)
         .output()
-        .expect("run hooks install --force");
+        .unwrap();
     assert!(forced.status.success(), "{forced:?}");
-    assert!(
-        dir.join(".git/hooks/commit-msg.bak").exists(),
-        "backup written"
-    );
-    assert!(
-        std::fs::read_to_string(&hook)
-            .unwrap()
-            .contains("commitsmith")
-    );
+    assert!(dir.join(".husky/_/commit-msg").exists());
+
+    // A lefthook-generated hook in .git/hooks is recognised by its content.
+    let other = repo("lefthook");
+    let hook = other.join(".git/hooks/commit-msg");
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\n# generated by lefthook\nlefthook run commit-msg \"$@\"\n",
+    )
+    .unwrap();
+    let refused = bin()
+        .args(["hooks", "install"])
+        .current_dir(&other)
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("lefthook.yml"));
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(other);
 }
+
+#[test]
+fn a_hand_written_hook_that_calls_commitsmith_is_not_mistaken_for_ours() {
+    // The old marker was the bare word "commitsmith", so this hook used to be
+    // overwritten as if it were ours.
+    let dir = repo("own-call");
+    let hook = dir.join(".git/hooks/commit-msg");
+    let mine = "#!/bin/sh\n./scripts/ticket-check \"$1\" && commitsmith check --file \"$1\"\n";
+    std::fs::write(&hook, mine).unwrap();
+    let install = bin()
+        .args(["hooks", "install"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(install.status.success(), "{install:?}");
+    assert_eq!(
+        std::fs::read_to_string(dir.join(".git/hooks/commit-msg.pre-commitsmith")).unwrap(),
+        mine
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[cfg(unix)]
+fn make_executable(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[cfg(not(unix))]
+fn make_executable(_path: &Path) {}
 
 #[test]
 fn user_flag_writes_the_identity_file() {

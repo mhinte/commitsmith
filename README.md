@@ -182,13 +182,21 @@ Typing filters the list, `Ctrl+R` is also available while another picker is open
 
 ```sh
 commitsmith hooks install          # writes the hook
-commitsmith hooks uninstall        # removes it again
-commitsmith hooks install --force  # backs up a foreign hook and replaces it
+commitsmith hooks uninstall        # removes it again (and restores a chained hook)
+commitsmith hooks install --force  # install into a husky/lefthook/pre-commit directory
 ```
 
-The hook calls `commitsmith check --file "$1"`, so `commitsmith` must be on PATH.
-An existing hook that is not ours is only replaced with `--force`, and then the
-original is kept as `commit-msg.bak`.
+The hook goes where git reads hooks: `.git/hooks`, or wherever `core.hooksPath`
+points. It finds the binary through `git config commitsmith.binary` (set by
+`install`), then `PATH`, then `~/.local/bin` and `~/.cargo/bin`. Without a binary
+it prints one line and lets the commit through, so colleagues without the tool
+are never blocked.
+
+An existing hook is never replaced. It moves to `commit-msg.pre-commitsmith`,
+runs first, and its exit code stands; `uninstall` puts it back. A directory that
+husky, lefthook or pre-commit regenerates needs `--force`, because the next
+`npm install` or `lefthook install` would drop the hook silently — register
+`commitsmith check --file "$1"` in that tool instead.
 
 ### Configure it
 

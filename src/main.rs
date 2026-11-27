@@ -102,7 +102,7 @@ enum Command {
 enum HookAction {
     /// Write the commit-msg hook
     Install {
-        /// Back up and replace a hook that is not ours
+        /// Install even into a directory husky, lefthook or pre-commit manages
         #[arg(long)]
         force: bool,
     },
@@ -161,9 +161,13 @@ fn load_config() -> (Config, Vec<String>) {
 
 fn run_hooks(action: HookAction) -> ExitCode {
     let result = match action {
-        HookAction::Install { force } => {
-            hooks::install(force).map(|path| format!("installed {path}"))
-        }
+        HookAction::Install { force } => hooks::install(force).map(|done| match done.chained {
+            Some(previous) => format!(
+                "installed {}\nyour existing hook moved to {previous} and runs first",
+                done.path
+            ),
+            None => format!("installed {}", done.path),
+        }),
         HookAction::Uninstall => hooks::uninstall().map(|path| format!("removed {path}")),
     };
     match result {
