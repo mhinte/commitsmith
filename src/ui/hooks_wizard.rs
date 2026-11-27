@@ -19,13 +19,14 @@ use crate::hooks;
 use crate::ui::theme;
 
 /// The three hooks, in the order they run.
-const HOOKS: [(&str, &str); 3] = [
+const HOOKS: [(&str, &str); 4] = [
     ("commit-msg", "checks the message before git records it"),
     (
         "prepare-commit-msg",
         "starts a new message from the branch name",
     ),
     ("pre-commit", "hints about the index, never blocks"),
+    ("post-checkout", "one line about the branch after a switch"),
 ];
 
 /// Where the wizard is.
@@ -38,7 +39,7 @@ pub(crate) enum Step {
 pub(crate) struct Wizard {
     step: Step,
     /// Which hooks are ticked, in the order of [`HOOKS`].
-    chosen: [bool; 3],
+    chosen: [bool; 4],
     /// Cursor for the choice list.
     cursor: usize,
     /// What happened, once it happened.
@@ -60,7 +61,7 @@ impl Wizard {
     fn new() -> Self {
         Self {
             step: Step::Choose,
-            chosen: [true, true, true],
+            chosen: [true, true, true, true],
             cursor: 0,
             outcome: None,
             notes: notes(),

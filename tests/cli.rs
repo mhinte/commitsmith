@@ -604,7 +604,12 @@ fn installing_writes_all_three_hooks() {
         .output()
         .unwrap();
     assert!(install.status.success(), "{install:?}");
-    for hook in ["commit-msg", "prepare-commit-msg", "pre-commit"] {
+    for hook in [
+        "commit-msg",
+        "prepare-commit-msg",
+        "pre-commit",
+        "post-checkout",
+    ] {
         let path = dir.join(".git/hooks").join(hook);
         assert!(path.exists(), "{hook} installed: {install:?}");
         assert!(
@@ -1219,5 +1224,108 @@ fn hooks_yes_installs_all_three_without_asking() {
     for hook in ["commit-msg", "prepare-commit-msg", "pre-commit"] {
         assert!(dir.join(".git/hooks").join(hook).exists(), "{hook}");
     }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_post_checkout_hook_speaks_on_a_branch_switch_only() {
+    let dir = repo("post-checkout-flag");
+    let install = bin()
+        .args(["hooks", "install"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(install.status.success(), "{install:?}");
+
+    let binary = Path::new(env!("CARGO_BIN_EXE_commitsmith"));
+    let path = format!("{}:/usr/bin:/bin", binary.parent().unwrap().display());
+    let run_hook = |flag: &str| {
+        Command::new("sh")
+            .arg(dir.join(".git/hooks/post-checkout"))
+            .args(["0000", "1111", flag])
+            .env("PATH", &path)
+            .current_dir(&dir)
+            .output()
+            .expect("run the hook")
+    };
+
+    // A real branch switch: git reports $3 = 1.
+    run(
+        &dir,
+        "git",
+        &["checkout", "-q", "-b", "feat/hima/TICKET-12/add-a-thing"],
+    );
+    let switched = run_hook("1");
+    assert!(switched.status.success(), "{switched:?}");
+    let stderr = String::from_utf8_lossy(&switched.stderr);
+    assert!(
+        stderr.contains("branch feat/hima/TICKET-12/add-a-thing"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("type feat"), "{stderr}");
+    assert!(stderr.contains("TICKET-12"), "{stderr}");
+    assert_eq!(stderr.lines().count(), 1, "one line: {stderr}");
+    assert!(stderr.lines().all(|line| line.len() < 80), "{stderr}");
+
+    // A file checkout: git reports $3 = 0 and the hook stays quiet.
+    let files = run_hook("0");
+    assert!(files.status.success(), "{files:?}");
+    assert!(
+        files.stdout.is_empty() && files.stderr.is_empty(),
+        "a file checkout is not a branch switch: {files:?}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_branch_hint_says_nothing_about_a_branch_without_a_convention() {
+    // `main` names no type and no ticket: no line, no noise on every switch.
+    let dir = repo("branch-hint-quiet");
+    std::fs::write(dir.join("a.txt"), "x").unwrap();
+    run(&dir, "git", &["add", "a.txt"]);
+    run(&dir, "git", &["commit", "-q", "-m", "feat: add a file"]);
+    let output = bin()
+        .args(["branch-hint"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        output.stdout.is_empty() && output.stderr.is_empty(),
+        "{output:?}"
+    );
+
+    // A detached HEAD has no branch to name either.
+    run(&dir, "git", &["checkout", "-q", "--detach"]);
+    let detached = bin()
+        .args(["branch-hint"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(detached.status.success(), "{detached:?}");
+    assert!(detached.stderr.is_empty(), "{detached:?}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_branch_hint_names_type_and_ticket_and_never_blocks() {
+    let dir = repo("branch-hint-speaks");
+    run(
+        &dir,
+        "git",
+        &["checkout", "-q", "-b", "fix/hima/PROJ-7/typo"],
+    );
+    let output = bin()
+        .args(["branch-hint"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.trim(),
+        "commitsmith: branch fix/hima/PROJ-7/typo · type fix · PROJ-7",
+        "{stderr}"
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
