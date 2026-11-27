@@ -181,8 +181,8 @@ Typing filters the list, `Ctrl+R` is also available while another picker is open
 ### commit-msg hook
 
 ```sh
-commitsmith hooks install          # writes the hook
-commitsmith hooks uninstall        # removes it again (and restores a chained hook)
+commitsmith hooks install          # writes commit-msg and prepare-commit-msg
+commitsmith hooks uninstall        # removes them (and restores chained hooks)
 commitsmith hooks install --force  # install into a husky/lefthook/pre-commit directory
 ```
 
@@ -191,6 +191,12 @@ points. It finds the binary through `git config commitsmith.binary` (set by
 `install`), then `PATH`, then `~/.local/bin` and `~/.cargo/bin`. Without a binary
 it prints one line and lets the commit through, so colleagues without the tool
 are never blocked.
+
+`prepare-commit-msg` only starts a message a human is about to write: on a branch
+like `feat/hima/TICKET-12/add-a-thing` git's editor opens with
+`feat(TICKET-12): ` already in the first line. Merge, squash, `--amend`, `-m` and
+`-F` pass a source to the hook and are left exactly as git wrote them, and a
+branch without a kind (`main`) gets no suggestion rather than a wrong one.
 
 An existing hook is never replaced. It moves to `commit-msg.pre-commitsmith`,
 runs first, and its exit code stands; `uninstall` puts it back. A directory that

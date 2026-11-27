@@ -455,7 +455,7 @@ fn the_hook_does_not_block_a_commit_when_the_binary_is_missing() {
 
     // A colleague's clone does not carry the repo-local `commitsmith.binary`,
     // so the hook has to cope with no usable path at all.
-    run(&dir, "git", &["config", "--unset", "commitsmith.binary"]);
+    run(&dir, "git", &["config", "--unset", "commitsmith.binary"]); // may be absent
     let message = dir.join("msg.txt");
     std::fs::write(&message, "feat:no space after the colon\n").unwrap();
     // PATH without the binary, HOME without a config: nothing to find.
@@ -592,5 +592,174 @@ fn installing_the_hook_remembers_where_the_binary_lives() {
         .output()
         .unwrap();
     assert!(again.status.success(), "{again:?}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn installing_writes_both_hooks() {
+    let dir = repo("both-hooks");
+    let install = bin()
+        .args(["hooks", "install"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(install.status.success(), "{install:?}");
+    for hook in ["commit-msg", "prepare-commit-msg"] {
+        let path = dir.join(".git/hooks").join(hook);
+        assert!(path.exists(), "{hook} installed: {install:?}");
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("# commitsmith"),
+            "{hook} carries the marker"
+        );
+    }
+    let removed = bin()
+        .args(["hooks", "uninstall"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(removed.status.success(), "{removed:?}");
+    for hook in ["commit-msg", "prepare-commit-msg"] {
+        assert!(
+            !dir.join(".git/hooks").join(hook).exists(),
+            "{hook} removed"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Run one installed hook the way git does: `sh <hook> <file> [<source>]`.
+fn run_named_hook(
+    dir: &Path,
+    name: &str,
+    file: &Path,
+    source: Option<&str>,
+) -> std::process::Output {
+    let binary = Path::new(env!("CARGO_BIN_EXE_commitsmith"));
+    let mut command = Command::new("sh");
+    command
+        .arg(dir.join(".git/hooks").join(name))
+        .arg(file)
+        .env(
+            "PATH",
+            format!("{}:/usr/bin:/bin", binary.parent().unwrap().display()),
+        )
+        .current_dir(dir);
+    if let Some(source) = source {
+        command.arg(source);
+    }
+    command.output().expect("run the hook")
+}
+
+#[test]
+fn the_prepare_hook_starts_an_empty_message_from_the_branch() {
+    let dir = repo("prepare-empty");
+    run(
+        &dir,
+        "git",
+        &["checkout", "-q", "-b", "feat/hima/TICKET-12/add-a-thing"],
+    );
+    let install = bin()
+        .args(["hooks", "install"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(install.status.success(), "{install:?}");
+
+    // What git leaves in the file: comments only.
+    let file = dir.join(".git/COMMIT_EDITMSG");
+    std::fs::write(&file, "# Please enter the commit message\n#\n").unwrap();
+    let hook = run_named_hook(&dir, "prepare-commit-msg", &file, None);
+    assert!(hook.status.success(), "{hook:?}");
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "feat(TICKET-12): \n# Please enter the commit message\n#\n"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_prepare_hook_never_touches_a_message_git_brought_along() {
+    // merge, squash, --amend, -m and -F all pass a source in $2.
+    let dir = repo("prepare-source");
+    run(&dir, "git", &["checkout", "-q", "-b", "fix/hima/PROJ-7"]);
+    let install = bin()
+        .args(["hooks", "install"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(install.status.success(), "{install:?}");
+    let file = dir.join(".git/COMMIT_EDITMSG");
+    for source in ["merge", "squash", "commit", "message", "template"] {
+        std::fs::write(&file, "# comment\n").unwrap();
+        let hook = run_named_hook(&dir, "prepare-commit-msg", &file, Some(source));
+        assert!(hook.status.success(), "{source}: {hook:?}");
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "# comment\n",
+            "{source} leaves the file alone"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_prepare_hook_keeps_what_the_writer_typed() {
+    let dir = repo("prepare-written");
+    run(
+        &dir,
+        "git",
+        &["checkout", "-q", "-b", "docs/hima/TICKET-5/readme"],
+    );
+    let install = bin()
+        .args(["hooks", "install"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(install.status.success(), "{install:?}");
+    let file = dir.join(".git/COMMIT_EDITMSG");
+    std::fs::write(&file, "fix: my own line\n\nand a body\n").unwrap();
+    let hook = run_named_hook(&dir, "prepare-commit-msg", &file, None);
+    assert!(hook.status.success(), "{hook:?}");
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "fix: my own line\n\nand a body\n",
+        "no prefix over writing"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_prepare_hook_is_silent_and_harmless_without_a_binary() {
+    let dir = repo("prepare-no-binary");
+    run(
+        &dir,
+        "git",
+        &["checkout", "-q", "-b", "feat/hima/TICKET-1/x"],
+    );
+    let home = dir.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let install = bin_with_home(&home)
+        .args(["hooks", "install"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(install.status.success(), "{install:?}");
+    run(&dir, "git", &["config", "--unset", "commitsmith.binary"]);
+
+    let file = dir.join(".git/COMMIT_EDITMSG");
+    std::fs::write(&file, "# comment\n").unwrap();
+    let hook = Command::new("sh")
+        .arg(dir.join(".git/hooks/prepare-commit-msg"))
+        .arg(&file)
+        .env("PATH", "/usr/bin:/bin")
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(hook.status.success(), "{hook:?}");
+    assert!(hook.stdout.is_empty() && hook.stderr.is_empty(), "{hook:?}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "# comment\n");
     let _ = std::fs::remove_dir_all(dir);
 }

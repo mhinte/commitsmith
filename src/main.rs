@@ -91,6 +91,12 @@ enum Command {
     },
     /// List the commit types of the active profile
     Types,
+    /// Start a new message from the branch name, for prepare-commit-msg hooks
+    Prepare {
+        /// The message file git hands to the hook
+        #[arg(long)]
+        file: PathBuf,
+    },
     /// Install or remove the commit-msg hook of this repository
     Hooks {
         #[command(subcommand)]
@@ -143,6 +149,7 @@ fn main() -> ExitCode {
         Some(Command::Config { identity }) => show_config(identity),
         Some(Command::Init { defaults, force }) => init_config(defaults, force),
         Some(Command::Hooks { action }) => run_hooks(action),
+        Some(Command::Prepare { file }) => run_prepare(&file),
         Some(Command::Check {
             file,
             message,
@@ -161,14 +168,22 @@ fn load_config() -> (Config, Vec<String>) {
 
 fn run_hooks(action: HookAction) -> ExitCode {
     let result = match action {
-        HookAction::Install { force } => hooks::install(force).map(|done| match done.chained {
-            Some(previous) => format!(
-                "installed {}\nyour existing hook moved to {previous} and runs first",
-                done.path
-            ),
-            None => format!("installed {}", done.path),
+        HookAction::Install { force } => hooks::install(force).map(|done| {
+            let mut message = done.paths.join("\n");
+            for previous in done.chained {
+                message.push_str(&format!(
+                    "\nyour existing hook moved to {previous} and runs first"
+                ));
+            }
+            message
         }),
-        HookAction::Uninstall => hooks::uninstall().map(|path| format!("removed {path}")),
+        HookAction::Uninstall => hooks::uninstall().map(|paths| {
+            paths
+                .into_iter()
+                .map(|path| format!("removed {path}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }),
     };
     match result {
         Ok(message) => {
@@ -180,6 +195,44 @@ fn run_hooks(action: HookAction) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// `commitsmith prepare --file .git/COMMIT_EDITMSG`: leave a starting point for
+/// the writer, and never get in the way of the commit.
+///
+/// Exit code is 0 in every case that is not a broken installation: a hook that
+/// refuses a commit because it could not read a file is worse than no hook.
+fn run_prepare(file: &std::path::Path) -> ExitCode {
+    let text = match std::fs::read_to_string(file) {
+        Ok(text) => text,
+        Err(error) => {
+            eprintln!("commitsmith: cannot read {}: {error}", file.display());
+            return ExitCode::SUCCESS;
+        }
+    };
+    if !commitsmith::domain::prefill::is_free(&text) {
+        return ExitCode::SUCCESS;
+    }
+    let branch = std::process::Command::new("git")
+        .args(["symbolic-ref", "--short", "HEAD"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string());
+    // A detached HEAD has no branch to read: nothing to suggest.
+    let Some(branch) = branch else {
+        return ExitCode::SUCCESS;
+    };
+    let Some(prefix) = commitsmith::domain::prefill::prefix(&branch) else {
+        return ExitCode::SUCCESS;
+    };
+    let Some(text) = commitsmith::domain::prefill::with_prefix(&text, &prefix) else {
+        return ExitCode::SUCCESS;
+    };
+    if let Err(error) = std::fs::write(file, text) {
+        eprintln!("commitsmith: cannot write {}: {error}", file.display());
+    }
+    ExitCode::SUCCESS
 }
 
 /// Keep the terminal usable when the program panics inside the alternate screen.

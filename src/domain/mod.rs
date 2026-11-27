@@ -12,6 +12,7 @@ pub mod history;
 pub mod keymap;
 pub mod log;
 pub mod ports;
+pub mod prefill;
 pub mod release;
 pub mod scroll;
 pub mod setup;
