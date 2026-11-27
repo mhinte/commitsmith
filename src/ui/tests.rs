@@ -1349,8 +1349,8 @@ fn the_compact_view_counts_the_fields_it_can_reach_and_shows_a_status() {
 
     // Below COMPACT_HEIGHT/COMPACT_WIDTH the frame switches over.
     let mut terminal = Terminal::new(TestBackend::new(
-        (crate::ui::COMPACT_WIDTH - 1) as u16,
-        (crate::ui::COMPACT_HEIGHT - 1) as u16,
+        crate::ui::COMPACT_WIDTH - 1,
+        crate::ui::COMPACT_HEIGHT - 1,
     ))
     .unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
