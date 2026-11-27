@@ -26,16 +26,26 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_list(frame: &mut Frame, app: &App, area: Rect, matches: usize) {
+    // How many commits are local only: the same number the footer shows, read
+    // from the sync pair the branch list already loaded — no extra git call.
+    let local = app.repo.sync.map(|(ahead, _)| ahead).unwrap_or(0);
+    let local_note = match local {
+        0 => String::new(),
+        ahead => format!(" · ↑{ahead} local"),
+    };
     let title = match &app.release.log.input {
         Some(text) => format!(" filter › {text}▏ "),
         None => {
             let counts = type_counts(&app.history.commits);
             let filter = app.release.log.filter.describe();
             if filter.is_empty() {
-                format!(" log · {} · {counts} ", app.history.commits.len())
+                format!(
+                    " log · {} · {counts}{local_note} ",
+                    app.history.commits.len()
+                )
             } else {
                 format!(
-                    " log · {filter} · {matches} of {} ",
+                    " log · {filter} · {matches} of {}{local_note} ",
                     app.history.commits.len()
                 )
             }
@@ -53,10 +63,7 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect, matches: usize) {
         lines.push(Line::styled("  no commits yet", MUTED));
     } else if matches == 0 {
         lines.push(Line::styled(
-            format!(
-                "  keine Treffer für „{}“",
-                app.release.log.filter.describe()
-            ),
+            format!("  no matches for “{}”", app.release.log.filter.describe()),
             MUTED,
         ));
         lines.push(Line::styled("  c clears the filter", MUTED));

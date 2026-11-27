@@ -1031,7 +1031,7 @@ fn an_empty_filter_result_says_so() {
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
     let screen = rows(&terminal).join("\n");
-    assert!(screen.contains("keine Treffer"), "{screen}");
+    assert!(screen.contains("no matches"), "{screen}");
     assert!(screen.contains("type: feat"), "{screen}");
 }
 
@@ -1229,4 +1229,32 @@ fn the_wizard_hides_the_emoji_when_the_config_says_so() {
     let screen = rows(&terminal).join("\n");
     assert!(screen.contains("[ feat ]"), "{screen}");
     assert!(!screen.contains("✨"), "{screen}");
+}
+
+#[test]
+fn the_log_title_says_how_many_commits_are_local() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+    app.tab = crate::application::tabs::Tab::History;
+    app.set_history(vec![commitsmith::domain::history::PastCommit {
+        id: "abc1234".into(),
+        short_id: "abc1234".into(),
+        summary: "add a button".into(),
+        kind: Some("feat".into()),
+        ..Default::default()
+    }]);
+    app.repo.sync = Some((2, 0));
+
+    let mut terminal = Terminal::new(TestBackend::new(140, 30)).unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+    let screen = rows(&terminal).join("\n");
+    assert!(screen.contains("↑2 local"), "{screen}");
+
+    // Nothing local, nothing said.
+    app.repo.sync = Some((0, 3));
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+    let screen = rows(&terminal).join("\n");
+    assert!(!screen.contains("local"), "{screen}");
 }
