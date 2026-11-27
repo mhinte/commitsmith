@@ -80,23 +80,50 @@ pub fn scope_info(repo: &gix::Repository, configured: &[String], depth: usize) -
     }
 }
 
+/// The last `limit` commits, but not the ones reachable from `stop`.
+///
+/// `stop` is the tag or merge base the changelog has to start after. It is
+/// passed to the walk as a hidden tip, so the walk never reads the commits below
+/// it: reading `limit` commits and cutting the list afterwards read up to 2000
+/// messages for a plan that needed three.
+pub fn commits_until(
+    repo: &gix::Repository,
+    stop: Option<gix::ObjectId>,
+    limit: usize,
+) -> Vec<PastCommit> {
+    let mut commits = Vec::new();
+    let Ok(head) = repo.head_id() else {
+        return commits;
+    };
+    let Ok(walk) = repo
+        .rev_walk([head.detach()])
+        .with_hidden(stop)
+        .sorting(gix::revision::walk::Sorting::ByCommitTime(
+            gix::traverse::commit::simple::CommitTimeOrder::NewestFirst,
+        ))
+        .all()
+    else {
+        return commits;
+    };
+    for info in walk.take(limit).flatten() {
+        if let Some(walked) = walked_commit(repo, info.id) {
+            commits.push(walked.entry);
+        }
+    }
+    commits
+}
+
 /// Commits since a tag, so the changelog does not repeat history.
 ///
 /// The tag is resolved to a commit and the walk stops right before it; an unknown
 /// tag (or none) yields the whole window instead of nothing.
 pub fn commits_since(repo: &gix::Repository, since: Option<&str>, limit: usize) -> Vec<PastCommit> {
-    let all = recent_commits(repo, limit);
-    let Some(tag) = since else {
-        return all;
-    };
-    let Ok(id) = repo.rev_parse_single(format!("{tag}^{{commit}}").as_str()) else {
-        return all;
-    };
-    let wanted = id.detach().to_string();
-    match all.iter().position(|commit| commit.id == wanted) {
-        Some(position) => all[..position].to_vec(),
-        None => all,
-    }
+    let stop = since.and_then(|tag| {
+        repo.rev_parse_single(format!("{tag}^{{commit}}").as_str())
+            .ok()
+            .map(|id| id.detach())
+    });
+    commits_until(repo, stop, limit)
 }
 
 /// One commit as the tool needs it: the template form and the scope it shows.
@@ -369,6 +396,16 @@ impl GixRepo {
         Ok(scope_info(&self.repo, configured, depth))
     }
 
+    /// Commits from `HEAD` back to (not including) the commit `stop`.
+    pub fn commits_before(&self, stop: &str, limit: usize) -> Result<Vec<PastCommit>, GitError> {
+        let stop = self
+            .repo
+            .rev_parse_single(format!("{stop}^{{commit}}").as_str())
+            .ok()
+            .map(|id| id.detach());
+        Ok(commits_until(&self.repo, stop, limit))
+    }
+
     pub fn commits_since(
         &self,
         since: Option<&str>,
@@ -509,6 +546,44 @@ mod tests {
         assert!(scopes.all().contains(&"api".to_string()), "{:?}", scopes);
         assert!(scopes.all().contains(&"ui".to_string()));
         assert!(scopes.all().contains(&"configured".to_string()));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_plan_stops_reading_at_the_tag() {
+        // Three commits, a tag on the oldest: the walk must read the two above it
+        // and stop, not read a 300-commit window and cut the list afterwards.
+        let (dir, repo) = temp_repo("stop-at-tag");
+        let status = std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(["tag", "-a", "v1.0.0", "-m", "first", "HEAD~2"])
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        PARSES.store(0, std::sync::atomic::Ordering::Relaxed);
+        let commits = commits_since(&repo, Some("v1.0.0"), 300);
+        assert_eq!(
+            commits
+                .iter()
+                .map(|c| c.summary.as_str())
+                .collect::<Vec<_>>(),
+            ["third", "second"],
+            "the tagged commit itself is not part of the plan"
+        );
+        assert_eq!(
+            PARSES.load(std::sync::atomic::Ordering::Relaxed),
+            2,
+            "only the commits above the tag were parsed"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_unknown_tag_still_yields_the_whole_window() {
+        let (dir, repo) = temp_repo("unknown-tag");
+        let commits = commits_since(&repo, Some("v9.9.9"), 10);
+        assert_eq!(commits.len(), 3, "no tag found: nothing to subtract");
         let _ = std::fs::remove_dir_all(dir);
     }
 

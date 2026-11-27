@@ -248,8 +248,10 @@ impl GitRepository for GitBackend {
                 "no common history with {base}"
             )));
         }
-        let window = limit.max(500);
-        self.reader.commits_since(Some(sha), window)
+        // The merge base goes into the walk as a hidden tip, so a deep base no
+        // longer needs a 500-commit head start to be sure it is inside the
+        // window.
+        self.reader.commits_before(sha, limit)
     }
 
     fn diff(&self, path: &str, staged: bool) -> Result<String, GitError> {
