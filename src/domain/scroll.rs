@@ -9,13 +9,36 @@ use unicode_width::UnicodeWidthStr;
 
 /// How many rows `line` needs at `width` columns, at least one.
 ///
-/// Measured in cells, not chars: a line of emoji is wider than its `chars()`
-/// count, and a tab counts as one cell here because the pane renders it as one.
+/// This follows the way the pane actually wraps: at spaces, and a word that is
+/// wider than a whole row is broken. Counting `cells / width` was wrong for real
+/// diffs — a line of `+ some words here` needs more rows than its cell count
+/// divided by the width, because the wrap leaves the rest of the row empty — and
+/// the scrollbar therefore reached the bottom of the track while lines were still
+/// missing below. That was Marc's finding on 26.11.
 pub fn line_rows(line: &str, width: usize) -> usize {
     if width == 0 {
         return 1;
     }
-    UnicodeWidthStr::width(line).div_ceil(width).max(1)
+    let mut rows = 1;
+    let mut used = 0;
+    for part in line.split_inclusive(' ') {
+        let cells = UnicodeWidthStr::width(part);
+        if used + cells <= width {
+            used += cells;
+            continue;
+        }
+        if used > 0 {
+            rows += 1;
+        }
+        // The part alone is wider than one row: break it hard.
+        let mut rest = cells;
+        while rest > width {
+            rows += 1;
+            rest -= width;
+        }
+        used = rest;
+    }
+    rows
 }
 
 /// Where the thumb goes inside a track of `track` rows.
@@ -46,15 +69,19 @@ mod tests {
         assert_eq!(line_rows("", 10), 1);
         assert_eq!(line_rows("abc", 10), 1);
         assert_eq!(line_rows("abcdefghij", 10), 1, "exactly one row");
+        // One word, wider than the row: broken where the row ends.
         assert_eq!(line_rows("abcdefghijk", 10), 2);
         assert_eq!(line_rows("abcdefghijklmnopqrst", 10), 2);
         assert_eq!(line_rows("x", 0), 1, "a zero-width pane still draws a row");
     }
 
     #[test]
-    fn a_wide_character_counts_as_two_cells() {
-        // 10 CJK characters are 20 cells wide, so they need two rows at 10.
-        assert_eq!(line_rows("日本語日本語日本", 10), 2);
+    fn wrapped_text_costs_a_row_per_wrap_not_per_width() {
+        // Three six-cell words at ten columns: cell counting says two rows
+        // (18 / 10), the wrap needs three because no two words fit on one row.
+        assert_eq!(line_rows("abcde fghij klmno", 10), 3);
+        assert_eq!(line_rows("abcde fghij klmno", 12), 2, "two words fit");
+        assert_eq!(line_rows("abcde fghij klmno", 6), 3, "one word per row");
     }
 
     #[test]
