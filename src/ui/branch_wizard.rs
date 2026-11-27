@@ -114,7 +114,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
 
     lines.push(Line::raw(""));
     lines.push(Line::styled(
-        " Enter create + checkout · Tab next field · Esc cancel",
+        " Enter: create + checkout · Tab: next field · Esc: cancel",
         HINT,
     ));
 
