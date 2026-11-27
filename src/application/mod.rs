@@ -85,7 +85,7 @@ impl Field {
     pub fn hint(self) -> &'static str {
         match self {
             Field::Type => "←/→ switch · Space pick",
-            Field::Scope => "optional · C-Space suggestions",
+            Field::Scope => "C-Space: config, history, branch",
             Field::Subject => "imperative, no period",
             Field::Body => "why and what, optional",
             Field::Breaking => "what breaks, optional",

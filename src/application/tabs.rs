@@ -136,7 +136,7 @@ impl Tab {
                 ("Ctrl+K", "clear this field, the type stays"),
                 (
                     "Ctrl+Space",
-                    "suggestions for this field (a terminal may send NUL)",
+                    "suggestions for this field: scopes and subjects from the config, the history and the branch (a terminal may send NUL)",
                 ),
                 ("Ctrl+Enter", "write the message, like Ctrl+S"),
                 ("S", "setup: author, ticket prefix, template, profile"),

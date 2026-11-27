@@ -30,6 +30,16 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
+    // In a detached HEAD no row carries the `●`: say where the work sits instead
+    // of letting the user guess why nothing is marked.
+    if let Some(short) = app.detached_at() {
+        lines.push(Line::styled(
+            format!("  detached HEAD at {short}"),
+            theme::warn(),
+        ));
+        lines.push(Line::raw(""));
+    }
+
     if app.branches.list.is_empty() {
         lines.push(Line::raw(""));
         lines.push(Line::styled("  no local branches yet", MUTED));

@@ -146,12 +146,6 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect, matches: usize) {
 }
 
 fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(theme::idle_panel())
-        .title(Line::from(Span::styled(" details ", theme::idle_title())));
-
-    let mut lines: Vec<Line> = Vec::new();
     let selected = app
         .release
         .log
@@ -159,6 +153,41 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
         .get(app.release.log.selected)
         .copied()
         .cloned();
+    // The verdict belongs in the title: a small window cuts the lines below
+    // first, and the title is read even when the pane is two rows tall.
+    let findings: Vec<_> = selected
+        .as_ref()
+        .map(|commit| {
+            app.log_issues(commit)
+                .into_iter()
+                .filter(|issue| issue.severity != crate::validate::Severity::Info)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let verdict = match &selected {
+        None => String::new(),
+        Some(commit) if commit.merge => " · merge".to_string(),
+        Some(_) if findings.is_empty() => " · lint clean".to_string(),
+        Some(_) => format!(
+            " · {} issue{}",
+            findings.len(),
+            if findings.len() == 1 { "" } else { "s" }
+        ),
+    };
+    let title_style = if findings.is_empty() {
+        theme::idle_title()
+    } else {
+        theme::warn()
+    };
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(theme::idle_panel())
+        .title(Line::from(Span::styled(
+            format!(" details{verdict} "),
+            title_style,
+        )));
+
+    let mut lines: Vec<Line> = Vec::new();
     match selected {
         None => lines.push(Line::styled("  nothing selected", MUTED)),
         Some(commit) => {
@@ -176,19 +205,11 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
                 MUTED,
             ));
             // What exactly is wrong, not only that something is: the message is
-            // the one the composer would show.
+            // the one the composer would show, in the shorter wording of 0.23.6.
             // Only what would block a commit: the "optional: …" hints belong in
             // the composer, where they help while writing, not in a review.
-            let findings: Vec<_> = app
-                .log_issues(&commit)
-                .into_iter()
-                .filter(|issue| issue.severity != crate::validate::Severity::Info)
-                .collect();
             if findings.is_empty() {
-                lines.push(Line::styled(
-                    "  ✓ lint: clean · would pass the hook today",
-                    theme::ok(),
-                ));
+                lines.push(Line::styled("  ✓ would pass the hook today", theme::ok()));
             } else {
                 for issue in findings.iter().take(6) {
                     let (mark, style) = match issue.severity {

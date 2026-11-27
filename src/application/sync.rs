@@ -90,11 +90,32 @@ impl App {
 
     /// The branch name as the user knows it, for messages.
     pub(crate) fn branch_label(&self) -> String {
-        self.repo
+        match self
+            .repo
             .branch_name
             .clone()
             .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| "HEAD".to_string())
+        {
+            Some(name) => name,
+            // No branch but a commit: detached. Say at which commit, because
+            // "HEAD" alone leaves the user guessing where the rewrite will land.
+            None => match self.history.commits.first() {
+                Some(commit) => format!("detached at {}", commit.short_id),
+                None => "HEAD".to_string(),
+            },
+        }
+    }
+
+    /// The short id `HEAD` points at, when there is no branch — for the branch
+    /// list's detached line.
+    pub fn detached_at(&self) -> Option<String> {
+        if self.repo.branch_name.is_some() {
+            return None;
+        }
+        self.history
+            .commits
+            .first()
+            .map(|commit| commit.short_id.clone())
     }
 
     /// How many files are staged right now, read from the index.

@@ -994,7 +994,7 @@ fn a_clean_commit_is_green_and_optional_hints_are_not_repeated() {
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
     let screen = rows(&terminal).join("\n");
-    assert!(screen.contains("lint: clean"), "{screen}");
+    assert!(screen.contains("details · lint clean"), "{screen}");
     assert!(!screen.contains("optional:"), "no hints here: {screen}");
 }
 
@@ -1286,4 +1286,53 @@ fn the_type_summary_sits_at_the_bottom_of_the_log() {
     // ... the last line of the list does.
     assert!(screen.contains("feat 1"), "{screen}");
     assert!(screen.contains("fix 1"), "{screen}");
+}
+
+#[test]
+fn the_details_title_counts_the_issues() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+    app.tab = crate::application::tabs::Tab::History;
+    // Past tense in the subject: exactly one warning.
+    app.set_history(vec![past("feat", "ui", "added the button")]);
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+    let screen = rows(&terminal).join("\n");
+    assert!(screen.contains("details · 1 issue"), "{screen}");
+    // The finding itself uses the short wording from 0.23.6.
+    assert!(
+        screen.contains("imperative: `add`, not `added`"),
+        "{screen}"
+    );
+}
+
+#[test]
+fn a_detached_head_says_where_it_is() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+    app.tab = crate::application::tabs::Tab::Branches;
+    app.set_in_repository(true);
+    app.set_git(Box::new(
+        crate::application::test_support::RecordingGit::new(&["main"], "main"),
+    ));
+    app.repo.branch_name = None;
+    app.set_history(vec![commitsmith::domain::history::PastCommit {
+        id: "deadbee".into(),
+        short_id: "deadbee".into(),
+        summary: "some work".into(),
+        kind: Some("feat".into()),
+        ..Default::default()
+    }]);
+    app.branches.list.items = vec![commitsmith::domain::ports::BranchInfo::local("main", false)];
+
+    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+    let screen = rows(&terminal).join("\n");
+    assert!(screen.contains("detached HEAD at deadbee"), "{screen}");
+    assert_eq!(app.branch_label(), "detached at deadbee");
 }
