@@ -237,6 +237,29 @@ fn manager_of(dir: &std::path::Path, existing: &str) -> Option<(&'static str, &'
     None
 }
 
+/// Which of our hooks are missing in this repository, by name.
+///
+/// Read-only and quiet: it is asked once when the program starts, so the answer
+/// has to be cheap and free of side effects. An empty list means "all three are
+/// there, or there is nothing to compare with".
+pub fn missing() -> Vec<&'static str> {
+    let Ok(dir) = hooks_dir() else {
+        return Vec::new();
+    };
+    HOOKS
+        .iter()
+        .filter(|hook| {
+            let path = dir.join(hook.name);
+            match std::fs::read_to_string(&path) {
+                Ok(text) => !text.contains(MARKER),
+                // Missing file, or unreadable: either way not ours.
+                Err(_) => true,
+            }
+        })
+        .map(|hook| hook.name)
+        .collect()
+}
+
 /// What `install` did, in words for the terminal.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Installed {

@@ -401,6 +401,9 @@ fn run_composer(commit: bool) -> ExitCode {
         match repo_data {
             Ok(Some(data)) => {
                 app.set_in_repository(true);
+                // A hook that is not installed is invisible until a bad commit
+                // slips through; the footer says it once at startup.
+                app.set_hooks_missing(&hooks::missing());
                 app.set_scopes(data.scopes);
                 app.set_repo_line(data.status);
                 app.set_history(data.history);

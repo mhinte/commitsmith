@@ -1370,3 +1370,38 @@ fn the_compact_view_counts_the_fields_it_can_reach_and_shows_a_status() {
     let screen = rows(&terminal).join("\n");
     assert!(screen.contains("amend"), "{screen}");
 }
+
+#[test]
+fn missing_hooks_are_named_in_the_footer_and_go_away_when_they_are_there() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+    app.set_repo_line("main · 0 staged".to_string());
+    app.set_hooks_missing(&["commit-msg"]);
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+    let screen = rows(&terminal).join("\n");
+    assert!(
+        screen.contains("hooks not installed · `commitsmith hooks install`"),
+        "the hint is readable in full: {screen}"
+    );
+    // It is not a passing note: a keypress must not clear it.
+    assert!(!app.status_is_note);
+    app.handle_key(ratatui::crossterm::event::KeyEvent::from(
+        ratatui::crossterm::event::KeyCode::Char('x'),
+    ));
+    assert!(
+        app.status.contains("hooks not installed"),
+        "a keypress must not clear it: {}",
+        app.status
+    );
+
+    // With the hooks installed there is nothing to say.
+    let mut clean = App::with_config(crate::config::Config::conventional(), Vec::new());
+    clean.set_repo_line("main · 0 staged".to_string());
+    clean.set_hooks_missing(&[]);
+    terminal.draw(|frame| draw(frame, &clean)).unwrap();
+    let screen = rows(&terminal).join("\n");
+    assert!(!screen.contains("hooks not installed"), "{screen}");
+}

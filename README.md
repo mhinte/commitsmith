@@ -178,6 +178,33 @@ pattern of an earlier message carries into the new one without retyping it.
 
 Typing filters the list, `Ctrl+R` is also available while another picker is open.
 
+### For colleagues who only want the hook
+
+Three steps, no Rust, no TUI:
+
+```sh
+# 1. the binary: download the archive for your machine from the releases page
+#    and unpack it (or run scripts/install.sh, which also fixes PATH)
+# 2. in the repository
+commitsmith hooks install
+# 3. check that it bites
+git commit --allow-empty -m "no type at all"   # rejected, with a reason
+```
+
+Details that make this safe to hand to someone who does not care about the tool:
+
+- Without a `commitsmith` binary the hooks print one line and let the commit
+  through, so nothing breaks on a machine where it was never installed.
+- `prepare-commit-msg` starts a new message with `feat(TICKET-12): ` from the
+  branch name — but only when a person is writing it, never for merge, squash,
+  `--amend`, `-m` or `-F`.
+- `pre-commit` only hints (many files, conflict markers) and never blocks.
+- `commitsmith hooks uninstall` removes all three and puts back any hook that was
+  there before.
+
+If the program is started in a repository where the hooks are missing, the footer
+says so once — a hook that is not installed is invisible otherwise.
+
 ### Keeping it current
 
 ```sh

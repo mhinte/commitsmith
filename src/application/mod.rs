@@ -884,6 +884,24 @@ impl App {
     }
 
     /// Record whether a repository was found. Called once at startup.
+    /// Say that the repository's hooks are missing. Appended to whatever is
+    /// already there: knowing that nothing checks a commit matters more than a
+    /// note about the branch. Stays until something replaces it.
+    pub fn set_hooks_missing(&mut self, missing: &[&str]) {
+        if missing.is_empty() {
+            return;
+        }
+        // Short on purpose: the footer cuts from the right, and a hint nobody can
+        // read is the same as no hint. Which hooks are missing is the installer's
+        // business, not the status bar's.
+        let hint = "hooks not installed · `commitsmith hooks install`".to_string();
+        self.status = match self.status.is_empty() {
+            true => hint,
+            false => format!("{} · {hint}", self.status),
+        };
+        self.status_is_note = false;
+    }
+
     pub fn set_in_repository(&mut self, found: bool) {
         self.repo.in_repository = found;
         if !found {
