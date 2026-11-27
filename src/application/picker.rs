@@ -108,8 +108,14 @@ impl App {
         self.refresh_history_preview();
     }
 
-    /// Take type, scope and body from a past commit, keeping what is already
-    /// typed in the subject and in the footer.
+    /// Replace the whole form with a past commit.
+    ///
+    /// Every field comes from the reused commit, not just the ones that are still
+    /// empty: an old scope or body used to survive the reuse, and a subject that
+    /// was already typed blocked the one being reused. `breaking` is cleared
+    /// because the text of a `BREAKING CHANGE:` footer does not survive the walk
+    /// (`clean_body` drops footers); the footer itself is seeded again from the
+    /// current branch, which is also how an old ticket reference disappears.
     pub(crate) fn apply_template(&mut self, id: &str) {
         let Some(past) = self.history.commits.iter().find(|commit| commit.id == id) else {
             self.status = format!("commit {id} is not in the cached history");
@@ -125,36 +131,30 @@ impl App {
                 self.form.type_touched = true;
             }
         }
-        if let Some(scope) = template.scope {
-            if !scope.is_empty() {
-                applied.push("scope");
-                self.form.commit.scope = scope;
-            }
-        }
+        applied.push("scope");
+        self.form.commit.scope = template.scope.unwrap_or_default();
         // Subject and body come from the commit, not from a rendered template:
         // the template carries the whole message, which used to land in the body
         // while the subject stayed empty.
-        // A subject the user already typed wins; the reused one only fills a gap.
-        if self.form.commit.subject.trim().is_empty() && !past.summary.trim().is_empty() {
-            applied.push("subject");
-            self.form.commit.subject = past.summary.clone();
-        }
-        if !past.body.trim().is_empty() {
-            applied.push("body");
-            self.form.commit.body = past.body.clone();
-        }
+        applied.push("subject");
+        self.form.commit.subject = past.summary.clone();
+        applied.push("body");
+        self.form.commit.body = past.body.clone();
+        self.form.commit.breaking.clear();
 
-        if applied.is_empty() {
-            self.status = format!("{} reused: nothing to copy", past.short_id);
-        } else {
-            self.status = format!("{} reused: {}", past.short_id, applied.join(", "));
-        }
+        self.status = format!("{} reused: {}", past.short_id, applied.join(", "));
         self.focus(
             FIELDS
                 .iter()
                 .position(|f| *f == Field::Subject)
                 .unwrap_or(0),
         );
+        // The footer belongs to the work in progress, not to the reused commit:
+        // drop what was there (including its ticket reference) and seed from the
+        // branch again.
+        self.form.commit.footer.clear();
+        self.form.footer_seed = None;
+        self.seed_footer();
         self.revalidate();
     }
 

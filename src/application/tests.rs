@@ -981,17 +981,70 @@ fn history_without_commits_reports_instead_of_opening() {
 }
 
 #[test]
-fn confirming_history_reuses_type_scope_and_body() {
+fn confirming_history_replaces_every_field() {
+    // Reuse is a replacement, not a merge: what the user typed before is gone,
+    // and nothing of the old commit survives.
     let mut app = app_with_history();
     app.form.commit.subject = "already typed".into();
+    app.form.commit.scope = "old-scope".into();
+    app.form.commit.body = "old body".into();
+    app.form.commit.breaking = "old breaking".into();
+    app.form.commit.footer = "Refs TICKET-4711".into();
     ctrl(&mut app, 'r');
     press(&mut app, KeyCode::Enter);
     assert_eq!(app.form.commit.kind, "feat");
     assert_eq!(app.form.commit.scope, "composer");
     assert!(app.form.commit.body.contains("previews the highlighted"));
-    assert_eq!(app.form.commit.subject, "already typed", "subject stays");
+    assert_eq!(
+        app.form.commit.subject, "add picker preview",
+        "the reused subject wins over the typed one"
+    );
+    assert_eq!(
+        app.form.commit.breaking, "",
+        "no breaking text to carry over"
+    );
+    assert!(
+        !app.form.commit.footer.contains("TICKET-4711"),
+        "the old ticket reference is gone: {}",
+        app.form.commit.footer
+    );
     assert_eq!(app.active_field(), Field::Subject);
-    assert!(app.status.contains("reused: type, scope, body"));
+    assert_eq!(app.status, "aaaaaaa reused: type, scope, subject, body");
+}
+
+#[test]
+fn a_reused_commit_without_scope_clears_the_scope() {
+    let mut app = app_with_history();
+    app.form.commit.scope = "leftover".into();
+    app.form.commit.body = "leftover body".into();
+    ctrl(&mut app, 'r');
+    // The second commit in the fixture has no scope and no body.
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.form.commit.kind, "fix");
+    assert_eq!(app.form.commit.scope, "", "cleared, not kept");
+    assert_eq!(app.form.commit.body, "", "cleared, not kept");
+}
+
+#[test]
+fn reusing_seeds_the_footer_from_the_current_branch() {
+    // The footer is about the branch the work lands on, so an old reference must
+    // not survive; the branch's own ticket takes its place.
+    let git = RecordingGit::new(&["feat/mmu/TICKET-77/x"], "feat/mmu/TICKET-77/x");
+    let mut app = App::with_config(Config::conventional(), Vec::new());
+    app.set_in_repository(true);
+    app.set_git(Box::new(git));
+    app.set_history(vec![past(
+        "aaaaaaa1111111",
+        "feat",
+        Some("ui"),
+        "add a picker",
+        "",
+    )]);
+    app.form.commit.footer = "Refs TICKET-1".into();
+    ctrl(&mut app, 'r');
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.form.commit.footer, "Refs TICKET-77", "seeded again");
 }
 
 #[test]
@@ -1018,7 +1071,11 @@ fn unknown_types_from_history_are_not_applied() {
     // The type is not applied, but the subject still is: it is a commit
     // message, and the user may want its wording.
     assert_eq!(app.form.commit.subject, "scratch");
-    assert!(app.status.contains("reused: subject"), "{}", app.status);
+    assert!(
+        app.status.contains("reused: scope, subject, body"),
+        "{}",
+        app.status
+    );
 }
 
 #[test]
