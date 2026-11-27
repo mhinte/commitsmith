@@ -39,6 +39,11 @@ impl App {
     /// How a past commit's message would be judged today: the same rules the
     /// composer and `commitsmith check` use.
     pub(crate) fn log_mark(&self, commit: &PastCommit) -> Severity {
+        // A merge commit has no conventional message to check, and marking it
+        // red would say the history is broken when it is only a merge.
+        if commit.merge {
+            return Severity::Info;
+        }
         self.history
             .mark(commit)
             .map(|mark| mark.severity)
@@ -48,6 +53,9 @@ impl App {
     /// The concrete findings for a past commit, so the detail pane can say which
     /// rule broke instead of only that something did.
     pub(crate) fn log_issues(&self, commit: &PastCommit) -> Vec<Issue> {
+        if commit.merge {
+            return Vec::new();
+        }
         match self.history.mark(commit) {
             Some(mark) => mark.issues.clone(),
             // A commit that arrived after the last rebuild: judge it once, the

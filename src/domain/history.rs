@@ -69,6 +69,10 @@ pub struct PastCommit {
     pub scope: Option<String>,
     /// Files changed, as `M src/app.rs` style lines.
     pub files: Vec<String>,
+    /// True for a commit with more than one parent: `git merge`, or the commit
+    /// GitLab writes when it merges a request. It carries no conventional
+    /// message, so it must not be counted as a rule violation.
+    pub merge: bool,
 }
 
 impl PastCommit {

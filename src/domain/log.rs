@@ -148,6 +148,7 @@ mod tests {
             kind: kind.map(std::string::ToString::to_string),
             scope: scope.map(std::string::ToString::to_string),
             files: Vec::new(),
+            merge: false,
         }
     }
 

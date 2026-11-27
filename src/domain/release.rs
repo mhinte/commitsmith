@@ -132,6 +132,9 @@ pub struct ReleasePlan {
 impl ReleasePlan {
     /// Build a plan from the commits since `last_tag`.
     pub fn build(last_tag: Option<&str>, commits: Vec<PastCommit>) -> Self {
+        // Merge commits carry no change of their own: what they bring is in the
+        // list already, so counting them would only add noise to the notes.
+        let commits: Vec<PastCommit> = commits.into_iter().filter(|commit| !commit.merge).collect();
         let current = last_tag.and_then(SemVer::parse).unwrap_or(SemVer::START);
         let bump = bump_for(&commits);
         // Nothing was ever released: the first version is 0.1.0, whatever the
@@ -195,7 +198,9 @@ impl ReleasePlan {
 /// The highest bump any commit demands.
 pub fn bump_for(commits: &[PastCommit]) -> Bump {
     let mut bump = Bump::None;
-    for commit in commits {
+    // A merge commit says nothing about the change; the commits it brings are
+    // already in the list.
+    for commit in commits.iter().filter(|commit| !commit.merge) {
         let wanted = if is_breaking(commit) {
             Bump::Major
         } else {
@@ -330,7 +335,27 @@ mod tests {
             kind: Some(kind.to_string()),
             scope: scope.map(std::string::ToString::to_string),
             files: Vec::new(),
+            merge: false,
         }
+    }
+
+    #[test]
+    fn a_merge_commit_is_not_part_of_the_plan() {
+        // GitLab writes "Merge branch 'x' into 'main'" with two parents; it is
+        // not a change of its own and must not show up as a violation.
+        let mut merge = commit("chore", None, "merge a branch", "");
+        merge.merge = true;
+        let plan = ReleasePlan::build(
+            Some("v1.0.0"),
+            vec![commit("feat", None, "a real change", ""), merge],
+        );
+        assert_eq!(plan.commits.len(), 1, "{:?}", plan.commits);
+        assert_eq!(plan.next.to_string(), "1.1.0", "one feat, one minor");
+        let section = render_section(&plan, Some("2026-11-26"));
+        assert!(
+            !section.to_lowercase().contains("merge a branch"),
+            "{section}"
+        );
     }
 
     #[test]

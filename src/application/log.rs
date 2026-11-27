@@ -104,6 +104,7 @@ mod tests {
             kind: Some(kind.to_string()),
             scope: Some(scope.to_string()),
             files: Vec::new(),
+            merge: false,
         }
     }
 

@@ -670,6 +670,7 @@ fn the_plan_names_the_next_version() {
             kind: Some("feat".to_string()),
             scope: Some("ui".to_string()),
             files: Vec::new(),
+            merge: false,
         });
     let mut app = App::with_config(Config::conventional(), Vec::new());
     app.set_git(Box::new(git));
@@ -936,6 +937,7 @@ fn past(id: &str, kind: &str, scope: Option<&str>, summary: &str, body: &str) ->
         kind: Some(kind.into()),
         scope: scope.map(str::to_string),
         files: vec!["M src/app.rs".into()],
+        merge: false,
     }
 }
 

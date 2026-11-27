@@ -882,6 +882,7 @@ fn past(kind: &str, scope: &str, summary: &str) -> commitsmith::domain::history:
         kind: Some(kind.to_string()),
         scope: Some(scope.to_string()),
         files: Vec::new(),
+        merge: false,
     }
 }
 

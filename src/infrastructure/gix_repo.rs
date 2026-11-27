@@ -192,6 +192,7 @@ fn walked_commit(repo: &gix::Repository, id: gix::ObjectId) -> Option<Walked> {
         .unwrap_or_default();
     let date = date.split('T').next().unwrap_or(&date).to_string();
     let id = id.to_string();
+    let merge = commit.parent_ids().count() > 1;
 
     Some(Walked {
         entry: PastCommit {
@@ -204,6 +205,7 @@ fn walked_commit(repo: &gix::Repository, id: gix::ObjectId) -> Option<Walked> {
             kind,
             scope: scope.clone(),
             files: Vec::new(),
+            merge,
         },
         scope,
     })
@@ -570,6 +572,49 @@ mod tests {
     }
 
     #[test]
+    fn a_merge_commit_is_marked_as_one() {
+        let (dir, _repo) = temp_repo("merge-mark");
+        let git = |args: &[&str]| {
+            assert!(
+                std::process::Command::new("git")
+                    .current_dir(&dir)
+                    .args(args)
+                    .status()
+                    .unwrap()
+                    .success(),
+                "{args:?}"
+            );
+        };
+        git(&["checkout", "-q", "-b", "side"]);
+        std::fs::write(dir.join("side.txt"), "x").unwrap();
+        git(&["add", "side.txt"]);
+        git(&["commit", "-q", "-m", "feat(side): a side change"]);
+        git(&["checkout", "-q", "main"]);
+        std::fs::write(dir.join("main.txt"), "y").unwrap();
+        git(&["add", "main.txt"]);
+        git(&["commit", "-q", "-m", "fix(main): a main change"]);
+        git(&[
+            "merge",
+            "--no-ff",
+            "-q",
+            "-m",
+            "Merge branch 'side' into 'main'",
+            "side",
+        ]);
+
+        let repo = gix::discover(&dir).unwrap();
+        let (_scopes, commits) = snapshot(&repo, &[], 10, 10);
+        let merge = commits.iter().find(|commit| commit.merge).expect("a merge");
+        assert!(merge.summary.contains("Merge branch"), "{}", merge.summary);
+        assert_eq!(
+            commits.iter().filter(|commit| commit.merge).count(),
+            1,
+            "only the merge commit itself"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn the_plan_stops_reading_at_the_tag() {
         // Three commits, a tag on the oldest: the walk must read the two above it
         // and stop, not read a 300-commit window and cut the list afterwards.
@@ -649,6 +694,7 @@ mod tests {
             kind: Some("feat".into()),
             scope: Some("composer".into()),
             files: vec!["M src/app.rs".into()],
+            merge: false,
         }
     }
 

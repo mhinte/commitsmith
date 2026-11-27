@@ -92,6 +92,7 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect, matches: usize) {
                 _ => ("✓", theme::ok()),
             };
             let kind = match (&commit.kind, &commit.scope) {
+                _ if commit.merge => "merge".to_string(),
                 (Some(kind), Some(scope)) => format!("{kind}({scope})"),
                 (Some(kind), None) => kind.clone(),
                 _ => "plain".to_string(),
