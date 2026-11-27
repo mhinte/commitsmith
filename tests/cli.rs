@@ -951,6 +951,13 @@ fn serve(root: &Path) -> Server {
     Server { running, base }
 }
 
+/// A value that differs between two runs in the same process id.
+fn unique() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos())
+}
+
 fn sha256_of(path: &Path) -> String {
     let output = Command::new("sha256sum").arg(path).output().unwrap();
     String::from_utf8_lossy(&output.stdout)
@@ -1002,7 +1009,14 @@ fn publish(root: &Path, version: &str, archive: &str) {
 
 #[test]
 fn update_replaces_the_binary_only_after_verifying_it() {
-    let root = std::env::temp_dir().join(format!("commit-tui-update-{}", std::process::id()));
+    // A process id alone is not unique enough: a leftover helper from an earlier
+    // run (same pid after reuse) copies into the same path and the next exec
+    // fails with "Text file busy". The same trap the reword temp dir had.
+    let root = std::env::temp_dir().join(format!(
+        "commit-tui-update-{}-{}",
+        std::process::id(),
+        unique()
+    ));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let archive = fake_release(&root, "9.9.9", None);
@@ -1021,13 +1035,26 @@ fn update_replaces_the_binary_only_after_verifying_it() {
         ),
         ("COMMITSMITH_URL_BASE", format!("{base}/download")),
     ];
+    // Starting a binary that a finishing helper is just replacing can fail with
+    // "Text file busy" for a moment — that is Linux, not a bug (a person who runs
+    // `update` and then `--version` in the same breath hits it too). The test
+    // retries briefly instead of pretending the race is gone.
     let run_update = |args: &[&str]| {
-        let mut command = Command::new(&install);
-        command.args(args).current_dir(&root);
-        for (key, value) in &env {
-            command.env(key, value);
+        for attempt in 0..40u64 {
+            let mut command = Command::new(&install);
+            command.args(args).current_dir(&root);
+            for (key, value) in &env {
+                command.env(key, value);
+            }
+            match command.output() {
+                Ok(output) => return output,
+                Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                    std::thread::sleep(std::time::Duration::from_millis(50 * (attempt + 1)));
+                }
+                Err(error) => panic!("cannot run the binary under test: {error}"),
+            }
         }
-        command.output().unwrap()
+        panic!("the binary stayed busy for too long");
     };
 
     // `--check` answers without touching anything: exit 2 means "newer exists".
@@ -1061,21 +1088,26 @@ fn update_replaces_the_binary_only_after_verifying_it() {
     // Give the helper its moment: it copies as soon as the lock is gone (this
     // test process no longer executes the file), and removes the staged file.
     let staged = root.join("install/commitsmith.staged");
-    let finished = (0..40).any(|_| {
+    // The helper polls once a second and a loaded CI runner is slow: give it a
+    // generous window instead of pinning this test to this machine's speed.
+    let finished = (0..120).any(|_| {
         std::thread::sleep(std::time::Duration::from_millis(250));
         !staged.exists()
     });
     assert!(finished, "the staged binary was finished by the helper");
+    let mut version = String::new();
+    for _ in 0..40 {
+        match Command::new(&install).arg("--version").output() {
+            Ok(output) => {
+                version = String::from_utf8_lossy(&output.stdout).to_string();
+                break;
+            }
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    }
     assert!(
-        String::from_utf8_lossy(
-            &Command::new(&install)
-                .arg("--version")
-                .output()
-                .unwrap()
-                .stdout
-        )
-        .contains("9.9.9"),
-        "the installed binary is the new one"
+        version.contains("9.9.9"),
+        "the installed binary is the new one: {version}"
     );
     // Either a copy of the old binary next to it, or the same file rewritten in
     // place (which is what a busy inode needs); never neither.
@@ -1111,7 +1143,11 @@ fn update_replaces_the_binary_only_after_verifying_it() {
 
 #[test]
 fn a_wrong_checksum_leaves_the_binary_untouched() {
-    let root = std::env::temp_dir().join(format!("commit-tui-update-bad-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!(
+        "commit-tui-update-bad-{}-{}",
+        std::process::id(),
+        unique()
+    ));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     // A plausible-looking but wrong sum.

@@ -53,8 +53,26 @@ jobs:
           rustup target add x86_64-pc-windows-msvc
           cargo check --target x86_64-pc-windows-msvc
 
+      # The failure has to be readable from outside: the raw job log needs a
+      # login, a step summary and an annotation do not. `--no-fail-fast` so one
+      # broken test does not hide the others.
       - name: Tests
-        run: cargo test --all-targets
+        run: |
+          set +e
+          cargo test --all-targets --no-fail-fast 2>&1 | tee /tmp/tests.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            {
+              echo "## Failing tests"
+              echo '```'
+              grep -E "^(test .* FAILED|---- .* stdout ----|failures:)" /tmp/tests.log | head -40
+              echo '```'
+              grep -E "^test .* FAILED" /tmp/tests.log | head -10 | while read -r _ name _; do
+                echo "::error title=Test failed::${name}"
+              done
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
 
       # What unit tests cannot reach: a real repository, a real hook, a real
       # commit, and the TUI through a pty.
