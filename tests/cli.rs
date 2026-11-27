@@ -877,3 +877,276 @@ fn the_pre_commit_hook_says_nothing_without_a_binary() {
     assert!(hook.stdout.is_empty() && hook.stderr.is_empty(), "{hook:?}");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// A tiny HTTP server on a free port that serves files from `root`.
+///
+/// `commitsmith update` is the one command whose value is entirely in its
+/// contract — verify before replacing, never leave the user without a binary —
+/// and that cannot be tested without a release to download. A local server keeps
+/// the test offline and lets it serve a deliberately broken checksum.
+///
+/// The thread stops when the returned guard is dropped, so a failed assertion
+/// cannot leave a server waiting for a connection that never comes.
+struct Server {
+    running: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    base: String,
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering;
+        self.running.store(false, Ordering::SeqCst);
+        // One cheap request so the blocking `read` returns and the loop sees the
+        // flag.
+        let _ = std::net::TcpStream::connect(self.base.trim_start_matches("http://"));
+    }
+}
+
+fn serve(root: &Path) -> Server {
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    let root = root.to_path_buf();
+    let running = Arc::new(AtomicBool::new(true));
+    let stop = Arc::clone(&running);
+    std::thread::spawn(move || {
+        loop {
+            let Ok((mut stream, _)) = listener.accept() else {
+                break;
+            };
+            if !stop.load(Ordering::SeqCst) {
+                break;
+            }
+            let mut buffer = [0u8; 2048];
+            let read = stream.read(&mut buffer).unwrap_or(0);
+            let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+            let path = request
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .unwrap_or("/")
+                .to_string();
+            let file = root.join(path.trim_start_matches('/'));
+            match std::fs::read(&file) {
+                Ok(body) => {
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(&body);
+                }
+                Err(_) => {
+                    let _ =
+                        stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+                }
+            }
+        }
+    });
+    Server { running, base }
+}
+
+fn sha256_of(path: &Path) -> String {
+    let output = Command::new("sha256sum").arg(path).output().unwrap();
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string()
+}
+
+/// Lay out a fake release: an archive with a binary that reports `version`.
+fn fake_release(root: &Path, version: &str, checksum: Option<&str>) -> String {
+    let inner = format!("commitsmith-{version}-x86_64-unknown-linux-musl");
+    let package = root.join("pkg").join(&inner);
+    std::fs::create_dir_all(&package).unwrap();
+    let script = format!("#!/bin/sh\necho 'commitsmith {version}'\n");
+    let binary = package.join("commitsmith");
+    std::fs::write(&binary, script).unwrap();
+    make_executable(&binary);
+
+    let archive_name = format!("{inner}.tar.gz");
+    let status = Command::new("tar")
+        .arg("czf")
+        .arg(root.join(&archive_name))
+        .arg("-C")
+        .arg(root.join("pkg"))
+        .arg(&inner)
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let sum = checksum.map_or_else(|| sha256_of(&root.join(&archive_name)), str::to_string);
+    std::fs::write(root.join("SHA256SUMS"), format!("{sum}  {archive_name}\n")).unwrap();
+    archive_name
+}
+
+fn publish(root: &Path, version: &str, archive: &str) {
+    let download = root.join("download").join(format!("v{version}"));
+    std::fs::create_dir_all(&download).unwrap();
+    std::fs::copy(root.join(archive), download.join(archive)).unwrap();
+    std::fs::copy(root.join("SHA256SUMS"), download.join("SHA256SUMS")).unwrap();
+    let listing = root.join("api/repos/mhinte/commitsmith/releases");
+    std::fs::create_dir_all(&listing).unwrap();
+    std::fs::write(
+        listing.join("latest"),
+        format!("{{\n  \"tag_name\": \"v{version}\",\n  \"name\": \"{version}\"\n}}\n"),
+    )
+    .unwrap();
+}
+
+#[test]
+fn update_replaces_the_binary_only_after_verifying_it() {
+    let root = std::env::temp_dir().join(format!("commit-tui-update-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let archive = fake_release(&root, "9.9.9", None);
+    publish(&root, "9.9.9", &archive);
+    let server = serve(&root);
+    let base = server.base.clone();
+
+    // The binary to replace is a copy, never the running test binary.
+    let install = root.join("install/commitsmith");
+    std::fs::create_dir_all(install.parent().unwrap()).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_commitsmith"), &install).unwrap();
+    let env = [
+        (
+            "COMMITSMITH_API_BASE",
+            format!("{base}/api/repos/mhinte/commitsmith"),
+        ),
+        ("COMMITSMITH_URL_BASE", format!("{base}/download")),
+    ];
+    let run_update = |args: &[&str]| {
+        let mut command = Command::new(&install);
+        command.args(args).current_dir(&root);
+        for (key, value) in &env {
+            command.env(key, value);
+        }
+        command.output().unwrap()
+    };
+
+    // `--check` answers without touching anything: exit 2 means "newer exists".
+    let check = run_update(&["update", "--check"]);
+    assert_eq!(check.status.code(), Some(2), "{check:?}");
+    assert!(String::from_utf8_lossy(&check.stdout).contains("9.9.9"));
+    assert!(
+        String::from_utf8_lossy(
+            &Command::new(&install)
+                .arg("--version")
+                .output()
+                .unwrap()
+                .stdout
+        )
+        .contains(env!("CARGO_PKG_VERSION"))
+    );
+
+    let updated = run_update(&["update"]);
+    assert!(updated.status.success(), "{updated:?}");
+    // This process is executing the file, so the kernel refuses to write it
+    // (ETXTBSY) and the update stages the new binary for a helper instead. That
+    // is the normal Linux case, not a failure.
+    assert!(
+        String::from_utf8_lossy(&updated.stdout).contains("staged"),
+        "{updated:?}"
+    );
+    assert!(
+        root.join("install/commitsmith.staged").exists(),
+        "the new binary waits for this process to end"
+    );
+    // Give the helper its moment: it copies as soon as the lock is gone (this
+    // test process no longer executes the file), and removes the staged file.
+    let staged = root.join("install/commitsmith.staged");
+    let finished = (0..40).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        !staged.exists()
+    });
+    assert!(finished, "the staged binary was finished by the helper");
+    assert!(
+        String::from_utf8_lossy(
+            &Command::new(&install)
+                .arg("--version")
+                .output()
+                .unwrap()
+                .stdout
+        )
+        .contains("9.9.9"),
+        "the installed binary is the new one"
+    );
+    // Either a copy of the old binary next to it, or the same file rewritten in
+    // place (which is what a busy inode needs); never neither.
+    assert!(
+        root.join("install/commitsmith.old").exists()
+            || !root.join("install/commitsmith.new").exists(),
+        "no half-written file is left behind"
+    );
+
+    // And the release that was installed is now the newest one. The binary in
+    // place is the fake, which does not know `update`, so the answer has to come
+    // from a fresh copy of this build.
+    std::fs::write(
+        root.join("api/repos/mhinte/commitsmith/releases/latest"),
+        format!("{{\"tag_name\": \"v{}\"}}\n", env!("CARGO_PKG_VERSION")),
+    )
+    .unwrap();
+    let again = Command::new(env!("CARGO_BIN_EXE_commitsmith"))
+        .args(["update"])
+        .current_dir(&root)
+        .env(env[0].0, &env[0].1)
+        .env(env[1].0, &env[1].1)
+        .output()
+        .unwrap();
+    assert_eq!(again.status.code(), Some(0), "{again:?}");
+    assert!(
+        String::from_utf8_lossy(&again.stdout).contains("newest"),
+        "{again:?}"
+    );
+    drop(server);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn a_wrong_checksum_leaves_the_binary_untouched() {
+    let root = std::env::temp_dir().join(format!("commit-tui-update-bad-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    // A plausible-looking but wrong sum.
+    let archive = fake_release(
+        &root,
+        "9.9.9",
+        Some("0000000000000000000000000000000000000000000000000000000000000000"),
+    );
+    publish(&root, "9.9.9", &archive);
+    let server = serve(&root);
+    let base = server.base.clone();
+
+    let install = root.join("install/commitsmith");
+    std::fs::create_dir_all(install.parent().unwrap()).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_commitsmith"), &install).unwrap();
+    let before = std::fs::read(&install).unwrap();
+
+    let output = Command::new(&install)
+        .args(["update"])
+        .current_dir(&root)
+        .env(
+            "COMMITSMITH_API_BASE",
+            format!("{base}/api/repos/mhinte/commitsmith"),
+        )
+        .env("COMMITSMITH_URL_BASE", format!("{base}/download"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("checksum mismatch"),
+        "{output:?}"
+    );
+    assert_eq!(
+        std::fs::read(&install).unwrap(),
+        before,
+        "a failed verification must not touch the binary"
+    );
+    drop(server);
+    let _ = std::fs::remove_dir_all(root);
+}

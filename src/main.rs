@@ -93,6 +93,12 @@ enum Command {
     Types,
     /// Print hints about the staged index, for pre-commit hooks
     Hints,
+    /// Replace this binary with the newest release
+    Update {
+        /// Only say whether there is a newer release
+        #[arg(long)]
+        check: bool,
+    },
     /// Start a new message from the branch name, for prepare-commit-msg hooks
     Prepare {
         /// The message file git hands to the hook
@@ -153,6 +159,7 @@ fn main() -> ExitCode {
         Some(Command::Hooks { action }) => run_hooks(action),
         Some(Command::Prepare { file }) => run_prepare(&file),
         Some(Command::Hints) => run_hints(),
+        Some(Command::Update { check }) => run_update(check),
         Some(Command::Check {
             file,
             message,
@@ -206,6 +213,46 @@ fn run_hooks(action: HookAction) -> ExitCode {
 /// Always exit 0. The hints go to stderr so a hook never writes into a pipe
 /// somebody parses, and a broken installation (no repository, unreadable index)
 /// is not a reason to stop a commit.
+/// `commitsmith update`: fetch the newest release, verify it, put it in place.
+///
+/// Exit codes are part of the contract: 0 means "nothing to do or done", 1 means
+/// "something went wrong", 2 means "there is a newer release" — so a script can
+/// ask with `--check` and act on the answer.
+fn run_update(check_only: bool) -> ExitCode {
+    use commitsmith::infrastructure::update::{self, Outcome};
+
+    match update::run(check_only) {
+        Ok(Outcome::UpToDate { .. }) => {
+            println!(
+                "commitsmith {} is the newest release",
+                env!("CARGO_PKG_VERSION")
+            );
+            ExitCode::SUCCESS
+        }
+        Ok(Outcome::Updated { from, to }) => {
+            if check_only {
+                println!("commitsmith {to} is available (you run {from})");
+                println!("run `commitsmith update` to install it");
+                return ExitCode::from(2);
+            }
+            let pending = std::env::current_exe()
+                .ok()
+                .is_some_and(|path| commitsmith::infrastructure::update::is_pending(&path));
+            match pending {
+                true => println!(
+                    "commitsmith {from} -> {to}\nthe new binary is staged and replaces this one when it exits"
+                ),
+                false => println!("commitsmith {from} -> {to}"),
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("commitsmith: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn run_hints() -> ExitCode {
     use commitsmith::domain::ports::GitRepository;
     use commitsmith::infrastructure::git_cli::GitBackend;

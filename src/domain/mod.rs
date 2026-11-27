@@ -20,6 +20,7 @@ pub mod setup;
 pub mod slug;
 pub mod text;
 pub mod ticket;
+pub mod update;
 pub mod validate;
 
 pub use author::{AuthorSlug, AuthorSlugError};

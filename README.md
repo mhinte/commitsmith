@@ -178,6 +178,19 @@ pattern of an earlier message carries into the new one without retyping it.
 
 Typing filters the list, `Ctrl+R` is also available while another picker is open.
 
+### Keeping it current
+
+```sh
+commitsmith update --check   # is there a newer release? exit 2 means yes
+commitsmith update           # fetch, verify the checksum, replace the binary
+```
+
+The checksum from the release's `SHA256SUMS` is verified before anything is
+written, and the downloaded binary has to answer `--version` before it goes in
+place. On Linux the running binary cannot be overwritten while it runs, so the new
+one is staged as `commitsmith.staged` and copied over as soon as the command
+returns — the message says so when that happens.
+
 ### commit-msg hook
 
 ```sh
