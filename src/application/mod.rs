@@ -39,7 +39,6 @@ use crate::git::{PastCommit, ScopeInfo};
 use crate::validate::{self, Issue, Rules, Severity};
 use branch_wizard::BranchWizard;
 use branches::BranchList;
-use commitsmith::domain::branch::ConventionalBranchName;
 use commitsmith::domain::ports::{ConfigStore, GitRepository};
 use log::LogState;
 use staging::{Confirm, Staging};
@@ -308,15 +307,13 @@ impl App {
         app
     }
 
-    /// The ticket of the branch we are on, when its name carries one.
-    pub fn branch_ticket(&self) -> Option<String> {
-        let name = self.repo.branch_name.as_deref()?;
-        // The template first, so its rules win; then a plain look for a
-        // ticket-shaped word, because a renamed branch still carries one.
-        ConventionalBranchName::parse(name)
-            .ok()
-            .and_then(|parsed| parsed.ticket().map(std::string::ToString::to_string))
-            .or_else(|| commitsmith::domain::ticket::in_text(name))
+    /// What the branch says about a message here: type and ticket.
+    pub fn branch_context(&self) -> commitsmith::domain::prefill::Context {
+        self.repo
+            .branch_name
+            .as_deref()
+            .map(commitsmith::domain::prefill::context)
+            .unwrap_or_default()
     }
 
     /// Who the co-author line names: the configured text, else the handle.
@@ -329,22 +326,21 @@ impl App {
     }
 
     /// Suggested footer for a new message: the branch's ticket as the reference
-    /// and — unless switched off — the co-author line.
+    /// and — unless switched off — the co-author line. Both come from
+    /// `domain::prefill`, the same place the `prepare-commit-msg` hook reads.
     pub fn suggested_footer(&self) -> Option<String> {
-        let mut lines = Vec::new();
-        if let Some(ticket) = self.branch_ticket() {
-            lines.push(format!("{} {ticket}", self.config.reference));
-        }
-        if self.config.co_author {
-            if let Some(name) = self.co_author_name() {
-                lines.push(format!("Co-authored-by: {name}"));
-            }
-        }
-        if lines.is_empty() {
-            None
-        } else {
-            Some(lines.join("\n"))
-        }
+        let co_author = self
+            .config
+            .co_author
+            .then(|| self.co_author_name())
+            .flatten();
+        let branch = self.repo.branch_name.as_deref().unwrap_or_default();
+        let lines = commitsmith::domain::prefill::footer_lines(
+            branch,
+            &self.config.reference,
+            co_author.as_deref(),
+        );
+        (!lines.is_empty()).then(|| lines.join("\n"))
     }
 
     /// Fill the footer with the suggestion while it is still untouched.
@@ -639,13 +635,9 @@ impl App {
         if self.form.type_touched {
             return;
         }
-        let Some(name) = self.repo.branch_name.as_deref() else {
+        let Some(kind) = self.branch_context().kind.map(str::to_string) else {
             return;
         };
-        let Ok(parsed) = ConventionalBranchName::parse(name) else {
-            return;
-        };
-        let kind = parsed.kind().commit_type().to_string();
         // A profile may not have that type; then the current one stays.
         if !self.config.type_names().contains(&kind) {
             return;

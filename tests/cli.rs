@@ -672,9 +672,11 @@ fn the_prepare_hook_starts_an_empty_message_from_the_branch() {
     std::fs::write(&file, "# Please enter the commit message\n#\n").unwrap();
     let hook = run_named_hook(&dir, "prepare-commit-msg", &file, None);
     assert!(hook.status.success(), "{hook:?}");
+    // Conventional Commits: the type in the header, the ticket in the footer —
+    // a human editor is the only case where the hook writes anything at all.
     assert_eq!(
         std::fs::read_to_string(&file).unwrap(),
-        "feat(TICKET-12): \n# Please enter the commit message\n#\n"
+        "feat: \n# Please enter the commit message\n#\n"
     );
     let _ = std::fs::remove_dir_all(dir);
 }
