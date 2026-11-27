@@ -1259,3 +1259,31 @@ fn the_log_title_says_how_many_commits_are_local() {
     let screen = rows(&terminal).join("\n");
     assert!(!screen.contains("local"), "{screen}");
 }
+
+#[test]
+fn the_type_summary_sits_at_the_bottom_of_the_log() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+    app.tab = crate::application::tabs::Tab::History;
+    app.set_history(vec![
+        past("feat", "ui", "add a button"),
+        past("fix", "api", "repair the route"),
+    ]);
+    let mut terminal = Terminal::new(TestBackend::new(140, 30)).unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+    let screen = rows(&terminal).join("\n");
+    // The title no longer carries the counts ...
+    let title_line = screen
+        .lines()
+        .find(|line| line.contains(" log · "))
+        .unwrap_or("");
+    assert!(
+        !title_line.contains("feat"),
+        "the title stays short: {title_line}"
+    );
+    // ... the last line of the list does.
+    assert!(screen.contains("feat 1"), "{screen}");
+    assert!(screen.contains("fix 1"), "{screen}");
+}

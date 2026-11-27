@@ -36,13 +36,9 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect, matches: usize) {
     let title = match &app.release.log.input {
         Some(text) => format!(" filter › {text}▏ "),
         None => {
-            let counts = type_counts(&app.history.commits);
             let filter = app.release.log.filter.describe();
             if filter.is_empty() {
-                format!(
-                    " log · {} · {counts}{local_note} ",
-                    app.history.commits.len()
-                )
+                format!(" log · {}{local_note} ", app.history.commits.len())
             } else {
                 format!(
                     " log · {filter} · {matches} of {}{local_note} ",
@@ -68,11 +64,13 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect, matches: usize) {
         ));
         lines.push(Line::styled("  c clears the filter", MUTED));
     } else {
+        // One row is kept for the summary line at the bottom of the list.
+        let rows_height = height.saturating_sub(1).max(1);
         let offset = app
             .release
             .log
             .selected
-            .saturating_sub(height.saturating_sub(1));
+            .saturating_sub(rows_height.saturating_sub(1));
         let name_width = area.width.saturating_sub(18) as usize;
         for (index, commit) in app
             .release
@@ -82,7 +80,7 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect, matches: usize) {
             .enumerate()
             .skip(offset)
         {
-            if lines.len() >= height {
+            if lines.len() >= rows_height {
                 break;
             }
             let selected = index == app.release.log.selected;
@@ -131,6 +129,16 @@ fn draw_list(frame: &mut Frame, app: &App, area: Rect, matches: usize) {
             } else {
                 row
             });
+        }
+    }
+
+    // The type summary belongs at the bottom: the title stays short, and the eye
+    // finds the counts where the list ends (Marc, 26.11.).
+    if height > 1 && !app.history.commits.is_empty() {
+        let counts = type_counts(&app.history.commits);
+        if !counts.is_empty() {
+            lines.truncate(height - 1);
+            lines.push(Line::styled(format!(" {counts}"), MUTED));
         }
     }
 
