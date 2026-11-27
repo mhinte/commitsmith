@@ -1150,3 +1150,36 @@ fn a_wrong_checksum_leaves_the_binary_untouched() {
     drop(server);
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn hooks_without_an_action_needs_a_terminal_and_says_how_else() {
+    // The wizard cannot run in a pipe: a script that calls `commitsmith hooks`
+    // has to be told what to use instead, not left with a blank screen.
+    let dir = repo("hooks-no-tty");
+    let output = Command::new(env!("CARGO_BIN_EXE_commitsmith"))
+        .arg("hooks")
+        .current_dir(&dir)
+        .stdout(std::process::Stdio::piped())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("commitsmith hooks install"), "{stderr}");
+    assert!(stderr.contains("--yes"), "{stderr}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn hooks_yes_installs_all_three_without_asking() {
+    let dir = repo("hooks-yes");
+    let output = Command::new(env!("CARGO_BIN_EXE_commitsmith"))
+        .args(["hooks", "--yes"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    for hook in ["commit-msg", "prepare-commit-msg", "pre-commit"] {
+        assert!(dir.join(".git/hooks").join(hook).exists(), "{hook}");
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}

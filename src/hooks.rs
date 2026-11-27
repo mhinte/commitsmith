@@ -260,6 +260,28 @@ pub fn missing() -> Vec<&'static str> {
         .collect()
 }
 
+/// Install only the named hooks, leaving the others alone.
+///
+/// `hooks install` writes all three; the wizard lets someone take just the one
+/// that checks the message, and that must not quietly write the other two.
+pub fn install_selected(names: &[&str], force: bool) -> Result<Installed, String> {
+    let wanted: Vec<&Hook> = HOOKS
+        .iter()
+        .filter(|hook| names.contains(&hook.name))
+        .collect();
+    if wanted.is_empty() {
+        return Err(
+            "no such hook · choose from commit-msg, prepare-commit-msg, pre-commit".to_string(),
+        );
+    }
+    install_these(&wanted, force)
+}
+
+/// The directory git reads hooks from, for the wizard to show.
+pub fn hooks_dir_display() -> Option<String> {
+    hooks_dir().ok().map(|dir| dir.display().to_string())
+}
+
 /// What `install` did, in words for the terminal.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Installed {
@@ -276,6 +298,11 @@ pub struct Installed {
 /// regenerates (husky, lefthook, pre-commit) needs `--force`, because our hook
 /// would vanish with that tool's next install.
 pub fn install(force: bool) -> Result<Installed, String> {
+    let all: Vec<&Hook> = HOOKS.iter().collect();
+    install_these(&all, force)
+}
+
+fn install_these(hooks: &[&Hook], force: bool) -> Result<Installed, String> {
     let dir = hooks_dir()?;
     std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
 
@@ -283,17 +310,17 @@ pub fn install(force: bool) -> Result<Installed, String> {
         paths: Vec::new(),
         chained: Vec::new(),
     };
-    for hook in &HOOKS {
+    for hook in hooks {
         let path = dir.join(hook.name);
         let existing = std::fs::read_to_string(&path).unwrap_or_default();
         let ours = existing.contains(MARKER);
         if !ours && !force {
             if let Some((tool, advice)) = manager_of(&dir, &existing) {
                 return Err(format!(
-                    "{} is managed by {tool}\n\
-                     {tool} rewrites it on its next install and drops our hook\n\
+                    "{}\n\
+                     is managed by {tool}, which rewrites it on its next install\n\
                      instead: {advice}\n\
-                     or pass --force to install anyway",
+                     or use `commitsmith hooks install --force`",
                     dir.display()
                 ));
             }

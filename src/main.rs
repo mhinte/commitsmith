@@ -105,10 +105,13 @@ enum Command {
         #[arg(long)]
         file: PathBuf,
     },
-    /// Install or remove the commit-msg hook of this repository
+    /// Install the git hooks of this repository (a wizard when no action is given)
     Hooks {
         #[command(subcommand)]
-        action: HookAction,
+        action: Option<HookAction>,
+        /// Install all three hooks without asking; for scripts and CI
+        #[arg(long, global = true)]
+        yes: bool,
     },
 }
 
@@ -156,7 +159,7 @@ fn main() -> ExitCode {
         }
         Some(Command::Config { identity }) => show_config(identity),
         Some(Command::Init { defaults, force }) => init_config(defaults, force),
-        Some(Command::Hooks { action }) => run_hooks(action),
+        Some(Command::Hooks { action, yes }) => run_hooks(action, yes),
         Some(Command::Prepare { file }) => run_prepare(&file),
         Some(Command::Hints) => run_hints(),
         Some(Command::Update { check }) => run_update(check),
@@ -176,7 +179,15 @@ fn load_config() -> (Config, Vec<String>) {
     Config::load(&cwd())
 }
 
-fn run_hooks(action: HookAction) -> ExitCode {
+fn run_hooks(action: Option<HookAction>, yes: bool) -> ExitCode {
+    // No action means a person typed `commitsmith hooks` and wants guidance.
+    // `--yes` keeps a script working on the same command line.
+    let Some(action) = action else {
+        return match yes {
+            true => run_hooks_install(false),
+            false => run_hooks_wizard(),
+        };
+    };
     let result = match action {
         HookAction::Install { force } => hooks::install(force).map(|done| {
             let mut message = done.paths.join("\n");
@@ -198,6 +209,57 @@ fn run_hooks(action: HookAction) -> ExitCode {
     match result {
         Ok(message) => {
             println!("{message}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("commitsmith: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_hooks_install(force: bool) -> ExitCode {
+    match hooks::install(force) {
+        Ok(done) => {
+            let mut message = done.paths.join("\n");
+            for previous in done.chained {
+                message.push_str(&format!(
+                    "\nyour existing hook moved to {previous} and runs first"
+                ));
+            }
+            println!("{message}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("commitsmith: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The wizard needs a terminal; without one it says how to do it in a script.
+fn run_hooks_wizard() -> ExitCode {
+    use std::io::IsTerminal;
+
+    if !std::io::stdout().is_terminal() {
+        eprintln!("commitsmith: no terminal for the wizard");
+        eprintln!("run `commitsmith hooks install` or `commitsmith hooks --yes`");
+        return ExitCode::FAILURE;
+    }
+    let mut terminal = ratatui::init();
+    let outcome = ui::hooks_wizard::run(&mut terminal);
+    ratatui::restore();
+    match outcome {
+        Ok(ui::hooks_wizard::Outcome::Done(Ok(text))) => {
+            println!("{text}");
+            ExitCode::SUCCESS
+        }
+        Ok(ui::hooks_wizard::Outcome::Done(Err(error))) => {
+            eprintln!("commitsmith: {error}");
+            ExitCode::FAILURE
+        }
+        Ok(ui::hooks_wizard::Outcome::Skipped) => {
+            println!("nothing installed");
             ExitCode::SUCCESS
         }
         Err(error) => {
