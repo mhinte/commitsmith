@@ -128,7 +128,11 @@ pub fn validate_with(commit: &Commit, rules: &Rules) -> Vec<Issue> {
     if scope.contains(char::is_whitespace) {
         issues.push(Issue::warning("scope", "one word, no spaces (e.g. `api`)"));
     }
-    if scope.chars().any(char::is_uppercase) {
+    // A ticket in the scope is spelled the way the ticket system spells it:
+    // `fix(OPS-8): ...` is the shape the prepare-commit-msg hook writes, and
+    // warning about its own suggestion would teach people to ignore warnings.
+    let scope_is_ticket = crate::domain::ticket::in_text(scope).is_some_and(|found| found == scope);
+    if scope.chars().any(char::is_uppercase) && !scope_is_ticket {
         issues.push(Issue::warning(
             "scope",
             "lower case (e.g. `api`, not `API`)",
@@ -255,6 +259,29 @@ pub fn count(issues: &[Issue]) -> (usize, usize) {
 
 pub fn has_errors(issues: &[Issue]) -> bool {
     issues.iter().any(|issue| issue.severity == Severity::Error)
+}
+
+#[cfg(test)]
+mod ticket_scope_tests {
+    use super::lint;
+
+    #[test]
+    fn a_ticket_in_the_scope_is_not_a_case_problem() {
+        let issues = lint("fix(OPS-8): fix the typo");
+        assert!(
+            !issues.iter().any(|issue| issue.field == "scope"),
+            "a ticket keeps its own spelling: {issues:?}"
+        );
+
+        // A module scope is still asked to be lower case.
+        let issues = lint("feat(API): add a thing");
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.field == "scope" && issue.message.contains("lower case")),
+            "{issues:?}"
+        );
+    }
 }
 
 #[cfg(test)]
