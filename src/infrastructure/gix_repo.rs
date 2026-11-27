@@ -14,10 +14,30 @@ pub fn open(path: &Path) -> Option<gix::Repository> {
     gix::discover(path).ok()
 }
 
-/// How often a message went through the parser, counted in tests only: the walk
-/// must parse each header once, and a counter is the only honest proof.
+// How often a message went through the parser, counted in tests only: the walk
+// must parse each header once, and a counter is the only honest proof.
+//
+// Per thread, because the suite runs its tests in parallel and a global counter
+// mixed two walks into one number.
 #[cfg(test)]
-static PARSES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+thread_local! {
+    static PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn count_parse() {
+    PARSES.with(|count| count.set(count.get() + 1));
+}
+
+#[cfg(test)]
+fn parses() -> usize {
+    PARSES.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn reset_parses() {
+    PARSES.with(|count| count.set(0));
+}
 
 /// Parse a raw commit message with the same parser the linter uses.
 pub fn parse_scope(message: &str) -> Option<String> {
@@ -29,7 +49,7 @@ fn parse_event(message: &str) -> Option<(String, Option<String>, bool, String)> 
     use conventional_commit_parser::commit::CommitType;
 
     #[cfg(test)]
-    PARSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    count_parse();
 
     let parsed = conventional_commit_parser::parse(message.trim()).ok()?;
     let breaking = parsed.is_breaking_change;
@@ -121,7 +141,7 @@ pub fn commits_since(repo: &gix::Repository, since: Option<&str>, limit: usize) 
     let stop = since.and_then(|tag| {
         repo.rev_parse_single(format!("{tag}^{{commit}}").as_str())
             .ok()
-            .map(|id| id.detach())
+            .map(gix::Id::detach)
     });
     commits_until(repo, stop, limit)
 }
@@ -402,7 +422,7 @@ impl GixRepo {
             .repo
             .rev_parse_single(format!("{stop}^{{commit}}").as_str())
             .ok()
-            .map(|id| id.detach());
+            .map(gix::Id::detach);
         Ok(commits_until(&self.repo, stop, limit))
     }
 
@@ -561,7 +581,7 @@ mod tests {
             .unwrap();
         assert!(status.success());
 
-        PARSES.store(0, std::sync::atomic::Ordering::Relaxed);
+        reset_parses();
         let commits = commits_since(&repo, Some("v1.0.0"), 300);
         assert_eq!(
             commits
@@ -571,11 +591,7 @@ mod tests {
             ["third", "second"],
             "the tagged commit itself is not part of the plan"
         );
-        assert_eq!(
-            PARSES.load(std::sync::atomic::Ordering::Relaxed),
-            2,
-            "only the commits above the tag were parsed"
-        );
+        assert_eq!(parses(), 2, "only the commits above the tag were parsed");
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -593,15 +609,11 @@ mod tests {
         // scope, once for the type, once to strip it. Three commits, three
         // parses is the contract.
         let (dir, repo) = temp_repo("parse-once");
-        PARSES.store(0, std::sync::atomic::Ordering::Relaxed);
+        reset_parses();
         let (scopes, commits) = snapshot(&repo, &[], 50, 10);
         assert_eq!(commits.len(), 3);
         assert_eq!(scopes.history.len(), 2, "api and ui, not chore");
-        assert_eq!(
-            PARSES.load(std::sync::atomic::Ordering::Relaxed),
-            3,
-            "one parse per commit and not one more"
-        );
+        assert_eq!(parses(), 3, "one parse per commit and not one more");
         let _ = std::fs::remove_dir_all(dir);
     }
 
