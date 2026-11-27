@@ -1068,6 +1068,26 @@ fn confirming_history_replaces_every_field() {
 }
 
 #[test]
+fn a_subject_suggestion_keeps_the_scope_that_was_typed() {
+    // Ctrl+Space in the subject field offers earlier subjects; picking one must
+    // fill the subject only. Choosing it used to replace the whole form and
+    // wiped the scope.
+    let mut app = app_with_history();
+    app.form.commit.scope = "my-scope".to_string();
+    app.form.commit.body = "my body".to_string();
+    press(&mut app, KeyCode::Tab); // type -> scope
+    press(&mut app, KeyCode::Tab); // scope -> subject
+    press_with(&mut app, KeyCode::Char(' '), KeyModifiers::CONTROL);
+    assert!(app.picker.is_some(), "{}", app.status);
+    press(&mut app, KeyCode::Enter);
+
+    assert_eq!(app.form.commit.subject, "add picker preview");
+    assert_eq!(app.form.commit.scope, "my-scope", "the scope survives");
+    assert_eq!(app.form.commit.body, "my body", "the body survives");
+    assert_eq!(app.status, "aaaaaaa reused: subject");
+}
+
+#[test]
 fn a_reused_commit_without_scope_clears_the_scope() {
     let mut app = app_with_history();
     app.form.commit.scope = "leftover".into();

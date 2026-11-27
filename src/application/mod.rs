@@ -110,6 +110,10 @@ pub struct Picker {
     pub filter: String,
     /// Text shown next to the list while an entry is highlighted.
     pub previews: Vec<String>,
+    /// What accepting an entry does. A suggestion fills the field it was opened
+    /// from; Ctrl+R replaces the whole form. Same list, two meanings — choosing
+    /// a subject used to wipe the scope that was already typed.
+    pub full_reuse: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1028,7 +1032,7 @@ impl App {
                     "type: Enter or Space opens the list, ←/→ switches without it".to_string();
             }
             Field::Scope => self.open_scope_picker(),
-            Field::Subject => self.open_history_picker(),
+            Field::Subject => self.open_history_picker(false),
             Field::Body | Field::Breaking | Field::Footer => {
                 self.status = format!(
                     "no suggestions for {} · Ctrl+Space offers types, scopes and earlier subjects",
@@ -1046,7 +1050,10 @@ impl App {
             self.status = "nothing selected".to_string();
             return;
         };
-        self.apply_picker_choice(picker.kind, choice);
+        // Read the mode before the picker goes away: it decides whether the
+        // choice fills one field or the whole form.
+        let full = picker.full_reuse;
+        self.apply_picker_choice(picker.kind, choice, full);
     }
 
     /// `Ctrl+O`: fold the optional fields away, or bring them back. The choice is
@@ -1365,7 +1372,7 @@ impl App {
             KeyCode::Char('n') if ctrl => self.start_new_commit(),
             KeyCode::Char('t') if ctrl => self.open_type_picker(),
             KeyCode::Char('p') if ctrl => self.open_profile_picker(),
-            KeyCode::Char('r') if ctrl => self.open_history_picker(),
+            KeyCode::Char('r') if ctrl => self.open_history_picker(true),
             KeyCode::Char('q') if self.active_field() == Field::Type => self.should_quit = true,
             KeyCode::Tab => self.next_field(),
             KeyCode::BackTab => self.previous_field(),

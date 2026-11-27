@@ -64,7 +64,7 @@ impl App {
     }
 
     /// Recent commits, with their message shown in the pane next to the list.
-    pub(crate) fn open_history_picker(&mut self) {
+    pub(crate) fn open_history_picker(&mut self, full_reuse: bool) {
         if self.history.commits.is_empty() {
             self.status = "no commits yet: this repository has no history to reuse".into();
             return;
@@ -97,6 +97,7 @@ impl App {
             .unwrap_or(0);
         self.picker = Some(Picker {
             kind: PickerKind::History,
+            full_reuse,
             items,
             values,
             selected,
@@ -108,15 +109,13 @@ impl App {
         self.refresh_history_preview();
     }
 
-    /// Replace the whole form with a past commit.
+    /// Take a past commit into the form.
     ///
-    /// Every field comes from the reused commit, not just the ones that are still
-    /// empty: an old scope or body used to survive the reuse, and a subject that
-    /// was already typed blocked the one being reused. `breaking` is cleared
-    /// because the text of a `BREAKING CHANGE:` footer does not survive the walk
-    /// (`clean_body` drops footers); the footer itself is seeded again from the
-    /// current branch, which is also how an old ticket reference disappears.
-    pub(crate) fn apply_template(&mut self, id: &str) {
+    /// `full` is Ctrl+R: every field comes from the commit, which is what "reuse
+    /// this commit" means. Without it the picker was opened as a *suggestion for
+    /// the subject field*, so only the subject changes — choosing a subject used
+    /// to wipe the scope that was already typed.
+    pub(crate) fn apply_template(&mut self, id: &str, full: bool) {
         let Some(past) = self.history.commits.iter().find(|commit| commit.id == id) else {
             self.status = format!("commit {id} is not in the cached history");
             return;
@@ -124,23 +123,27 @@ impl App {
         let template = past.template();
         let mut applied = Vec::new();
 
-        if let Some(kind) = template.kind {
-            if self.rules.types.is_empty() || self.rules.types.contains(&kind) {
-                applied.push("type");
-                self.form.commit.kind = kind;
-                self.form.type_touched = true;
+        if full {
+            if let Some(kind) = template.kind {
+                if self.rules.types.is_empty() || self.rules.types.contains(&kind) {
+                    applied.push("type");
+                    self.form.commit.kind = kind;
+                    self.form.type_touched = true;
+                }
             }
+            applied.push("scope");
+            self.form.commit.scope = template.scope.unwrap_or_default();
         }
-        applied.push("scope");
-        self.form.commit.scope = template.scope.unwrap_or_default();
         // Subject and body come from the commit, not from a rendered template:
         // the template carries the whole message, which used to land in the body
         // while the subject stayed empty.
         applied.push("subject");
         self.form.commit.subject = past.summary.clone();
-        applied.push("body");
-        self.form.commit.body = past.body.clone();
-        self.form.commit.breaking.clear();
+        if full {
+            applied.push("body");
+            self.form.commit.body = past.body.clone();
+            self.form.commit.breaking.clear();
+        }
 
         self.note(format!("{} reused: {}", past.short_id, applied.join(", ")));
         self.focus(
@@ -149,12 +152,14 @@ impl App {
                 .position(|f| *f == Field::Subject)
                 .unwrap_or(0),
         );
-        // The footer belongs to the work in progress, not to the reused commit:
-        // drop what was there (including its ticket reference) and seed from the
-        // branch again.
-        self.form.commit.footer.clear();
-        self.form.footer_seed = None;
-        self.seed_footer();
+        if full {
+            // The footer belongs to the work in progress, not to the reused
+            // commit: drop what was there (including its ticket reference) and
+            // seed from the branch again.
+            self.form.commit.footer.clear();
+            self.form.footer_seed = None;
+            self.seed_footer();
+        }
         self.revalidate();
     }
 
@@ -175,6 +180,9 @@ impl App {
         let previews = vec![String::new(); values.len()];
         self.picker = Some(Picker {
             kind,
+            // `open_picker` is what a field's suggestion list uses; a full reuse
+            // builds its own picker in `open_history_picker`.
+            full_reuse: false,
             items,
             values,
             selected,
@@ -183,7 +191,7 @@ impl App {
         });
     }
 
-    pub(crate) fn apply_picker_choice(&mut self, kind: PickerKind, choice: String) {
+    pub(crate) fn apply_picker_choice(&mut self, kind: PickerKind, choice: String, full: bool) {
         match kind {
             PickerKind::Type => {
                 self.form.commit.kind = choice;
@@ -206,7 +214,7 @@ impl App {
                 }
                 self.revalidate();
             }
-            PickerKind::History => self.apply_template(&choice),
+            PickerKind::History => self.apply_template(&choice, full),
         }
     }
 
@@ -234,7 +242,7 @@ impl App {
 
         match action {
             Some(PickerAction::Cancel) => self.picker = None,
-            Some(PickerAction::History) => self.open_history_picker(),
+            Some(PickerAction::History) => self.open_history_picker(true),
             Some(PickerAction::Confirm) => self.confirm_picker(),
             Some(PickerAction::Move(delta)) => {
                 if let Some(picker) = self.picker.as_mut() {
@@ -257,7 +265,8 @@ impl App {
             Some(PickerAction::Pick(value_idx)) => {
                 let picker = self.picker.take().expect("checked above");
                 if let Some(value) = picker.values.get(value_idx).cloned() {
-                    self.apply_picker_choice(picker.kind, value);
+                    let full = picker.full_reuse;
+                    self.apply_picker_choice(picker.kind, value, full);
                 }
             }
             None => {}
