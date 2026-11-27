@@ -130,7 +130,7 @@ impl Tab {
                 ("Tab, Shift+Tab", "always the next or previous field"),
                 ("↑ ↓", "through the lines of body, breaking, footer"),
                 ("Space, Ctrl+T", "type picker: 1-9 jumps, 0 takes the last"),
-                ("Ctrl+N", "scopes from config and history"),
+                ("Ctrl+N", "start a new, empty commit"),
                 ("Ctrl+P", "switch the type profile"),
                 ("Ctrl+R", "reuse a recent commit"),
                 ("Ctrl+K", "clear this field, the type stays"),

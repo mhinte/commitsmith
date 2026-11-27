@@ -6,6 +6,43 @@
 use super::*;
 
 impl App {
+    /// Put the branch's reference back when the footer was emptied.
+    ///
+    /// `seed_footer` only writes while the footer is empty or still holds an
+    /// earlier suggestion, so typed text is never overwritten — this only brings
+    /// the suggestion back after Ctrl+K or after deleting the last character.
+    fn reseed_empty_footer(&mut self) {
+        if self.form.commit.footer.trim().is_empty() {
+            self.form.footer_seed = None;
+            self.seed_footer();
+        }
+    }
+
+    /// Ctrl+N: start over with an empty message.
+    ///
+    /// Ctrl+N used to open the suggestions, which is what Ctrl+Space is for. The
+    /// type follows the branch again (as it does on a fresh start) and the footer
+    /// is seeded from the branch, so a new commit starts in the state the branch
+    /// implies instead of in the state of the last one.
+    pub(crate) fn start_new_commit(&mut self) {
+        let kind = self
+            .config
+            .types()
+            .first()
+            .map(|t| t.name.clone())
+            .unwrap_or_default();
+        self.form = Form {
+            compact: self.form.compact,
+            ..Form::with_kind(kind)
+        };
+        self.form.footer_seed = None;
+        self.apply_branch_type();
+        self.seed_footer();
+        self.focus(FIELDS.iter().position(|f| *f == Field::Type).unwrap_or(0));
+        self.revalidate();
+        self.status = "new commit · everything cleared".to_string();
+    }
+
     /// Ctrl+A: load the message of `HEAD`, so Ctrl+S can replace it.
     ///
     /// The raw message goes through the same parser the check uses, so type,
@@ -160,6 +197,9 @@ impl App {
         chars.remove(cursor - 1);
         *value = chars.into_iter().collect();
         self.form.cursors[self.form.field] = cursor - 1;
+        if field == Field::Footer {
+            self.reseed_empty_footer();
+        }
         self.revalidate();
     }
 
@@ -174,6 +214,9 @@ impl App {
         if cursor < chars.len() {
             chars.remove(cursor);
             *value = chars.into_iter().collect();
+            if field == Field::Footer {
+                self.reseed_empty_footer();
+            }
             self.revalidate();
         }
     }
@@ -192,6 +235,9 @@ impl App {
         }
         *self.value_mut(field) = String::new();
         self.form.cursors[self.form.field] = 0;
+        if field == Field::Footer {
+            self.reseed_empty_footer();
+        }
         self.revalidate();
         self.status = format!("cleared {}", field.label());
     }

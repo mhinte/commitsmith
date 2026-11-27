@@ -681,10 +681,10 @@ fn the_scope_reaches_the_message_while_typing() {
 }
 
 #[test]
-fn ctrl_n_offers_what_the_field_can_use() {
+fn ctrl_space_offers_what_the_field_can_use() {
     let mut app = App::with_config(Config::conventional(), Vec::new());
-    // Type field: Ctrl+N does not open the list, Enter does.
-    ctrl(&mut app, 'n');
+    // Type field: Ctrl+Space does not open the list, Enter does.
+    press_with(&mut app, KeyCode::Char(' '), KeyModifiers::CONTROL);
     assert!(app.picker.is_none(), "Ctrl+N stays away from the type list");
     assert!(app.status.contains("Enter"), "{}", app.status);
     press(&mut app, KeyCode::Enter);
@@ -694,7 +694,7 @@ fn ctrl_n_offers_what_the_field_can_use() {
     // Subject field: earlier commits, or a hint when there are none.
     press(&mut app, KeyCode::Tab);
     press(&mut app, KeyCode::Tab);
-    ctrl(&mut app, 'n');
+    press_with(&mut app, KeyCode::Char(' '), KeyModifiers::CONTROL);
     assert!(
         app.picker.is_some() || app.status.contains("no commits"),
         "{}",
@@ -704,7 +704,7 @@ fn ctrl_n_offers_what_the_field_can_use() {
 
     // Body: no list, but an explanation.
     press(&mut app, KeyCode::Tab);
-    ctrl(&mut app, 'n');
+    press_with(&mut app, KeyCode::Char(' '), KeyModifiers::CONTROL);
     assert!(app.picker.is_none(), "no list in the body");
     assert!(
         app.status.contains("no suggestions for body"),
@@ -824,15 +824,73 @@ fn picker_filter_narrows_the_list() {
 }
 
 #[test]
-fn ctrl_n_offers_scopes_from_history() {
+fn ctrl_n_starts_a_new_empty_commit() {
+    let git = RecordingGit::new(&["feat/mmu/TICKET-42/x"], "feat/mmu/TICKET-42/x");
+    let mut app = App::with_config(Config::conventional(), Vec::new());
+    app.set_in_repository(true);
+    app.set_git(Box::new(git));
+    // A commit in progress: every field filled.
+    app.form.commit.kind = "fix".to_string();
+    app.form.type_touched = true;
+    app.form.commit.scope = "ui".to_string();
+    app.form.commit.subject = "half written".to_string();
+    app.form.commit.body = "a body".to_string();
+    app.form.commit.breaking = "a break".to_string();
+    app.form.commit.footer = "Refs TICKET-1".to_string();
+
+    ctrl(&mut app, 'n');
+
+    assert_eq!(app.form.commit.scope, "");
+    assert_eq!(app.form.commit.subject, "");
+    assert_eq!(app.form.commit.body, "");
+    assert_eq!(app.form.commit.breaking, "");
+    assert_eq!(
+        app.form.commit.kind, "feat",
+        "the type follows the branch again"
+    );
+    assert_eq!(app.active_field(), Field::Type);
+    assert_eq!(
+        app.form.commit.footer, "Refs TICKET-42",
+        "the footer is seeded from the branch"
+    );
+    assert!(!app.form.amend);
+}
+
+#[test]
+fn a_cleared_footer_is_seeded_again() {
+    let git = RecordingGit::new(&["feat/mmu/TICKET-42/x"], "feat/mmu/TICKET-42/x");
+    let mut app = App::with_config(Config::conventional(), Vec::new());
+    app.set_in_repository(true);
+    app.set_git(Box::new(git));
+    app.form.commit.footer = "Refs TICKET-42".to_string();
+    app.form.footer_seed = Some("Refs TICKET-42".to_string());
+    app.focus(FIELDS.iter().position(|f| *f == Field::Footer).unwrap_or(0));
+
+    // Ctrl+K on the footer: the suggestion comes straight back.
+    ctrl(&mut app, 'k');
+    assert_eq!(app.form.commit.footer, "Refs TICKET-42");
+
+    // Typing is not overwritten: one backspace only shortens the text.
+    press(&mut app, KeyCode::Backspace);
+    assert_eq!(app.form.commit.footer, "Refs TICKET-4");
+
+    // Deleting all of it brings the suggestion straight back.
+    for _ in 0.."Refs TICKET-4".len() {
+        press(&mut app, KeyCode::Backspace);
+    }
+    assert_eq!(app.form.commit.footer, "Refs TICKET-42");
+}
+
+#[test]
+fn ctrl_space_offers_scopes_from_history() {
     let mut app = App::default();
     app.set_scopes(ScopeInfo {
         history: vec!["api".into(), "ui".into()],
         configured: Vec::new(),
     });
-    // Ctrl+N follows the keyboard: scopes belong to the scope field.
+    // Ctrl+Space follows the keyboard: scopes belong to the scope field.
     press(&mut app, KeyCode::Tab);
-    ctrl(&mut app, 'n');
+    press_with(&mut app, KeyCode::Char(' '), KeyModifiers::CONTROL);
     press(&mut app, KeyCode::Down);
     press(&mut app, KeyCode::Enter);
     assert_eq!(app.form.commit.scope, "ui");

@@ -1000,9 +1000,9 @@ impl App {
         self.active_field().hint()
     }
 
-    /// Ctrl+N asks the field that has the keyboard what it has to offer: types
-    /// in the type field, scopes in the scope field, earlier commits in the
-    /// subject. Anywhere else it says so instead of opening the wrong list.
+    /// Ctrl+Space asks the field that has the keyboard what it has to offer:
+    /// types in the type field, scopes in the scope field, earlier commits in
+    /// the subject. Anywhere else it says so instead of opening the wrong list.
     fn open_suggestions(&mut self) {
         match self.active_field() {
             Field::Type => {
@@ -1339,7 +1339,7 @@ impl App {
             KeyCode::Char(' ') if ctrl => self.open_suggestions(),
             KeyCode::Enter if ctrl => self.finish(),
             KeyCode::Char('k') if ctrl => self.clear_field(),
-            KeyCode::Char('n') if ctrl => self.open_suggestions(),
+            KeyCode::Char('n') if ctrl => self.start_new_commit(),
             KeyCode::Char('t') if ctrl => self.open_type_picker(),
             KeyCode::Char('p') if ctrl => self.open_profile_picker(),
             KeyCode::Char('r') if ctrl => self.open_history_picker(),
