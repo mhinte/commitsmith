@@ -298,3 +298,104 @@ fn unknown_command_fails_with_usage() {
         "{stderr}"
     );
 }
+
+#[test]
+fn the_hook_does_not_block_a_commit_when_the_binary_is_missing() {
+    // A colleague without commitsmith must not be locked out of committing. The
+    // hook looks for the binary and steps aside with one line.
+    let dir = repo("hook-missing-binary");
+    let home = dir.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let install = bin_with_home(&home)
+        .args(["hooks", "install"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(install.status.success(), "{install:?}");
+
+    let message = dir.join("msg.txt");
+    std::fs::write(&message, "feat:no space after the colon\n").unwrap();
+    // PATH without the binary, HOME without a config: nothing to find.
+    let hook = Command::new("sh")
+        .arg(dir.join(".git/hooks/commit-msg"))
+        .arg(&message)
+        .env("PATH", "/usr/bin:/bin")
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(
+        hook.status.success(),
+        "the commit must go through: {hook:?}"
+    );
+    let stderr = String::from_utf8_lossy(&hook.stderr);
+    assert!(stderr.contains("commitsmith not found"), "{stderr}");
+    assert_eq!(stderr.lines().count(), 1, "one line, no noise: {stderr}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_hook_blocks_a_bad_message_when_the_binary_is_there() {
+    let dir = repo("hook-with-binary");
+    let install = bin()
+        .args(["hooks", "install"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(install.status.success(), "{install:?}");
+
+    let message = dir.join("msg.txt");
+    std::fs::write(&message, "feat:no space after the colon\n").unwrap();
+    let binary = std::path::Path::new(env!("CARGO_BIN_EXE_commitsmith"));
+    let path = format!("{}:/usr/bin:/bin", binary.parent().unwrap().display());
+    let hook = Command::new("sh")
+        .arg(dir.join(".git/hooks/commit-msg"))
+        .arg(&message)
+        .env("PATH", &path)
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(
+        !hook.status.success(),
+        "a violation must still block: {hook:?}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_configured_binary_wins_over_the_path() {
+    // `git config commitsmith.binary` is the answer for an unusual install path
+    // (and for Windows, where the GUI PATH differs from the terminal's).
+    let dir = repo("hook-configured-binary");
+    let install = bin()
+        .args(["hooks", "install"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(install.status.success(), "{install:?}");
+    run(
+        &dir,
+        "git",
+        &[
+            "config",
+            "commitsmith.binary",
+            env!("CARGO_BIN_EXE_commitsmith"),
+        ],
+    );
+
+    let message = dir.join("msg.txt");
+    std::fs::write(&message, "feat:no space after the colon\n").unwrap();
+    // PATH without the binary: only the config can find it.
+    let hook = Command::new("sh")
+        .arg(dir.join(".git/hooks/commit-msg"))
+        .arg(&message)
+        .env("PATH", "/usr/bin:/bin")
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(
+        !hook.status.success(),
+        "the configured binary was used: {hook:?}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}

@@ -5,9 +5,45 @@ use std::process::Command;
 
 const MARKER: &str = "commitsmith";
 
+/// The hook itself.
+///
+/// It looks for the binary instead of assuming it is on `PATH`: a GUI client
+/// starts a hook with a different environment than a terminal, and a missing
+/// binary used to abort the commit with "command not found". A colleague who has
+/// no commitsmith installed gets one line and their commit, never a broken
+/// workflow — the hook is a convenience, not a gate.
 const SCRIPT: &str = "#!/bin/sh
 # commitsmith commit-msg hook - checks the message before git records it.
-exec commitsmith check --file \"$1\"
+# Looks for the binary first; if it is missing, the commit goes through.
+hint='commitsmith not found - the message was not checked (git config commitsmith.binary <path>)'
+
+from_config() {
+    git config --get commitsmith.binary 2>/dev/null
+}
+
+usable() {
+    [ -n \"$1\" ] && [ -x \"$1\" ]
+}
+
+binary=$(from_config)
+if ! usable \"$binary\"; then
+    binary=$(command -v commitsmith 2>/dev/null)
+fi
+if ! usable \"$binary\"; then
+    for candidate in \"$HOME/.local/bin/commitsmith\" \"$HOME/.cargo/bin/commitsmith\" \"$LOCALAPPDATA/Programs/commitsmith/commitsmith.exe\"; do
+        if usable \"$candidate\"; then
+            binary=$candidate
+            break
+        fi
+    done
+fi
+
+if ! usable \"$binary\"; then
+    echo \"$hint\" >&2
+    exit 0
+fi
+
+exec \"$binary\" check --file \"$1\"
 ";
 
 /// Where git puts hooks for the current repository (works for worktrees and
