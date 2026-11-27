@@ -113,7 +113,7 @@ pub fn validate_with(commit: &Commit, rules: &Rules) -> Vec<Issue> {
 
     let kind = commit.kind.trim();
     if kind.is_empty() {
-        issues.push(Issue::error("type", "choose a commit type"));
+        issues.push(Issue::error("type", "pick a type, e.g. feat or fix"));
     } else if !rules.types.is_empty() && !rules.types.contains(kind) {
         issues.push(Issue::error(
             "type",
@@ -126,68 +126,71 @@ pub fn validate_with(commit: &Commit, rules: &Rules) -> Vec<Issue> {
 
     let scope = commit.scope.trim();
     if scope.contains(char::is_whitespace) {
-        issues.push(Issue::warning(
-            "scope",
-            "scope should be one word, e.g. `api` or `parser`",
-        ));
+        issues.push(Issue::warning("scope", "one word, no spaces (e.g. `api`)"));
     }
     if scope.chars().any(char::is_uppercase) {
-        issues.push(Issue::warning("scope", "write the scope in lower case"));
+        issues.push(Issue::warning(
+            "scope",
+            "lower case (e.g. `api`, not `API`)",
+        ));
     }
     if commit.scope.contains('(') || commit.scope.contains(')') {
-        issues.push(Issue::error("scope", "scope must not contain parentheses"));
+        issues.push(Issue::error(
+            "scope",
+            "no parentheses here, they belong to the header",
+        ));
     }
 
     let subject = commit.subject.trim();
     let subject_len = subject.chars().count();
     if subject.is_empty() {
-        issues.push(Issue::error("subject", "the subject must not be empty"));
+        issues.push(Issue::error(
+            "subject",
+            "empty: say what changes, in one line",
+        ));
     } else {
         if subject_len > MAX_SUBJECT {
             issues.push(Issue::error(
                 "subject",
-                format!("subject is {subject_len} characters, the limit is {MAX_SUBJECT}"),
+                format!("{subject_len} characters, {MAX_SUBJECT} is the limit"),
             ));
         } else if subject_len > RECOMMENDED_SUBJECT {
             issues.push(Issue::warning(
                 "subject",
-                format!("subject is {subject_len} characters, {RECOMMENDED_SUBJECT} reads better"),
+                format!("{subject_len} characters, {RECOMMENDED_SUBJECT} reads better"),
             ));
         }
         if subject.ends_with('.') {
-            issues.push(Issue::warning("subject", "drop the trailing period"));
+            issues.push(Issue::warning("subject", "no period at the end"));
         }
         if subject.chars().next().is_some_and(char::is_uppercase) {
             issues.push(Issue::warning(
                 "subject",
-                "start the subject in lower case, the type already sets the tone",
+                "lower case: the type already sets the tone",
             ));
         }
         if let Some(verb) = past_tense_verb(subject) {
             issues.push(Issue::warning(
                 "subject",
-                format!(
-                    "use imperative mood: `{}` instead of `{verb}`",
-                    imperative(verb)
-                ),
+                format!("imperative: `{}`, not `{verb}`", imperative(verb)),
             ));
         }
         if subject.contains("  ") {
-            issues.push(Issue::warning("subject", "collapse repeated spaces"));
+            issues.push(Issue::warning("subject", "one space between words"));
         }
     }
 
     if commit.is_breaking() && commit.breaking.chars().count() < 10 {
         issues.push(Issue::warning(
             "breaking",
-            "explain what breaks and what to do instead",
+            "say what breaks and what to use instead",
         ));
     }
 
     if !has_errors(&issues) && commit.body.trim().is_empty() && commit.footer.trim().is_empty() {
         issues.push(Issue::info(
             "body",
-            "optional: one body line explaining the why helps reviewers",
+            "optional: one line on the why helps reviewers",
         ));
     }
 
@@ -197,7 +200,7 @@ pub fn validate_with(commit: &Commit, rules: &Rules) -> Vec<Issue> {
             if len > 100 {
                 issues.push(Issue::warning(
                     field,
-                    format!("line {} is {len} characters, keep lines under 100", idx + 1),
+                    format!("line {} is {len} characters, 100 is the limit", idx + 1),
                 ));
             }
         }
@@ -325,7 +328,7 @@ mod tests {
         assert!(
             issues
                 .iter()
-                .any(|issue| issue.message.contains("imperative mood")),
+                .any(|issue| issue.message.contains("imperative:")),
             "{issues:?}"
         );
     }
