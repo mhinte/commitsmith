@@ -68,7 +68,7 @@ impl Tab {
                 ("C-s", if commit_mode { "commit" } else { "message" }),
                 ("S", "setup"),
                 ("Space", "type"),
-                ("C-n", "scope"),
+                ("C-Space", "suggest"),
                 ("C-p", "profile"),
                 ("C-r", "reuse"),
                 ("A-p", "pull"),
@@ -342,7 +342,7 @@ mod tests {
         assert!(commit.iter().any(|(key, _)| *key == "C-s"));
         assert!(!commit.iter().any(|(key, _)| *key == "merge"));
         // The composer hints from 0.4.0 must not get lost in the tab rewrite.
-        for key in ["Space", "C-n", "C-p", "C-r"] {
+        for key in ["Space", "C-Space", "C-p", "C-r"] {
             assert!(
                 commit.iter().any(|(candidate, _)| *candidate == key),
                 "{key}"

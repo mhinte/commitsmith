@@ -85,7 +85,7 @@ impl Field {
     pub fn hint(self) -> &'static str {
         match self {
             Field::Type => "←/→ switch · Space pick",
-            Field::Scope => "optional · C-n suggestions",
+            Field::Scope => "optional · C-Space suggestions",
             Field::Subject => "imperative, no period",
             Field::Body => "why and what, optional",
             Field::Breaking => "what breaks, optional",
@@ -1000,7 +1000,7 @@ impl App {
             Field::Subject => self.open_history_picker(),
             Field::Body | Field::Breaking | Field::Footer => {
                 self.status = format!(
-                    "no suggestions for {} · Ctrl+N offers types, scopes and earlier subjects",
+                    "no suggestions for {} · Ctrl+Space offers types, scopes and earlier subjects",
                     self.active_field().label()
                 );
             }
