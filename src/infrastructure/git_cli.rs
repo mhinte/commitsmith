@@ -4,8 +4,8 @@
 //! `push` eventually corrupts a repository. Reads reuse [`GixRepo`], so listing
 //! does not spawn a process.
 
+use crate::infrastructure::process;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::domain::errors::GitError;
 use crate::domain::history::{PastCommit, ScopeInfo};
@@ -25,12 +25,7 @@ impl GitBackend {
     pub fn open(path: &Path) -> Result<Self, GitError> {
         let reader = GixRepo::open(path)?;
         let workdir = reader.workdir().to_path_buf();
-        let has_head = Command::new("git")
-            .current_dir(&workdir)
-            .args(["rev-parse", "--verify", "HEAD"])
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false);
+        let has_head = process::succeeds(&workdir, &["rev-parse", "--verify", "HEAD"]);
         Ok(Self {
             reader,
             workdir,
@@ -44,21 +39,7 @@ impl GitBackend {
 
     /// Run `git` and hand back stdout, or a [`GitError`] carrying stderr.
     fn git(&self, args: &[&str]) -> Result<String, GitError> {
-        let output = Command::new("git")
-            .current_dir(&self.workdir)
-            .args(args)
-            .output()
-            .map_err(|error| GitError::io(format!("git {}", args.first().unwrap_or(&"")), error))?;
-        if output.status.success() {
-            // One copy: `from_utf8_lossy(..).to_string()` allocates twice, and a
-            // diff of a large file goes through here.
-            return Ok(match String::from_utf8(output.stdout) {
-                Ok(text) => text,
-                Err(error) => String::from_utf8_lossy(error.as_bytes()).to_string(),
-            });
-        }
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Err(classify(args, &stderr, &self.workdir))
+        process::git(&self.workdir, args)
     }
 }
 
@@ -175,7 +156,7 @@ fn parse_branch_overview(output: &str) -> BranchOverview {
     BranchOverview { branches, sync }
 }
 
-fn classify(args: &[&str], stderr: &str, workdir: &Path) -> GitError {
+pub(crate) fn classify(args: &[&str], stderr: &str, workdir: &Path) -> GitError {
     let operation = args.join(" ");
     let lower = stderr.to_lowercase();
     if lower.contains("not fully merged") || lower.contains("unmerged") {
@@ -307,13 +288,8 @@ impl GitRepository for GitBackend {
     /// to be undone.
     fn reword_header(&self, target: &str, header: &str) -> Result<(), GitError> {
         let git_path = |name: &str| -> Option<PathBuf> {
-            let out = Command::new("git")
-                .current_dir(&self.workdir)
-                .args(["rev-parse", "--git-path", name])
-                .output()
-                .ok()?;
-            let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            Some(self.workdir.join(text))
+            let text = process::git(&self.workdir, &["rev-parse", "--git-path", name]).ok()?;
+            Some(self.workdir.join(text.trim()))
         };
         for busy in ["rebase-merge", "rebase-apply", "MERGE_HEAD"] {
             if git_path(busy).is_some_and(|path| path.exists()) {
@@ -356,25 +332,24 @@ impl GitRepository for GitBackend {
             .and_then(|()| std::fs::write(&msg, format!("{}\n", message.trim_end())))
             .map_err(|error| GitError::io("reword templates".to_string(), error))?;
 
-        let output = Command::new("git")
-            .current_dir(&self.workdir)
-            // Uncommitted work is normal while fixing a typo; without
-            // --autostash git refuses with "You have unstaged changes".
-            .args(["rebase", "-i", "--autostash", parent.as_str()])
-            .env("GIT_SEQUENCE_EDITOR", format!("cp {}", todo.display()))
-            .env("GIT_EDITOR", format!("cp {}", msg.display()))
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .output()
-            .map_err(|error| GitError::io("git rebase".to_string(), error))?;
+        let sequence_editor = format!("cp {}", todo.display());
+        let message_editor = format!("cp {}", msg.display());
+        let output = process::run(
+            Some(&self.workdir),
+            // Uncommitted work is normal while fixing a typo; without --autostash git
+            // refuses with "You have unstaged changes".
+            &["rebase", "-i", "--autostash", parent.as_str()],
+            &[
+                ("GIT_SEQUENCE_EDITOR", &sequence_editor),
+                ("GIT_EDITOR", &message_editor),
+            ],
+        )?;
         let _ = std::fs::remove_dir_all(&dir);
         if output.status.success() {
             return Ok(());
         }
         // Never leave a half-finished rebase behind.
-        let _ = Command::new("git")
-            .current_dir(&self.workdir)
-            .args(["rebase", "--abort"])
-            .output();
+        let _ = process::run(Some(&self.workdir), &["rebase", "--abort"], &[]);
         // The first error line is what fits in the status line; git's advice
         // lines ("hint: ...") follow it.
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -552,14 +527,12 @@ pub fn install_alias_in(
 ) -> Result<(), GitError> {
     let key = format!("alias.{name}");
     let value = shell_command(binary);
-    let mut command = Command::new("git");
-    command.args(["config", "--global", &key, &value]);
-    if let Some(path) = global_config {
-        command.env("GIT_CONFIG_GLOBAL", path);
-    }
-    let output = command
-        .output()
-        .map_err(|error| GitError::io("git config --global", error))?;
+    let config_path = global_config.map(|path| path.display().to_string());
+    let env: Vec<(&str, &str)> = match config_path.as_deref() {
+        Some(path) => vec![("GIT_CONFIG_GLOBAL", path)],
+        None => Vec::new(),
+    };
+    let output = process::run(None, &["config", "--global", &key, &value], &env)?;
     if output.status.success() {
         Ok(())
     } else {
@@ -597,8 +570,10 @@ fn short_id(output: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::domain::ports::FileState;
+    use std::process::Command;
     #[test]
     fn a_branch_created_outside_the_program_is_head_at_once() {
         let (dir, repo) = temp_repo("fresh-head");

@@ -10,4 +10,5 @@ pub mod config_toml;
 pub mod diagnostics;
 pub mod git_cli;
 pub mod gix_repo;
+pub mod process;
 pub mod update;

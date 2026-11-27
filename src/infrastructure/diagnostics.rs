@@ -124,7 +124,7 @@ pub fn doctor(start: &Path) -> String {
     let _ = writeln!(
         out,
         "git:         {}",
-        match std::process::Command::new("git").arg("--version").output() {
+        match super::process::run(None, &["--version"], &[]) {
             Ok(output) if output.status.success() => {
                 String::from_utf8_lossy(&output.stdout).trim().to_string()
             }

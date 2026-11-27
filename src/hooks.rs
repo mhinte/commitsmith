@@ -1,7 +1,8 @@
 //! `commitsmith hooks` — install and remove the commit-msg hook.
 
 use std::path::PathBuf;
-use std::process::Command;
+
+use commitsmith::infrastructure::process;
 
 /// The line that makes a hook ours. The bare word "commitsmith" was not enough:
 /// a hand-written hook that calls `commitsmith check` counted as ours and was
@@ -166,14 +167,8 @@ exit 0
 /// Where git puts hooks for the current repository (works for worktrees and
 /// for repositories with `core.hooksPath` set).
 fn hooks_dir() -> Result<PathBuf, String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--git-path", "hooks"])
-        .output()
-        .map_err(|error| format!("cannot run git: {error}"))?;
-    if !output.status.success() {
-        return Err("not inside a git repository".to_string());
-    }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let path = process::here(&["rev-parse", "--git-path", "hooks"])
+        .ok_or_else(|| "not inside a git repository".to_string())?;
     Ok(PathBuf::from(path))
 }
 
@@ -188,10 +183,8 @@ fn remember_binary() {
     let Ok(binary) = std::env::current_exe() else {
         return;
     };
-    let _ = Command::new("git")
-        .args(["config", "commitsmith.binary"])
-        .arg(binary)
-        .output();
+    let path = binary.display().to_string();
+    let _ = process::here(&["config", "commitsmith.binary", &path]);
 }
 
 /// Hook managers that rebuild their hook directory on every install. A hook we

@@ -145,3 +145,37 @@ fn the_repository_is_discovered_once_not_per_lookup() {
         "discovery outside the adapter: {offenders:?}"
     );
 }
+
+#[test]
+fn git_is_started_in_one_place_only() {
+    // 35 call sites, each with its own environment and error mapping: a change that
+    // had to reach all of them (a timeout, an env var) was made in the wrong number
+    // of places more than once. `infrastructure/process.rs` is the one place now.
+    // Test sections are skipped on purpose — a test that builds a throwaway repo may
+    // start git itself.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut offenders = Vec::new();
+    for path in sources(&root) {
+        if path.file_name().is_some_and(|name| name == "process.rs") {
+            continue;
+        }
+        let text = fs::read_to_string(&path).unwrap_or_default();
+        let production = text
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        for (number, line) in production.lines().enumerate() {
+            if line.trim().starts_with("//") {
+                continue;
+            }
+            if line.contains("Command::new(\"git\")") {
+                offenders.push(format!("{}:{}", path.display(), number + 1));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "git is started outside infrastructure/process.rs: {offenders:?}"
+    );
+}
