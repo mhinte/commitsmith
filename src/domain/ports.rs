@@ -174,6 +174,24 @@ pub trait GitRepository {
         Ok(None)
     }
 
+    /// The commits that are local only (`@{upstream}..HEAD`), newest first.
+    /// An empty list means "everything is published" — or no upstream at all.
+    fn local_commits(&self) -> Result<Vec<String>, GitError> {
+        Ok(Vec::new())
+    }
+
+    /// Rewrite the message of one local commit, keeping its tree, its position
+    /// and every commit after it.
+    ///
+    /// Only commits that are not published may be rewritten; the check happens
+    /// in the application (`local_commits`), the adapter trusts its caller.
+    fn reword(&self, target: &str, message: &str) -> Result<(), GitError> {
+        let _ = (target, message);
+        Err(GitError::invalid_state(
+            "rewriting history is not supported here",
+        ))
+    }
+
     /// Files a commit touched, as `M src/app.rs` lines. Read for one commit at a
     /// time, when someone looks at it: doing this for the whole history is what
     /// made the start in a long repository slow.

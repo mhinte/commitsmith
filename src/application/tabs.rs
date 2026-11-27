@@ -105,6 +105,7 @@ impl Tab {
                 ("e", "export notes"),
                 ("b", "window"),
                 ("c", "clear filter"),
+                ("E", "edit message"),
             ],
         };
         keys.push(("1-3", "tabs"));
@@ -176,6 +177,10 @@ impl Tab {
                 (
                     "e",
                     "export the section as RELEASE-NOTES-<window>.md, e.g. RELEASE-NOTES-branch-main.md",
+                ),
+                (
+                    "E",
+                    "rewrite the message of a local commit (published ones cannot be changed)",
                 ),
             ],
         }

@@ -282,6 +282,88 @@ impl GitRepository for GitBackend {
         short_id(&output).ok_or_else(|| GitError::invalid_state("git printed no commit id"))
     }
 
+    fn local_commits(&self) -> Result<Vec<String>, GitError> {
+        match self.git(&["rev-list", "@{upstream}..HEAD"]) {
+            Ok(out) => Ok(out
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(str::to_string)
+                .collect()),
+            // No upstream is not an error: nothing is published, so everything
+            // local could be rewritten. Say "nothing known" instead.
+            Err(GitError::InvalidState { .. }) => Ok(Vec::new()),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Rewrite one local commit message with a scripted `rebase -i`.
+    ///
+    /// Measured on git 2.47: the sequence editor gets the todo file as an
+    /// argument, the message editor gets the message file — so `cp <template>`
+    /// is the whole editor. Two traps the tests pin: the todo lists only the
+    /// commits *after* the parent (including the parent fails with "Could not
+    /// apply"), and a failing `commit-msg` hook aborts the rebase, which then has
+    /// to be undone.
+    fn reword(&self, target: &str, message: &str) -> Result<(), GitError> {
+        let git_path = |name: &str| -> Option<PathBuf> {
+            let out = Command::new("git")
+                .current_dir(&self.workdir)
+                .args(["rev-parse", "--git-path", name])
+                .output()
+                .ok()?;
+            let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            Some(self.workdir.join(text))
+        };
+        for busy in ["rebase-merge", "rebase-apply", "MERGE_HEAD"] {
+            if git_path(busy).is_some_and(|path| path.exists()) {
+                return Err(GitError::invalid_state(format!(
+                    "a {busy} is in progress · finish or abort it first"
+                )));
+            }
+        }
+        let parent = self
+            .git(&["rev-parse", format!("{target}^").as_str()])?
+            .trim()
+            .to_string();
+        let descendants =
+            self.git(&["rev-list", "--reverse", format!("{target}..HEAD").as_str()])?;
+
+        let dir = std::env::temp_dir().join(format!("commitsmith-reword-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| GitError::io(format!("reword dir {}", dir.display()), error))?;
+        let todo = dir.join("todo");
+        let msg = dir.join("message");
+        let mut todo_text = format!("reword {target}\n");
+        for descendant in descendants.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            todo_text.push_str(&format!("pick {descendant}\n"));
+        }
+        std::fs::write(&todo, todo_text)
+            .and_then(|()| std::fs::write(&msg, format!("{}\n", message.trim_end())))
+            .map_err(|error| GitError::io("reword templates".to_string(), error))?;
+
+        let output = Command::new("git")
+            .current_dir(&self.workdir)
+            .args(["rebase", "-i", parent.as_str()])
+            .env("GIT_SEQUENCE_EDITOR", format!("cp {}", todo.display()))
+            .env("GIT_EDITOR", format!("cp {}", msg.display()))
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .map_err(|error| GitError::io("git rebase".to_string(), error))?;
+        let _ = std::fs::remove_dir_all(&dir);
+        if output.status.success() {
+            return Ok(());
+        }
+        // Never leave a half-finished rebase behind.
+        let _ = Command::new("git")
+            .current_dir(&self.workdir)
+            .args(["rebase", "--abort"])
+            .output();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(GitError::invalid_state(format!("reword failed: {stderr}")))
+    }
+
     /// `git show --name-status` for one commit. Through the shared `git` helper,
     /// so a failure is classified and reported instead of silently yielding an
     /// empty list.
@@ -659,6 +741,56 @@ mod tests {
             repo.unstage(&file.path)
                 .unwrap_or_else(|error| panic!("unstage {name}: {error}"));
         }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_local_commit_message_can_be_rewritten() {
+        // The measured recipe: a scripted `rebase -i` with a prepared todo and a
+        // prepared message, trees untouched, order untouched.
+        let (dir, repo) = temp_repo("reword");
+        let git = |args: &[&str]| -> String {
+            let out = Command::new("git")
+                .current_dir(&dir)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        git(&["add", "a.txt"]);
+        git(&["commit", "-q", "-m", "chore: base"]);
+        for i in 1..=3 {
+            std::fs::write(dir.join(format!("f{i}.txt")), i.to_string()).unwrap();
+            git(&["add", "."]);
+            git(&["commit", "-q", "-m", &format!("feat: change {i}")]);
+        }
+        let target = git(&["rev-parse", "HEAD~1"]);
+        let tree_before = git(&["rev-parse", &format!("{target}^{{tree}}")]);
+        let head_tree_before = git(&["rev-parse", "HEAD^{tree}"]);
+        let head_before = git(&["rev-parse", "HEAD"]);
+
+        repo.reword(&target, "feat: change 2, reworded").unwrap();
+
+        assert_eq!(
+            git(&["log", "-1", "--skip=1", "--format=%s"]),
+            "feat: change 2, reworded"
+        );
+        assert_eq!(
+            git(&["log", "-1", "--skip=1", "--format=%s"]),
+            "feat: change 2, reworded"
+        );
+        // The tree of the rewritten commit and of the one after it are unchanged.
+        assert_eq!(git(&["rev-parse", "HEAD~1^{tree}"]), tree_before);
+        assert_eq!(git(&["rev-parse", "HEAD^{tree}"]), head_tree_before);
+        // Only the message changed, so the tip is a new commit.
+        assert_ne!(git(&["rev-parse", "HEAD"]), head_before);
+        assert_eq!(git(&["rev-list", "--count", "HEAD"]), "4", "nothing lost");
+        assert_eq!(git(&["status", "--porcelain"]), "", "clean afterwards");
         let _ = std::fs::remove_dir_all(dir);
     }
 

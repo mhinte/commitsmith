@@ -26,6 +26,28 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_list(frame: &mut Frame, app: &App, area: Rect, matches: usize) {
+    // While a message is being rewritten the line replaces the title: it is the
+    // only thing the keys act on.
+    if let Some(reword) = &app.release.reword {
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(theme::focused_panel())
+            .title(Line::from(Span::styled(
+                format!(" reword {} ", reword.short_id),
+                theme::focused_panel(),
+            )));
+        let mut lines: Vec<Line> = Vec::new();
+        for row in crate::ui::form::wrap_field(&reword.text, area.width.saturating_sub(4) as usize)
+            .into_iter()
+            .take(area.height.saturating_sub(3) as usize)
+        {
+            lines.push(Line::styled(format!(" {row}"), HINT));
+        }
+        lines.push(Line::styled(" Enter writes · Esc cancels", MUTED));
+        frame.render_widget(Paragraph::new(Text::from(lines)).block(block), area);
+        return;
+    }
+
     // How many commits are local only: the same number the footer shows, read
     // from the sync pair the branch list already loaded — no extra git call.
     let local = app.repo.sync.map(|(ahead, _)| ahead).unwrap_or(0);

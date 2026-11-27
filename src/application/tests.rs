@@ -630,6 +630,74 @@ fn the_sync_keys_belong_to_the_first_tab() {
 }
 
 #[test]
+fn only_local_commits_can_be_reworded() {
+    // Newest first, as the log shows them: the local one on top.
+    let mut git = RecordingGit::new(&["main"], "main");
+    git.local = vec!["bbbb222".to_string()];
+    let log = git.calls();
+    let mut app = App::with_config(Config::conventional(), Vec::new());
+    app.tab = tabs::Tab::History;
+    app.set_in_repository(true);
+    app.set_git(Box::new(git));
+    app.set_history(vec![
+        past("bbbb222", "fix", None, "local work", ""),
+        past("aaaa111", "feat", None, "published work", ""),
+    ]);
+    app.release.log.selected = 0;
+
+    // The local commit opens for editing with its message in the line.
+    press(&mut app, KeyCode::Char('E'));
+    let reword = app.release.reword.clone().expect("an open reword");
+    assert_eq!(reword.target, "bbbb222");
+    assert_eq!(reword.text, "local work");
+
+    // Esc leaves everything as it was.
+    press(&mut app, KeyCode::Esc);
+    assert!(app.release.reword.is_none());
+    assert!(
+        !log.borrow().iter().any(|call| call.starts_with("reword ")),
+        "no rewrite after cancelling: {:?}",
+        log.borrow()
+    );
+
+    // The published one is refused with a reason.
+    app.release.log.selected = 1;
+    press(&mut app, KeyCode::Char('E'));
+    assert!(app.release.reword.is_none());
+    assert!(app.status.contains("already published"), "{}", app.status);
+}
+
+#[test]
+fn a_written_reword_is_handed_to_the_repository() {
+    let mut git = RecordingGit::new(&["main"], "main");
+    git.local = vec!["bbbb222".to_string()];
+    let log = git.calls();
+    let mut app = App::with_config(Config::conventional(), Vec::new());
+    app.tab = tabs::Tab::History;
+    app.set_in_repository(true);
+    app.set_git(Box::new(git));
+    app.set_history(vec![past("bbbb222", "fix", None, "local wrok", "")]);
+
+    press(&mut app, KeyCode::Char('E'));
+    // Fix the typo: clear the line and type the correct subject.
+    for _ in 0.."local wrok".len() {
+        press(&mut app, KeyCode::Backspace);
+    }
+    type_text(&mut app, "local work");
+    press(&mut app, KeyCode::Enter);
+
+    assert!(app.release.reword.is_none(), "the line closes");
+    assert!(
+        log.borrow()
+            .iter()
+            .any(|call| call == "reword bbbb222 local work"),
+        "{:?}",
+        log.borrow()
+    );
+    assert!(app.status.contains("rewrote"), "{}", app.status);
+}
+
+#[test]
 fn a_note_disappears_on_the_next_keypress() {
     // The message after `b` used to sit in the footer until some unrelated
     // action overwrote it.

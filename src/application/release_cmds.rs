@@ -76,6 +76,26 @@ impl App {
             self.should_quit = true;
             return;
         }
+        // Rewording a local commit: the line takes typing until Enter or Esc.
+        if self.release.reword.is_some() {
+            match key.code {
+                KeyCode::Enter => self.apply_reword(),
+                KeyCode::Backspace => {
+                    if let Some(reword) = self.release.reword.as_mut() {
+                        if reword.text.pop().is_none() {
+                            self.note("the message must not be empty");
+                        }
+                    }
+                }
+                KeyCode::Char(c) if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) => {
+                    if let Some(reword) = self.release.reword.as_mut() {
+                        reword.text.push(c);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
         if self.release.log.input.is_some() {
             match key.code {
                 KeyCode::Enter => {
@@ -124,7 +144,81 @@ impl App {
             // `e` writes the section to a file: a TUI list cannot be selected
             // with the mouse, and the text is what people paste into a release.
             KeyCode::Char('e') => self.export_plan(),
+            // `E` rewrites the message of a commit that is not published yet.
+            KeyCode::Char('E') => self.start_reword(),
             _ => {}
+        }
+    }
+
+    /// `E`: open the message of the selected commit for editing, if it is local.
+    pub(crate) fn start_reword(&mut self) {
+        let Some(commit) = self
+            .release
+            .log
+            .visible(&self.history.commits)
+            .get(self.release.log.selected)
+            .copied()
+            .cloned()
+        else {
+            self.note("nothing selected");
+            return;
+        };
+        let Some(git) = self.repo.git.as_deref() else {
+            self.problem("not a git repository · nothing to rewrite");
+            return;
+        };
+        match git.local_commits() {
+            Ok(local) if local.contains(&commit.id) => {
+                self.release.reword = Some(release_view::Reword {
+                    target: commit.id.clone(),
+                    short_id: commit.short_id.clone(),
+                    text: commit.summary.clone(),
+                });
+                self.note(format!(
+                    "rewording {} · Enter writes it, Esc cancels",
+                    commit.short_id
+                ));
+            }
+            Ok(_) => self.problem(format!(
+                "{} is already published · only local commits can be rewritten",
+                commit.short_id
+            )),
+            Err(error) => self.problem(error.to_string()),
+        }
+    }
+
+    /// Write the edited message and tell git to replace that commit.
+    fn apply_reword(&mut self) {
+        let Some(reword) = self.release.reword.clone() else {
+            return;
+        };
+        if reword.text.trim().is_empty() {
+            self.problem("the message must not be empty");
+            return;
+        }
+        let depth = self.config.history_depth;
+        let result = {
+            let Some(git) = self.repo.git.as_deref() else {
+                return;
+            };
+            match git.reword(&reword.target, &reword.text) {
+                // The ids changed: the history has to be read again, or the log
+                // shows commits that no longer exist under those ids.
+                Ok(()) => git.recent_commits(depth).map_err(|error| error.to_string()),
+                Err(error) => Err(error.to_string()),
+            }
+        };
+        match result {
+            Ok(commits) => {
+                self.release.reword = None;
+                self.set_history(commits);
+                self.refresh_plan();
+                self.note(format!(
+                    "rewrote {} · the commits after it moved",
+                    reword.short_id
+                ));
+            }
+            Err(message) => self.problem(message),
         }
     }
 

@@ -34,6 +34,8 @@ pub struct RecordingGit {
     pub file_lists: std::collections::HashMap<String, Vec<String>>,
     /// What `head_message` answers: the raw message of `HEAD`, if any.
     pub head: RefCell<Option<String>>,
+    /// Which commits `local_commits` reports as unpublished.
+    pub local: Vec<String>,
 }
 
 impl RecordingGit {
@@ -56,6 +58,7 @@ impl RecordingGit {
             files: RefCell::new(Vec::new()),
             file_lists: std::collections::HashMap::new(),
             head: RefCell::new(None),
+            local: Vec::new(),
         }
     }
 
@@ -78,6 +81,18 @@ impl GitRepository for RecordingGit {
 
     fn branches(&self) -> Result<Vec<BranchInfo>, GitError> {
         Ok(self.branches.borrow().clone())
+    }
+
+    fn local_commits(&self) -> Result<Vec<String>, GitError> {
+        self.calls.borrow_mut().push("local_commits".to_string());
+        Ok(self.local.clone())
+    }
+
+    fn reword(&self, target: &str, message: &str) -> Result<(), GitError> {
+        self.calls
+            .borrow_mut()
+            .push(format!("reword {target} {message}"));
+        Ok(())
     }
 
     fn head_message(&self) -> Result<Option<String>, GitError> {

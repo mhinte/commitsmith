@@ -1256,6 +1256,11 @@ impl App {
             self.note("cancelled");
             return true;
         }
+        // A message being rewritten in place is a text line on top of tab 3.
+        if self.release.reword.take().is_some() {
+            self.note("reword cancelled · history untouched");
+            return true;
+        }
         if self.branches.wizard.open {
             self.branches.wizard.close();
             return true;

@@ -51,4 +51,14 @@ pub struct Release {
     pub changelog_root: Option<std::path::PathBuf>,
     /// Which commits the plan counts.
     pub basis: Basis,
+    /// `Some` while one local commit message is being edited in place.
+    pub reword: Option<Reword>,
+}
+
+/// The message being rewritten, and which commit it belongs to.
+#[derive(Debug, Clone)]
+pub struct Reword {
+    pub target: String,
+    pub short_id: String,
+    pub text: String,
 }
