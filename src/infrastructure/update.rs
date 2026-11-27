@@ -227,21 +227,26 @@ fn sibling(path: &Path, suffix: &str) -> PathBuf {
 
 /// Start the detached helper that finishes a busy update.
 fn spawn_finisher(staged: &Path, target: &Path) -> Result<(), String> {
-    // Only `sh` and `cp` are used: both are always there, and the loop is bounded
-    // so a stuck lock leaves the staged file in place instead of a stray process
-    // forever.
+    // Copy to a temporary name and rename it into place: a rename is atomic, so
+    // nobody ever executes a half-written binary, and unlike writing into the
+    // file in place it does not fail with `ETXTBSY` while the file runs.
+    let temp = sibling(target, "tmp");
     let script = format!(
         "i=0\n\
          while [ $i -lt 60 ]; do\n\
-         \tif cp \"{staged}\" \"{target}\" 2>/dev/null; then\n\
-         \t\trm -f \"{staged}\"\n\
-         \t\texit 0\n\
+         \tif cp \"{staged}\" \"{temp}\" 2>/dev/null; then\n\
+         \t\tif mv -f \"{temp}\" \"{target}\" 2>/dev/null; then\n\
+         \t\t\trm -f \"{staged}\"\n\
+         \t\t\texit 0\n\
+         \t\tfi\n\
          \tfi\n\
          \ti=$((i+1))\n\
          \tsleep 1\n\
          done\n\
+         rm -f \"{temp}\"\n\
          exit 1\n",
         staged = staged.display(),
+        temp = temp.display(),
         target = target.display()
     );
     Command::new("sh")
