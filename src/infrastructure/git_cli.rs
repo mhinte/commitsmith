@@ -264,6 +264,24 @@ impl GitRepository for GitBackend {
         self.reader.commits_before(sha, limit)
     }
 
+    /// `git log -1 --format=%B` — the message as it was recorded, footers and all,
+    /// so amending it cannot silently drop a `BREAKING CHANGE:` line.
+    fn head_message(&self) -> Result<Option<String>, GitError> {
+        match self.git(&["log", "-1", "--format=%B"]) {
+            Ok(text) if !text.trim().is_empty() => Ok(Some(text)),
+            // A repository without a commit has nothing to amend.
+            Ok(_) | Err(GitError::InvalidState { .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Replace the message of the last commit. The tree is untouched, so this is
+    /// only about words — `--only` would silently drop staged files.
+    fn amend(&self, message: &str) -> Result<String, GitError> {
+        let output = self.git(&["commit", "--amend", "-m", message])?;
+        short_id(&output).ok_or_else(|| GitError::invalid_state("git printed no commit id"))
+    }
+
     /// `git show --name-status` for one commit. Through the shared `git` helper,
     /// so a failure is classified and reported instead of silently yielding an
     /// empty list.

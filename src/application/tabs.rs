@@ -79,6 +79,8 @@ impl Tab {
                 // two give up their place first when the line is narrow.
                 ("C-Enter", if commit_mode { "commit" } else { "message" }),
                 ("C-Space", "suggest"),
+                // Replacing the last commit is rare, so it rides at the end.
+                ("C-a", "amend"),
             ],
             // The first four are always shown; `d` and `m` are the actions
             // people look for, so they come before the wizard.

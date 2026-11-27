@@ -302,6 +302,9 @@ fn run_composer(commit: bool) -> ExitCode {
         }
 
         return match app.output {
+            // Ctrl+A turned the composer into an amend: the message replaces the
+            // last commit instead of creating a new one.
+            Some(message) if commit && app.form.amend => amend_with_git(&message),
             Some(message) if commit => commit_with_git(&message),
             Some(message) => {
                 println!("{message}");
@@ -401,11 +404,21 @@ fn run_setup_dialog(config: &Config) -> Result<(), String> {
 /// Run `git commit -m <message>`, letting git ask for a passphrase or print its
 /// own errors, so the output looks like a normal commit.
 fn commit_with_git(message: &str) -> ExitCode {
-    let output = std::process::Command::new("git")
-        .arg("commit")
-        .arg("-m")
-        .arg(message)
-        .output();
+    git_commit(message, false)
+}
+
+/// Same as [`commit_with_git`], but the message replaces the last commit.
+fn amend_with_git(message: &str) -> ExitCode {
+    git_commit(message, true)
+}
+
+fn git_commit(message: &str, amend: bool) -> ExitCode {
+    let mut command = std::process::Command::new("git");
+    command.arg("commit");
+    if amend {
+        command.arg("--amend");
+    }
+    let output = command.arg("-m").arg(message).output();
 
     match output {
         Ok(output) => {

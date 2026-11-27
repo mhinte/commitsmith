@@ -1207,6 +1207,95 @@ fn digits_do_not_switch_tabs_while_a_picker_is_open() {
 }
 
 #[test]
+fn ctrl_a_loads_the_head_message_for_an_amend() {
+    let git = RecordingGit::new(&["main"], "main");
+    *git.head.borrow_mut() = Some(
+        "feat(ui): keep the old words\n\nThe body that was recorded.\n\nBREAKING CHANGE: gone\n"
+            .to_string(),
+    );
+    let log = git.calls();
+    let mut app = App::default();
+    app.set_in_repository(true);
+    app.set_git(Box::new(git));
+
+    press_with(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
+    assert!(app.form.amend, "the form is in amend mode");
+    assert_eq!(app.form.commit.kind, "feat");
+    assert_eq!(app.form.commit.scope, "ui");
+    assert_eq!(app.form.commit.subject, "keep the old words");
+    assert!(app.form.commit.body.contains("The body that was recorded."));
+    assert!(
+        app.form.commit.is_breaking(),
+        "a breaking marker must survive the round trip"
+    );
+    assert_eq!(app.active_field(), Field::Subject);
+    assert!(log.borrow().contains(&"head_message".to_string()));
+}
+
+#[test]
+fn amend_of_a_published_commit_asks_first() {
+    // ahead == 0 with an upstream: HEAD is on the remote, so replacing it
+    // rewrites published history.
+    let git = RecordingGit::new(&["main"], "main");
+    *git.head.borrow_mut() = Some("feat: old words".to_string());
+    let mut app = App::default();
+    app.set_in_repository(true);
+    app.set_git(Box::new(git));
+    press_with(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
+    press_with(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL);
+
+    assert!(app.output.is_none(), "nothing handed over yet");
+    assert!(app.form.confirm_amend, "the question is open");
+    assert!(app.status.contains("already pushed"), "{}", app.status);
+
+    // Esc is a no: nothing is rewritten.
+    press(&mut app, KeyCode::Esc);
+    assert!(!app.form.confirm_amend);
+    assert!(!app.form.amend);
+    assert!(app.output.is_none());
+    assert!(app.status.contains("cancelled"), "{}", app.status);
+}
+
+#[test]
+fn amend_of_an_unpushed_commit_goes_straight_through() {
+    // ahead == 3: the last three commits are local only.
+    let mut git = RecordingGit::new(&["main"], "main");
+    git.sync = Some((3, 0));
+    *git.head.borrow_mut() = Some("feat: old words".to_string());
+    let mut app = App::default();
+    app.set_in_repository(true);
+    app.set_git(Box::new(git));
+    press_with(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
+    press_with(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL);
+
+    assert!(!app.form.confirm_amend, "no question for local work");
+    assert!(app.should_quit);
+    assert_eq!(app.output.as_deref(), Some("feat: old words"));
+}
+
+#[test]
+fn amending_keeps_the_footer_of_the_commit_it_replaces() {
+    // The commit being edited is the source of truth for its own footers: an
+    // amend must not drop `Refs:` or a co-author line.
+    let git = RecordingGit::new(&["feat/mmu/TICKET-9/x"], "feat/mmu/TICKET-9/x");
+    *git.head.borrow_mut() = Some("chore: old\n\nbody\n\nRefs: TICKET-1\n".to_string());
+    let mut app = App::with_config(Config::conventional(), Vec::new());
+    app.set_in_repository(true);
+    app.set_git(Box::new(git));
+    press_with(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
+    assert!(
+        app.form.commit.footer.contains("TICKET-1"),
+        "the recorded footer survives: {}",
+        app.form.commit.footer
+    );
+    // And the rendered message is the one that was recorded, unchanged.
+    assert_eq!(
+        app.form.commit.render(),
+        "chore: old\n\nbody\n\nRefs: TICKET-1"
+    );
+}
+
+#[test]
 fn the_history_preview_loads_files_lazily_and_once() {
     // The file list comes through the port now, so there is no `gix::discover`
     // per keystroke — and the read happens once per commit, cached afterwards.

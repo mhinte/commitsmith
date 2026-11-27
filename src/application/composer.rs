@@ -6,6 +6,50 @@
 use super::*;
 
 impl App {
+    /// Ctrl+A: load the message of `HEAD`, so Ctrl+S can replace it.
+    ///
+    /// The raw message goes through the same parser the check uses, so type,
+    /// scope, subject, body and footers come back unchanged — including a
+    /// `BREAKING CHANGE:` line, which a rendered template would lose.
+    pub(crate) fn begin_amend(&mut self) {
+        let Some(git) = self.repo.git.as_deref() else {
+            self.status = "not a git repository · nothing to amend".to_string();
+            return;
+        };
+        match git.head_message() {
+            Ok(Some(text)) => {
+                let parsed = crate::commit::parse(&text);
+                self.form.commit = parsed.commit;
+                self.form.amend = true;
+                self.form.confirm_amend = false;
+                // The type came from the commit, not from the branch: the branch
+                // must not override it afterwards.
+                self.form.type_touched = true;
+                self.focus(
+                    FIELDS
+                        .iter()
+                        .position(|f| *f == Field::Subject)
+                        .unwrap_or(0),
+                );
+                self.revalidate();
+                self.status =
+                    "amend: HEAD message loaded · Ctrl+S replaces that commit".to_string();
+            }
+            Ok(None) => self.status = "no commit to amend yet".to_string(),
+            Err(error) => self.status = error.to_string(),
+        }
+    }
+
+    /// True when `HEAD` is already on the remote: replacing it rewrites published
+    /// history, so the user has to say yes.
+    pub(crate) fn head_is_published(&self) -> bool {
+        self.repo
+            .git
+            .as_deref()
+            .and_then(|git| git.ahead_behind().ok().flatten())
+            .is_some_and(|(ahead, _)| ahead == 0)
+    }
+
     pub(crate) fn focus(&mut self, index: usize) {
         self.form.field = index % FIELDS.len();
         let len = self.value(self.active_field()).chars().count();

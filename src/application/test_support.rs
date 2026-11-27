@@ -32,6 +32,8 @@ pub struct RecordingGit {
     pub files: RefCell<Vec<ChangedFile>>,
     /// What `commit_files` answers per commit id; a miss yields `M <id>.rs`.
     pub file_lists: std::collections::HashMap<String, Vec<String>>,
+    /// What `head_message` answers: the raw message of `HEAD`, if any.
+    pub head: RefCell<Option<String>>,
 }
 
 impl RecordingGit {
@@ -53,6 +55,7 @@ impl RecordingGit {
             commits: RefCell::new(Vec::new()),
             files: RefCell::new(Vec::new()),
             file_lists: std::collections::HashMap::new(),
+            head: RefCell::new(None),
         }
     }
 
@@ -75,6 +78,16 @@ impl GitRepository for RecordingGit {
 
     fn branches(&self) -> Result<Vec<BranchInfo>, GitError> {
         Ok(self.branches.borrow().clone())
+    }
+
+    fn head_message(&self) -> Result<Option<String>, GitError> {
+        self.calls.borrow_mut().push("head_message".to_string());
+        Ok(self.head.borrow().clone())
+    }
+
+    fn amend(&self, message: &str) -> Result<String, GitError> {
+        self.calls.borrow_mut().push(format!("amend {message}"));
+        Ok("abc1234".to_string())
     }
 
     fn commit_files(&self, id: &str) -> Result<Vec<String>, GitError> {

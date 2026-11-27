@@ -168,6 +168,12 @@ pub trait GitRepository {
     /// Scopes from history, merged with the configured ones.
     fn scopes(&self, configured: &[String], depth: usize) -> Result<ScopeInfo, GitError>;
 
+    /// The raw message of the commit `HEAD` points at, for the amend mode.
+    /// `None` in a repository without a commit.
+    fn head_message(&self) -> Result<Option<String>, GitError> {
+        Ok(None)
+    }
+
     /// Files a commit touched, as `M src/app.rs` lines. Read for one commit at a
     /// time, when someone looks at it: doing this for the whole history is what
     /// made the start in a long repository slow.
@@ -203,6 +209,10 @@ pub trait GitRepository {
     fn stash_pop(&self) -> Result<(), GitError>;
     /// Commit what is staged; returns the short id git printed.
     fn commit(&self, message: &str) -> Result<String, GitError>;
+    /// Replace the message of the last commit, keeping its tree.
+    fn amend(&self, message: &str) -> Result<String, GitError> {
+        self.commit(message)
+    }
     fn checkout(&self, branch: &str) -> Result<(), GitError>;
     fn create_branch(&self, name: &str) -> Result<(), GitError>;
     fn merge(&self, branch: &str) -> Result<(), GitError>;

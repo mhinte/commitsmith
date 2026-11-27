@@ -21,6 +21,12 @@ pub struct Form {
     pub(crate) footer_seed: Option<String>,
     /// Body, breaking and footer folded away.
     pub compact: bool,
+    /// Ctrl+A loaded the message of `HEAD`: Ctrl+S replaces that commit instead
+    /// of creating a new one.
+    pub amend: bool,
+    /// Set when the commit being replaced is already on the remote, so the next
+    /// keypress has to confirm it.
+    pub confirm_amend: bool,
 }
 
 impl Form {

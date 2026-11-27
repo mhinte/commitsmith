@@ -1122,6 +1122,21 @@ impl App {
             };
             return;
         }
+        if self.form.amend {
+            if self.form.confirm_amend {
+                self.form.confirm_amend = false;
+                self.output = Some(self.form.commit.render());
+                self.should_quit = true;
+                self.status = "replacing the last commit".to_string();
+                return;
+            }
+            if self.head_is_published() {
+                self.form.confirm_amend = true;
+                self.status = "HEAD is already pushed · Enter or y replaces it anyway, Esc cancels"
+                    .to_string();
+                return;
+            }
+        }
         self.output = Some(self.form.commit.render());
         self.should_quit = true;
         self.status = "handing the message over".to_string();
@@ -1207,6 +1222,24 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return;
         }
+        // Replacing a published commit asks once: y/Enter go ahead, every other
+        // key is "no" and drops the question (the same rule as the destructive
+        // staging actions).
+        if self.form.confirm_amend && !self.show_help && self.picker.is_none() {
+            self.form.confirm_amend = false;
+            match key.code {
+                KeyCode::Enter | KeyCode::Char('y') => {
+                    self.output = Some(self.form.commit.render());
+                    self.should_quit = true;
+                    self.status = "replacing the last commit".to_string();
+                }
+                _ => {
+                    self.status = "amend cancelled · nothing was rewritten".to_string();
+                    self.form.amend = false;
+                }
+            }
+            return;
+        }
         // Ctrl+O folds the optional fields away, wherever the keyboard is — the
         // form and its visibility are a property of the tab, not of a field.
         // Alt+P pulls (fast-forward only), Alt+U pushes. Letters alone belong to
@@ -1227,6 +1260,15 @@ impl App {
                 }
                 _ => {}
             }
+        }
+        if key.code == KeyCode::Char('a')
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && !self.show_help
+            && self.picker.is_none()
+            && self.tab == tabs::Tab::Commit
+        {
+            self.begin_amend();
+            return;
         }
         if key.code == KeyCode::Char('o')
             && key.modifiers.contains(KeyModifiers::CONTROL)
