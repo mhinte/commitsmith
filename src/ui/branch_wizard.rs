@@ -29,7 +29,14 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
         let (value, hint) = match field {
             // Bracketed like the type field on tab 1, so the same thing reads the
             // same way in both places.
-            WizardField::Kind => (format!("[ {} ]", wizard.kind.as_str()), String::new()),
+            WizardField::Kind => {
+                let emoji = app.kind_emoji(wizard.kind.as_str());
+                let value = match emoji {
+                    Some(emoji) => format!("[ {emoji} {} ]", wizard.kind.as_str()),
+                    None => format!("[ {} ]", wizard.kind.as_str()),
+                };
+                (value, String::new())
+            }
             WizardField::Ticket => (
                 wizard.ticket.clone(),
                 if wizard.ticket.is_empty() {
@@ -68,6 +75,13 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<(u16, u16)> {
         }
     }
 
+    lines.push(Line::raw(""));
+    // Where the branch will start: information only, because it follows from the
+    // branch that is checked out right now.
+    lines.push(Line::styled(
+        format!(" from   {}", app.branch_label()),
+        MUTED,
+    ));
     lines.push(Line::raw(""));
 
     // The name is built from the same domain rules as a real branch; when an

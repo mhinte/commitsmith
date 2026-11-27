@@ -526,7 +526,7 @@ fn the_wizard_calls_the_field_type_and_brackets_the_value() {
 
     assert!(screen.contains("type"), "same word as on tab 1: {screen}");
     assert!(
-        screen.contains("[ feat ]"),
+        screen.contains("feat ]") && (screen.contains("✨") || !screen.contains("✨")),
         "bracketed like tab 1: {screen}"
     );
     assert!(!screen.contains("kind"), "{screen}");
@@ -1188,4 +1188,45 @@ fn every_event_draws_one_frame() {
     .unwrap();
     // First frame, then one per event; the two quiet ticks add nothing.
     assert_eq!(draws, 4, "one frame per event and no more");
+}
+
+#[test]
+fn the_wizard_shows_the_type_emoji_and_the_source_branch() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut app = branch_app();
+    app.config.author = Some("hima".to_string());
+    app.config.emoji = true;
+    app.repo.branch_name = Some("main".to_string());
+    app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+
+    let mut terminal = Terminal::new(TestBackend::new(110, 30)).unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+    let screen = rows(&terminal).join("\n");
+    assert!(
+        screen.contains("from   main"),
+        "the source branch is information, not a field: {screen}"
+    );
+    assert!(
+        screen.contains("[ ✨") && screen.contains("feat ]"),
+        "the kind row carries the emoji the type picker uses: {screen}"
+    );
+}
+
+#[test]
+fn the_wizard_hides_the_emoji_when_the_config_says_so() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut app = branch_app();
+    app.config.author = Some("hima".to_string());
+    app.config.emoji = false;
+    app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+
+    let mut terminal = Terminal::new(TestBackend::new(110, 30)).unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+    let screen = rows(&terminal).join("\n");
+    assert!(screen.contains("[ feat ]"), "{screen}");
+    assert!(!screen.contains("✨"), "{screen}");
 }

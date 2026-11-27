@@ -589,7 +589,8 @@ fn the_footer_label_says_how_far_the_branch_is() {
 
 #[test]
 fn e_exports_the_section_under_a_window_name() {
-    let dir = std::env::temp_dir().join(format!("commitsmith-export-{}", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("commitsmith-export-window-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 

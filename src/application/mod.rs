@@ -968,6 +968,19 @@ impl App {
         self.issues = validate::validate_with(&self.form.commit, &self.rules);
     }
 
+    /// The emoji of a commit type, when the config wants emojis. One lookup for
+    /// both places that show a type: the header on tab 1 and the branch wizard.
+    pub fn kind_emoji(&self, kind: &str) -> Option<String> {
+        if !self.config.emoji {
+            return None;
+        }
+        self.config
+            .types()
+            .iter()
+            .find(|t| t.name == kind)
+            .and_then(|t| t.emoji.clone())
+    }
+
     /// Name, emoji and description of the current type, for the header.
     pub fn type_label(&self) -> String {
         let commit = &self.form.commit;
