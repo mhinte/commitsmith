@@ -1150,13 +1150,13 @@ impl App {
                 .filter(|issue| issue.severity == Severity::Error)
                 .count()
                 .saturating_sub(1);
+            // The field belongs in the line: the composer shows it in its own
+            // column, a status line has none.
+            let where_ = format!("{}: {}", issue.field, issue.message);
             self.status = if more > 0 {
-                format!(
-                    "not yet: {} · {} more error(s) on the right",
-                    issue.message, more
-                )
+                format!("not yet: {where_} · {more} more error(s) on the right")
             } else {
-                format!("not yet: {}", issue.message)
+                format!("not yet: {where_}")
             };
             return;
         }
