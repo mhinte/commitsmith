@@ -18,7 +18,7 @@ struct Hook {
     script: &'static str,
 }
 
-const HOOKS: [Hook; 3] = [
+const HOOKS: [Hook; 4] = [
     Hook {
         name: "commit-msg",
         script: SCRIPT_COMMIT_MSG,
@@ -30,6 +30,10 @@ const HOOKS: [Hook; 3] = [
     Hook {
         name: "pre-commit",
         script: SCRIPT_PRE_COMMIT,
+    },
+    Hook {
+        name: "post-checkout",
+        script: SCRIPT_POST_CHECKOUT,
     },
 ];
 
@@ -167,6 +171,53 @@ if ! usable \"$binary\"; then
 fi
 
 \"$binary\" hints
+exit 0
+";
+
+/// One line about the branch a person just switched to.
+///
+/// `post-checkout` is the only hook that sees a branch change, and it fires for
+/// two different events: `$3 == 1` is a branch checkout, `$3 == 0` is a file
+/// checkout (`git checkout -- file`) where saying anything would be noise. It
+/// never blocks and never edits — it prints one line, so someone who does not use
+/// the TUI still learns which convention the branch asks for.
+const SCRIPT_POST_CHECKOUT: &str = "#!/bin/sh
+# commitsmith post-checkout hook - one line about the new branch.
+
+# A hook that was here before commitsmith runs first; its verdict stands.
+previous=\"$(dirname \"$0\")/post-checkout.pre-commitsmith\"
+if [ -x \"$previous\" ]; then
+    \"$previous\" \"$@\" || exit $?
+fi
+
+# Only a branch switch (flag 1). A file checkout (0) says nothing.
+if [ \"$3\" != \"1\" ]; then
+    exit 0
+fi
+
+usable() {
+    [ -n \"$1\" ] && [ -x \"$1\" ]
+}
+
+binary=$(git config --get commitsmith.binary 2>/dev/null)
+if ! usable \"$binary\"; then
+    binary=$(command -v commitsmith 2>/dev/null)
+fi
+if ! usable \"$binary\"; then
+    for candidate in \"$HOME/.local/bin/commitsmith\" \"$HOME/.cargo/bin/commitsmith\" \"$LOCALAPPDATA/Programs/commitsmith/commitsmith.exe\"; do
+        if usable \"$candidate\"; then
+            binary=$candidate
+            break
+        fi
+    done
+fi
+
+# No binary: nothing to say.
+if ! usable \"$binary\"; then
+    exit 0
+fi
+
+\"$binary\" branch-hint
 exit 0
 ";
 

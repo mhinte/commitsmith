@@ -221,7 +221,7 @@ returns — the message says so when that happens.
 ### commit-msg hook
 
 ```sh
-commitsmith hooks install          # writes commit-msg, prepare-commit-msg, pre-commit
+commitsmith hooks install          # writes commit-msg, prepare-commit-msg, pre-commit, post-checkout
 commitsmith hooks uninstall        # removes them (and restores chained hooks)
 commitsmith hooks install --force  # install into a husky/lefthook/pre-commit directory
 ```
@@ -237,6 +237,10 @@ like `feat/hima/TICKET-12/add-a-thing` git's editor opens with
 `feat(TICKET-12): ` already in the first line. Merge, squash, `--amend`, `-m` and
 `-F` pass a source to the hook and are left exactly as git wrote them, and a
 branch without a kind (`main`) gets no suggestion rather than a wrong one.
+
+`post-checkout` prints one line after a branch switch
+(`commitsmith: branch fix/hima/PROJ-7/typo · type fix · PROJ-7`), and nothing at all
+for a file checkout or a branch without a convention (`main`).
 
 `pre-commit` only hints and never blocks: more than 25 staged files, a `docs`
 branch that touches nothing but source, and leftover conflict markers. It reads

@@ -93,6 +93,8 @@ enum Command {
     Types,
     /// Print hints about the staged index, for pre-commit hooks
     Hints,
+    /// One line about the checked-out branch, for post-checkout hooks
+    BranchHint,
     /// Replace this binary with the newest release
     Update {
         /// Only say whether there is a newer release
@@ -162,6 +164,7 @@ fn main() -> ExitCode {
         Some(Command::Hooks { action, yes }) => run_hooks(action, yes),
         Some(Command::Prepare { file }) => run_prepare(&file),
         Some(Command::Hints) => run_hints(),
+        Some(Command::BranchHint) => run_branch_hint(),
         Some(Command::Update { check }) => run_update(check),
         Some(Command::Check {
             file,
@@ -267,6 +270,40 @@ fn run_hooks_wizard() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// `commitsmith branch-hint`: one line about the branch just checked out.
+///
+/// Read by the `post-checkout` hook and printed to stderr, because that hook runs
+/// before the shell prompt returns and its stdout belongs to git. Always exit 0:
+/// a hook that fails after a successful checkout makes the checkout look broken.
+///
+/// Silent when the branch says nothing usable (`main`), so the common case is no
+/// output at all.
+fn run_branch_hint() -> ExitCode {
+    let branch = std::process::Command::new("git")
+        .args(["symbolic-ref", "--short", "HEAD"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string());
+    // A detached HEAD has nothing to name.
+    let Some(branch) = branch.filter(|name| !name.is_empty()) else {
+        return ExitCode::SUCCESS;
+    };
+    let context = commitsmith::domain::prefill::context(&branch);
+    if context.is_empty() {
+        return ExitCode::SUCCESS;
+    }
+    let mut parts = vec![format!("commitsmith: branch {branch}")];
+    if let Some(kind) = context.kind {
+        parts.push(format!("type {kind}"));
+    }
+    if let Some(ticket) = context.ticket {
+        parts.push(ticket);
+    }
+    eprintln!("{}", parts.join(" · "));
+    ExitCode::SUCCESS
 }
 
 /// `commitsmith hints`: say what is worth saying about the index, then get out
