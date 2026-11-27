@@ -14,6 +14,11 @@ pub fn open(path: &Path) -> Option<gix::Repository> {
     gix::discover(path).ok()
 }
 
+/// How often a message went through the parser, counted in tests only: the walk
+/// must parse each header once, and a counter is the only honest proof.
+#[cfg(test)]
+static PARSES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// Parse a raw commit message with the same parser the linter uses.
 pub fn parse_scope(message: &str) -> Option<String> {
     parse_event(message).and_then(|(_, scope, _, _)| scope)
@@ -22,6 +27,9 @@ pub fn parse_scope(message: &str) -> Option<String> {
 /// Type, scope and breaking flag of a Conventional Commit header.
 fn parse_event(message: &str) -> Option<(String, Option<String>, bool, String)> {
     use conventional_commit_parser::commit::CommitType;
+
+    #[cfg(test)]
+    PARSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     let parsed = conventional_commit_parser::parse(message.trim()).ok()?;
     let breaking = parsed.is_breaking_change;
@@ -91,6 +99,69 @@ pub fn commits_since(repo: &gix::Repository, since: Option<&str>, limit: usize) 
     }
 }
 
+/// One commit as the tool needs it: the template form and the scope it shows.
+pub struct Walked {
+    pub entry: PastCommit,
+    /// The scope from the header, for the picker's list.
+    pub scope: Option<String>,
+}
+
+/// Read one commit once.
+///
+/// `snapshot` and `recent_commits` both used to walk the same commits and each
+/// parsed the header up to three times (once for the scope, once for the type,
+/// once to strip it), and built the id string twice. One pass answers all three
+/// questions, and the scope comes out of the same parse as the type.
+fn walked_commit(repo: &gix::Repository, id: gix::ObjectId) -> Option<Walked> {
+    let commit = repo.find_commit(id).ok()?;
+    let message = commit.message().ok()?;
+    let title = message.title.to_str_lossy().trim().to_string();
+    if title.is_empty() {
+        return None;
+    }
+    let parsed = parse_event(&title);
+    let scope = parsed.as_ref().and_then(|(_, scope, _, _)| scope.clone());
+    let (kind, summary) = match parsed {
+        Some((kind, _, _, plain)) => (Some(kind), plain),
+        None => (None, title),
+    };
+    let body = message
+        .body
+        .map(|body| body.to_str_lossy().to_string())
+        .unwrap_or_default();
+
+    let author = commit
+        .author()
+        .ok()
+        .map(|author| author.name.to_str_lossy().to_string())
+        .unwrap_or_default();
+    let date = commit
+        .time()
+        .ok()
+        .map(|time| {
+            time.format(gix::date::time::format::ISO8601)
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+    let date = date.split('T').next().unwrap_or(&date).to_string();
+    let id = id.to_string();
+
+    Some(Walked {
+        entry: PastCommit {
+            short_id: id[..7].to_string(),
+            id,
+            author,
+            date,
+            summary,
+            body: clean_body(&body),
+            kind,
+            scope: scope.clone(),
+            files: Vec::new(),
+        },
+        scope,
+    })
+}
+
 /// The last `depth` commits, newest first, as templates.
 pub fn recent_commits(repo: &gix::Repository, depth: usize) -> Vec<PastCommit> {
     let mut commits = Vec::new();
@@ -108,66 +179,15 @@ pub fn recent_commits(repo: &gix::Repository, depth: usize) -> Vec<PastCommit> {
     };
 
     for info in walk.take(depth).flatten() {
-        let Ok(commit) = repo.find_commit(info.id) else {
-            continue;
-        };
-        let Ok(message) = commit.message() else {
-            continue;
-        };
-        let summary = message.title.to_str_lossy().trim().to_string();
-        if summary.is_empty() {
-            continue;
-        }
-        let full_message = message
-            .body
-            .map(|body| body.to_str_lossy().to_string())
-            .unwrap_or_default();
-
-        let (kind, scope) = match parse_event(&summary) {
-            Some((kind, scope, _, _)) => (Some(kind), scope),
-            None => (None, None),
-        };
-
-        let author = commit
-            .author()
-            .ok()
-            .map(|author| author.name.to_str_lossy().to_string())
-            .unwrap_or_default();
-        let date = commit
-            .time()
-            .ok()
-            .map(|time| {
-                time.format(gix::date::time::format::ISO8601)
-                    .unwrap_or_default()
-            })
-            .unwrap_or_default();
-        let date = date.split('T').next().unwrap_or(&date).to_string();
-
         // File lists are not read here: one `git show` per commit is what made
         // the start in a long history take seconds. They are fetched for the
         // commit the picker highlights, on demand.
-        commits.push(PastCommit {
-            short_id: info.id.to_string()[..7].to_string(),
-            id: info.id.to_string(),
-            author,
-            date,
-            summary: strip_header(&summary),
-            body: clean_body(&full_message),
-            kind,
-            scope,
-            files: Vec::new(),
-        });
+        if let Some(walked) = walked_commit(repo, info.id) {
+            commits.push(walked.entry);
+        }
     }
 
     commits
-}
-
-/// Drop a `type(scope): ` prefix from a summary for display.
-fn strip_header(summary: &str) -> String {
-    match parse_event(summary) {
-        Some((_, _, _, plain)) => plain,
-        None => summary.to_string(),
-    }
 }
 
 /// Remove footer lines such as `BREAKING CHANGE:` or `Refs:` from a body.
@@ -411,61 +431,18 @@ pub fn snapshot(
             .all()
         {
             for (index, info) in walk.take(depth).flatten().enumerate() {
-                let Ok(commit) = repo.find_commit(info.id) else {
+                let Some(walked) = walked_commit(repo, info.id) else {
                     continue;
                 };
-                let message = commit.message();
-                let title = match &message {
-                    Ok(message) => message.title.to_str_lossy().trim().to_string(),
-                    Err(_) => String::new(),
-                };
-
-                if let Some(scope) = parse_scope(&title) {
+                if let Some(scope) = walked.scope {
                     if seen.insert(scope.clone()) {
                         scopes.push(scope);
                     }
                 }
-                if index >= commit_limit || title.is_empty() {
-                    continue;
+                // Beyond the commit window only the scopes are wanted.
+                if index < commit_limit {
+                    commits.push(walked.entry);
                 }
-
-                let body = match &message {
-                    Ok(message) => message
-                        .body
-                        .map(|body| body.to_str_lossy().to_string())
-                        .unwrap_or_default(),
-                    Err(_) => String::new(),
-                };
-                let (kind, scope) = match parse_event(&title) {
-                    Some((kind, scope, _, _)) => (Some(kind), scope),
-                    None => (None, None),
-                };
-                let author = commit
-                    .author()
-                    .ok()
-                    .map(|author| author.name.to_str_lossy().to_string())
-                    .unwrap_or_default();
-                let date = commit
-                    .time()
-                    .ok()
-                    .map(|time| {
-                        time.format(gix::date::time::format::ISO8601)
-                            .unwrap_or_default()
-                    })
-                    .unwrap_or_default();
-                let date = date.split('T').next().unwrap_or(&date).to_string();
-
-                commits.push(PastCommit {
-                    short_id: info.id.to_string()[..7].to_string(),
-                    id: info.id.to_string(),
-                    author,
-                    date,
-                    summary: strip_header(&title),
-                    body: clean_body(&body),
-                    kind,
-                    scope,
-                    files: Vec::new(),
-                });
             }
         }
     }
@@ -532,6 +509,24 @@ mod tests {
         assert!(scopes.all().contains(&"api".to_string()), "{:?}", scopes);
         assert!(scopes.all().contains(&"ui".to_string()));
         assert!(scopes.all().contains(&"configured".to_string()));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_walk_parses_each_header_once() {
+        // The snapshot used to parse the same header three times: once for the
+        // scope, once for the type, once to strip it. Three commits, three
+        // parses is the contract.
+        let (dir, repo) = temp_repo("parse-once");
+        PARSES.store(0, std::sync::atomic::Ordering::Relaxed);
+        let (scopes, commits) = snapshot(&repo, &[], 50, 10);
+        assert_eq!(commits.len(), 3);
+        assert_eq!(scopes.history.len(), 2, "api and ui, not chore");
+        assert_eq!(
+            PARSES.load(std::sync::atomic::Ordering::Relaxed),
+            3,
+            "one parse per commit and not one more"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
