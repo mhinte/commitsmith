@@ -82,7 +82,9 @@ if ! usable \"$binary\"; then
     exit 0
 fi
 
-exec \"$binary\" check --file \"$1\"
+# --fix repairs what is unambiguous (a trailing period, `Feat`, spacing) and
+# reports it; what is still wrong after that is refused as before.
+exec \"$binary\" check --file \"$1\" --fix
 ";
 
 /// Prefill: when a human opens an editor for a new message, the first line is

@@ -271,7 +271,9 @@ fn a_foreign_hook_is_chained_not_replaced() {
     assert_eq!(blocked.status.code(), Some(3), "{blocked:?}");
 
     // When it passes, our check decides.
-    std::fs::write(&message, "feat:no space\n").unwrap();
+    // A message the repair cannot fix: no type at all is a question for the author,
+    // while the old `feat:no space` is simply repaired now.
+    std::fs::write(&message, "Add stuff\n").unwrap();
     let ours = run_hook(&dir, ".git/hooks", &message);
     assert!(String::from_utf8_lossy(&ours.stderr).contains("foreign ran"));
     assert_eq!(ours.status.code(), Some(1), "our lint blocks: {ours:?}");
@@ -508,7 +510,8 @@ fn the_hook_blocks_a_bad_message_when_the_binary_is_there() {
     assert!(install.status.success(), "{install:?}");
 
     let message = dir.join("msg.txt");
-    std::fs::write(&message, "feat:no space after the colon\n").unwrap();
+    // No type at all: the repair cannot invent one, so this has to block.
+    std::fs::write(&message, "Add stuff\n").unwrap();
     let binary = std::path::Path::new(env!("CARGO_BIN_EXE_commitsmith"));
     let path = format!("{}:/usr/bin:/bin", binary.parent().unwrap().display());
     let hook = Command::new("sh")
@@ -520,7 +523,7 @@ fn the_hook_blocks_a_bad_message_when_the_binary_is_there() {
         .unwrap();
     assert!(
         !hook.status.success(),
-        "a violation must still block: {hook:?}"
+        "a violation the repair cannot fix must still block: {hook:?}"
     );
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -547,7 +550,8 @@ fn the_configured_binary_wins_over_the_path() {
     );
 
     let message = dir.join("msg.txt");
-    std::fs::write(&message, "feat:no space after the colon\n").unwrap();
+    // No type at all: nothing the repair could fix, so the block proves the binary ran.
+    std::fs::write(&message, "Add stuff\n").unwrap();
     // PATH without the binary: only the config can find it.
     let hook = Command::new("sh")
         .arg(dir.join(".git/hooks/commit-msg"))
@@ -1327,5 +1331,114 @@ fn the_branch_hint_names_type_and_ticket_and_never_blocks() {
         "commitsmith: branch fix/hima/PROJ-7/typo · type fix · PROJ-7",
         "{stderr}"
     );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_hook_repairs_the_message_and_then_lets_it_through() {
+    // E8-4: a colleague who types `Fix(core) :  Correct the thing.` should get a commit,
+    // not a lecture. The hook repairs what is unambiguous and still refuses real problems.
+    let dir = repo("hook-autofix");
+    std::fs::write(dir.join("a.txt"), "x").unwrap();
+    run(&dir, "git", &["add", "a.txt"]);
+    let install = bin()
+        .args(["hooks", "install"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(install.status.success(), "{install:?}");
+
+    let binary = Path::new(env!("CARGO_BIN_EXE_commitsmith"));
+    let path = format!("{}:/usr/bin:/bin", binary.parent().unwrap().display());
+    let commit = Command::new("git")
+        .args(["commit", "-m", "Fix(core) :  Correct the thing."])
+        .env("PATH", &path)
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(commit.status.success(), "{commit:?}");
+    let logged = run(&dir, "git", &["log", "-1", "--format=%s"]);
+    assert_eq!(
+        String::from_utf8_lossy(&logged.stdout).trim(),
+        "fix(core): Correct the thing",
+        "the repaired message is what git recorded"
+    );
+    let stderr = String::from_utf8_lossy(&commit.stderr);
+    assert!(
+        stderr.contains("fixed:"),
+        "the repair is reported: {stderr}"
+    );
+    assert!(stderr.lines().all(|line| line.len() < 80), "{stderr}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_message_that_cannot_be_repaired_is_still_refused() {
+    let dir = repo("hook-autofix-refuses");
+    std::fs::write(dir.join("a.txt"), "x").unwrap();
+    run(&dir, "git", &["add", "a.txt"]);
+    let install = bin()
+        .args(["hooks", "install"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(install.status.success(), "{install:?}");
+
+    let binary = Path::new(env!("CARGO_BIN_EXE_commitsmith"));
+    let path = format!("{}:/usr/bin:/bin", binary.parent().unwrap().display());
+    // No type at all: nothing a case or spacing repair could fix, and guessing at the
+    // type would be a decision the tool must not make.
+    let commit = Command::new("git")
+        .args(["commit", "-m", "Add stuff"])
+        .env("PATH", &path)
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(!commit.status.success(), "{commit:?}");
+    let stderr = String::from_utf8_lossy(&commit.stderr);
+    assert!(stderr.contains("error"), "{stderr}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn check_without_fix_leaves_the_file_alone() {
+    let dir = repo("check-no-fix");
+    let message = dir.join("msg.txt");
+    std::fs::write(&message, "Feat: add a thing.\n").unwrap();
+    let output = bin()
+        .args(["check", "--file"])
+        .arg(&message)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        std::fs::read_to_string(&message).unwrap(),
+        "Feat: add a thing.\n",
+        "no repair without --fix"
+    );
+
+    let fixed = bin()
+        .args(["check", "--file"])
+        .arg(&message)
+        .arg("--fix")
+        .output()
+        .unwrap();
+    assert!(fixed.status.success(), "{fixed:?}");
+    assert_eq!(
+        std::fs::read_to_string(&message).unwrap(),
+        "feat: add a thing\n"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn fix_needs_a_file_to_write() {
+    let dir = repo("fix-needs-file");
+    let output = bin()
+        .args(["check", "--message", "Feat: x.", "--fix"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "clap refuses it: {output:?}");
     let _ = std::fs::remove_dir_all(dir);
 }

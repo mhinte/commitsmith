@@ -232,6 +232,12 @@ points. It finds the binary through `git config commitsmith.binary` (set by
 it prints one line and lets the commit through, so colleagues without the tool
 are never blocked.
 
+`commit-msg` repairs what is unambiguous before it judges: a trailing period on the
+subject, a `Feat` or `API` in the wrong case, spacing (`fix :x` → `fix: x`, double
+spaces). Every correction is printed as `fixed: …`, and what is still wrong after that
+is refused as before — a message with no type is a question for the author, not something
+to guess at. `commitsmith check --file <msg> --fix` is the same repair without a hook.
+
 `prepare-commit-msg` only starts a message a human is about to write: on a branch
 like `feat/hima/TICKET-12/add-a-thing` git's editor opens with
 `feat(TICKET-12): ` already in the first line. Merge, squash, `--amend`, `-m` and

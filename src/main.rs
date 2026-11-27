@@ -73,6 +73,9 @@ enum Command {
         /// Fail on warnings too
         #[arg(long)]
         strict: bool,
+        /// Repair what is unambiguous in the message file and report it
+        #[arg(long, requires = "file", conflicts_with = "message")]
+        fix: bool,
     },
     /// Write a starter .commitsmith.toml in the current directory
     Init {
@@ -170,7 +173,8 @@ fn main() -> ExitCode {
             file,
             message,
             strict,
-        }) => run_check(file, message, strict),
+            fix,
+        }) => run_check(file, message, strict, fix),
     }
 }
 
@@ -884,8 +888,9 @@ fn init_config(defaults: bool, force: bool) -> ExitCode {
     }
 }
 
-fn run_check(file: Option<PathBuf>, message: Option<String>, strict: bool) -> ExitCode {
-    let text = match (file, message) {
+fn run_check(file: Option<PathBuf>, message: Option<String>, strict: bool, fix: bool) -> ExitCode {
+    let file_path = file.clone();
+    let mut text = match (file, message) {
         (Some(path), _) => match std::fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) => {
@@ -903,6 +908,28 @@ fn run_check(file: Option<PathBuf>, message: Option<String>, strict: bool) -> Ex
             buffer
         }
     };
+
+    // `--fix` writes the repaired message back into the file the hook was given and
+    // reports one line per correction. It repairs, it never decides: the lint below runs
+    // on the result, so a message that is wrong for a reason the repair cannot know is
+    // still refused.
+    if fix {
+        let Some(path) = file_path.as_deref() else {
+            eprintln!("commitsmith: --fix needs --file");
+            return ExitCode::FAILURE;
+        };
+        let repaired = commitsmith::domain::repair::repair(&text);
+        for correction in &repaired.fixes {
+            eprintln!("fixed: {}", correction.what);
+        }
+        if !repaired.fixes.is_empty() {
+            if let Err(error) = std::fs::write(path, &repaired.text) {
+                eprintln!("commitsmith: cannot write {}: {error}", path.display());
+                return ExitCode::FAILURE;
+            }
+            text = repaired.text;
+        }
+    }
 
     let (config, warnings) = load_config();
     for warning in warnings {
