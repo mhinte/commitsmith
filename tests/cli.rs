@@ -313,6 +313,9 @@ fn the_hook_does_not_block_a_commit_when_the_binary_is_missing() {
         .unwrap();
     assert!(install.status.success(), "{install:?}");
 
+    // A colleague's clone does not carry the repo-local `commitsmith.binary`,
+    // so the hook has to cope with no usable path at all.
+    run(&dir, "git", &["config", "--unset", "commitsmith.binary"]);
     let message = dir.join("msg.txt");
     std::fs::write(&message, "feat:no space after the colon\n").unwrap();
     // PATH without the binary, HOME without a config: nothing to find.
@@ -331,6 +334,26 @@ fn the_hook_does_not_block_a_commit_when_the_binary_is_missing() {
     let stderr = String::from_utf8_lossy(&hook.stderr);
     assert!(stderr.contains("commitsmith not found"), "{stderr}");
     assert_eq!(stderr.lines().count(), 1, "one line, no noise: {stderr}");
+
+    // A stored path that has moved away (upgrade, home moved, a colleague's
+    // machine) must be ignored, not trusted.
+    run(
+        &dir,
+        "git",
+        &["config", "commitsmith.binary", "/nonexistent/commitsmith"],
+    );
+    let stale = Command::new("sh")
+        .arg(dir.join(".git/hooks/commit-msg"))
+        .arg(&message)
+        .env("PATH", "/usr/bin:/bin")
+        .env("HOME", &home)
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(
+        stale.status.success(),
+        "a stale path must not block the commit: {stale:?}"
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -397,5 +420,37 @@ fn the_configured_binary_wins_over_the_path() {
         !hook.status.success(),
         "the configured binary was used: {hook:?}"
     );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn installing_the_hook_remembers_where_the_binary_lives() {
+    // The hook asks `git config commitsmith.binary` first; install fills it in,
+    // so the risky install paths (zip in ~/tools, portable build) work without
+    // the user knowing about the setting.
+    let dir = repo("hook-remembers-binary");
+    let install = bin()
+        .args(["hooks", "install"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(install.status.success(), "{install:?}");
+    let stored = String::from_utf8_lossy(
+        &run(&dir, "git", &["config", "--get", "commitsmith.binary"]).stdout,
+    )
+    .to_string();
+    assert_eq!(
+        stored.trim(),
+        env!("CARGO_BIN_EXE_commitsmith"),
+        "the running binary is recorded"
+    );
+
+    // Installing again keeps it working (the update path).
+    let again = bin()
+        .args(["hooks", "install"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(again.status.success(), "{again:?}");
     let _ = std::fs::remove_dir_all(dir);
 }

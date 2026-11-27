@@ -60,6 +60,23 @@ fn hook_path() -> Result<PathBuf, String> {
     Ok(PathBuf::from(path).join("commit-msg"))
 }
 
+/// Remember where this binary lives, so the hook does not have to guess.
+///
+/// The hook checks `git config commitsmith.binary` first. Nothing wrote that
+/// value, so an unusual install path (a zip unpacked into `~/tools`, a portable
+/// build) relied on the fallback list. The value is repo-local and never
+/// committed; a colleague on another machine has a different one and the hook
+/// falls back to `PATH` when the stored path is not executable.
+fn remember_binary() {
+    let Ok(binary) = std::env::current_exe() else {
+        return;
+    };
+    let _ = Command::new("git")
+        .args(["config", "commitsmith.binary"])
+        .arg(binary)
+        .output();
+}
+
 pub fn install(force: bool) -> Result<String, String> {
     let path = hook_path()?;
     if let Some(parent) = path.parent() {
@@ -85,6 +102,7 @@ pub fn install(force: bool) -> Result<String, String> {
 
     std::fs::write(&path, SCRIPT).map_err(|error| error.to_string())?;
     set_executable(&path)?;
+    remember_binary();
     Ok(path.display().to_string())
 }
 
