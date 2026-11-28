@@ -215,6 +215,7 @@ impl App {
                 self.revalidate();
             }
             PickerKind::History => self.apply_template(&choice, full),
+            PickerKind::Palette => self.run_action(&choice),
         }
     }
 

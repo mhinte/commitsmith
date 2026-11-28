@@ -76,7 +76,6 @@ pub struct Config {
     /// Hide body, breaking and footer until they are needed.
     pub compact_form: bool,
     /// Which keys the footer leads with: `default` or `ide`.
-    pub keymap: crate::domain::keymap::Keymap,
     /// Text after `Co-authored-by: `; falls back to the handle from setup.
     pub co_author_name: Option<String>,
     /// Where the values came from, for `commitsmith config`.
@@ -222,7 +221,6 @@ impl Config {
             ticket_prefix: "TICKET".to_string(),
             reference: "Refs".to_string(),
             co_author: true,
-            keymap: crate::domain::keymap::Keymap::Default,
             compact_form: false,
             co_author_name: None,
             branch_template: "{type}/{author}/{ticket}/{slug}".to_string(),
@@ -348,9 +346,6 @@ impl Config {
         {
             self.branch_template = template.trim().to_string();
         }
-        if let Some(keymap) = file.keymap.as_deref() {
-            self.keymap = crate::domain::keymap::Keymap::parse(keymap);
-        }
         if let Some(co_author) = file.co_author {
             self.co_author = co_author;
         }
@@ -440,7 +435,6 @@ impl Config {
             branch_template: Some(self.branch_template.clone()),
             co_author: Some(self.co_author),
             compact_form: Some(self.compact_form),
-            keymap: Some(self.keymap.as_str().to_string()),
             co_author_name: self.co_author_name.clone(),
         };
         toml::to_string_pretty(&file).unwrap_or_default()
@@ -471,7 +465,6 @@ struct ConfigFile {
     branch_template: Option<String>,
     co_author: Option<bool>,
     compact_form: Option<bool>,
-    keymap: Option<String>,
     co_author_name: Option<String>,
     scopes: Option<Vec<String>>,
     emoji: Option<bool>,

@@ -37,6 +37,7 @@ pub(crate) fn draw_picker(frame: &mut Frame, picker: &Picker, area: Rect) {
         PickerKind::Scope => "scope",
         PickerKind::Profile => "profile",
         PickerKind::History => "recent commits",
+        PickerKind::Palette => "commands",
     };
     let filter = if picker.filter.is_empty() {
         "_".to_string()

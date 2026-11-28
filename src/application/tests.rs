@@ -466,6 +466,15 @@ fn ctrl(app: &mut App, c: char) {
     app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL));
 }
 
+/// Open the palette and run the action with this key, the way a user would.
+fn palette(app: &mut App, action: &str) {
+    press_with(app, KeyCode::Char('p'), KeyModifiers::CONTROL);
+    for c in action.chars() {
+        press(app, KeyCode::Char(c));
+    }
+    press(app, KeyCode::Enter);
+}
+
 fn press_with(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     app.handle_key(KeyEvent::new(code, modifiers));
 }
@@ -891,7 +900,7 @@ fn the_scope_reaches_the_message_while_typing() {
 fn ctrl_space_offers_what_the_field_can_use() {
     let mut app = App::with_config(Config::conventional(), Vec::new());
     // Type field: Ctrl+Space does not open the list, Enter does.
-    press_with(&mut app, KeyCode::Char(' '), KeyModifiers::CONTROL);
+    palette(&mut app, "suggest");
     assert!(app.picker.is_none(), "Ctrl+N stays away from the type list");
     assert!(app.status.contains("Enter"), "{}", app.status);
     press(&mut app, KeyCode::Enter);
@@ -901,7 +910,7 @@ fn ctrl_space_offers_what_the_field_can_use() {
     // Subject field: earlier commits, or a hint when there are none.
     press(&mut app, KeyCode::Tab);
     press(&mut app, KeyCode::Tab);
-    press_with(&mut app, KeyCode::Char(' '), KeyModifiers::CONTROL);
+    palette(&mut app, "suggest");
     assert!(
         app.picker.is_some() || app.status.contains("no commits"),
         "{}",
@@ -911,7 +920,7 @@ fn ctrl_space_offers_what_the_field_can_use() {
 
     // Body: no list, but an explanation.
     press(&mut app, KeyCode::Tab);
-    press_with(&mut app, KeyCode::Char(' '), KeyModifiers::CONTROL);
+    palette(&mut app, "suggest");
     assert!(app.picker.is_none(), "no list in the body");
     assert!(
         app.status.contains("no suggestions for body"),
@@ -1074,7 +1083,7 @@ fn a_cleared_footer_is_seeded_again() {
     app.focus(FIELDS.iter().position(|f| *f == Field::Footer).unwrap_or(0));
 
     // Ctrl+K on the footer: the suggestion comes straight back.
-    ctrl(&mut app, 'k');
+    ctrl(&mut app, 'u');
     assert_eq!(app.form.commit.footer, "Refs TICKET-42");
 
     // Typing is not overwritten: one backspace only shortens the text.
@@ -1097,7 +1106,7 @@ fn ctrl_space_offers_scopes_from_history() {
     });
     // Ctrl+Space follows the keyboard: scopes belong to the scope field.
     press(&mut app, KeyCode::Tab);
-    press_with(&mut app, KeyCode::Char(' '), KeyModifiers::CONTROL);
+    palette(&mut app, "suggest");
     press(&mut app, KeyCode::Down);
     press(&mut app, KeyCode::Enter);
     assert_eq!(app.form.commit.scope, "ui");
@@ -1188,7 +1197,7 @@ fn app_with_history() -> App {
 #[test]
 fn history_picker_carries_previews() {
     let mut app = app_with_history();
-    ctrl(&mut app, 'r');
+    palette(&mut app, "reuse");
     let picker = app.picker.as_ref().expect("history picker open");
     assert_eq!(picker.kind, PickerKind::History);
     assert_eq!(picker.items.len(), 2);
@@ -1207,7 +1216,7 @@ fn history_picker_carries_previews() {
 #[test]
 fn history_without_commits_reports_instead_of_opening() {
     let mut app = App::default();
-    ctrl(&mut app, 'r');
+    palette(&mut app, "reuse");
     assert!(app.picker.is_none());
     assert!(app.status.contains("no commits yet"));
 }
@@ -1222,7 +1231,7 @@ fn confirming_history_replaces_every_field() {
     app.form.commit.body = "old body".into();
     app.form.commit.breaking = "old breaking".into();
     app.form.commit.footer = "Refs TICKET-4711".into();
-    ctrl(&mut app, 'r');
+    palette(&mut app, "reuse");
     press(&mut app, KeyCode::Enter);
     assert_eq!(app.form.commit.kind, "feat");
     assert_eq!(app.form.commit.scope, "composer");
@@ -1254,7 +1263,7 @@ fn a_subject_suggestion_keeps_the_scope_that_was_typed() {
     app.form.commit.body = "my body".to_string();
     press(&mut app, KeyCode::Tab); // type -> scope
     press(&mut app, KeyCode::Tab); // scope -> subject
-    press_with(&mut app, KeyCode::Char(' '), KeyModifiers::CONTROL);
+    palette(&mut app, "suggest");
     assert!(app.picker.is_some(), "{}", app.status);
     press(&mut app, KeyCode::Enter);
 
@@ -1269,7 +1278,7 @@ fn a_reused_commit_without_scope_clears_the_scope() {
     let mut app = app_with_history();
     app.form.commit.scope = "leftover".into();
     app.form.commit.body = "leftover body".into();
-    ctrl(&mut app, 'r');
+    palette(&mut app, "reuse");
     // The second commit in the fixture has no scope and no body.
     press(&mut app, KeyCode::Down);
     press(&mut app, KeyCode::Enter);
@@ -1294,7 +1303,7 @@ fn reusing_seeds_the_footer_from_the_current_branch() {
         "",
     )]);
     app.form.commit.footer = "Refs TICKET-1".into();
-    ctrl(&mut app, 'r');
+    palette(&mut app, "reuse");
     press(&mut app, KeyCode::Enter);
     assert_eq!(app.form.commit.footer, "Refs TICKET-77", "seeded again");
 }
@@ -1302,7 +1311,7 @@ fn reusing_seeds_the_footer_from_the_current_branch() {
 #[test]
 fn history_filter_finds_a_commit_by_text() {
     let mut app = app_with_history();
-    ctrl(&mut app, 'r');
+    palette(&mut app, "reuse");
     type_text(&mut app, "crash");
     assert_eq!(app.picker.as_ref().unwrap().filtered().len(), 1);
     press(&mut app, KeyCode::Enter);
@@ -1317,7 +1326,7 @@ fn history_filter_finds_a_commit_by_text() {
 fn unknown_types_from_history_are_not_applied() {
     let mut app = App::default();
     app.set_history(vec![past("ccccccc3333333", "wip", None, "scratch", "")]);
-    ctrl(&mut app, 'r');
+    palette(&mut app, "reuse");
     press(&mut app, KeyCode::Enter);
     assert_eq!(app.form.commit.kind, "feat", "wip is not in the profile");
     // The type is not applied, but the subject still is: it is a commit
@@ -1331,14 +1340,14 @@ fn unknown_types_from_history_are_not_applied() {
 }
 
 #[test]
-fn ctrl_p_switches_profile_and_types() {
+fn the_palette_switches_the_profile() {
     let mut app = App::default();
-    ctrl(&mut app, 'p');
+    palette(&mut app, "profile");
     type_text(&mut app, "ang");
     press(&mut app, KeyCode::Enter);
     assert_eq!(app.config.profile, "angular");
     assert_eq!(app.form.commit.kind, app.config.type_names()[0]);
-    ctrl(&mut app, 'p');
+    palette(&mut app, "profile");
     type_text(&mut app, "atomic");
     press(&mut app, KeyCode::Enter);
     assert_eq!(app.config.profile, "atomic");
@@ -1380,18 +1389,18 @@ fn enter_in_body_starts_a_new_line() {
 }
 
 #[test]
-fn ctrl_s_renders_the_message() {
+fn ctrl_enter_renders_the_message() {
     let mut app = App::default();
     press(&mut app, KeyCode::Tab);
     press(&mut app, KeyCode::Tab);
     type_text(&mut app, "add composer");
-    ctrl(&mut app, 's');
+    press_with(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
     assert_eq!(app.output.as_deref(), Some("feat: add composer"));
     assert!(app.should_quit);
 }
 
 #[test]
-fn ctrl_k_clears_only_the_field_under_the_cursor() {
+fn ctrl_u_clears_only_the_field_under_the_cursor() {
     let mut app = App::default();
     press(&mut app, KeyCode::Tab);
     type_text(&mut app, "api");
@@ -1399,7 +1408,7 @@ fn ctrl_k_clears_only_the_field_under_the_cursor() {
     type_text(&mut app, "a subject");
     // Back to the scope, then clear it.
     press(&mut app, KeyCode::BackTab);
-    ctrl(&mut app, 'k');
+    ctrl(&mut app, 'u');
     assert_eq!(app.value(Field::Scope), "");
     assert_eq!(app.cursor(), 0);
     assert_eq!(app.value(Field::Subject), "a subject", "other fields stay");
@@ -1407,27 +1416,27 @@ fn ctrl_k_clears_only_the_field_under_the_cursor() {
 }
 
 #[test]
-fn ctrl_k_leaves_the_type_alone() {
+fn ctrl_u_leaves_the_type_alone() {
     let mut app = App::default();
     let before = app.value(Field::Type).to_string();
-    ctrl(&mut app, 'k');
+    ctrl(&mut app, 'u');
     assert_eq!(app.value(Field::Type), before);
     assert!(app.status.contains("type stays"));
 }
 
 #[test]
-fn ctrl_k_on_an_empty_field_says_so() {
+fn ctrl_u_on_an_empty_field_says_so() {
     let mut app = App::default();
     press(&mut app, KeyCode::Tab);
-    ctrl(&mut app, 'k');
+    ctrl(&mut app, 'u');
     assert!(app.status.contains("already empty"), "{}", app.status);
 }
 
 #[test]
-fn ctrl_s_refuses_to_finish_with_errors() {
+fn ctrl_enter_refuses_to_finish_with_errors() {
     let mut app = App::default();
     // 0.3.2 rendered "feat:" for an empty subject and committed it.
-    ctrl(&mut app, 's');
+    press_with(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
     assert!(
         app.output.is_none(),
         "an invalid message must not leave the app"
@@ -1438,14 +1447,14 @@ fn ctrl_s_refuses_to_finish_with_errors() {
 }
 
 #[test]
-fn ctrl_s_finishes_after_clearing_the_error() {
+fn ctrl_enter_finishes_after_clearing_the_error() {
     let mut app = App::default();
-    ctrl(&mut app, 's');
+    press_with(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
     assert!(app.output.is_none());
     press(&mut app, KeyCode::Tab);
     press(&mut app, KeyCode::Tab);
     type_text(&mut app, "add composer");
-    ctrl(&mut app, 's');
+    press_with(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
     assert_eq!(app.output.as_deref(), Some("feat: add composer"));
     assert!(app.should_quit);
 }
@@ -1551,7 +1560,7 @@ fn amend_of_a_published_commit_asks_first() {
     app.set_in_repository(true);
     app.set_git(Box::new(git));
     press_with(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
-    press_with(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL);
+    press_with(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
 
     assert!(app.output.is_none(), "nothing handed over yet");
     assert!(app.form.confirm_amend, "the question is open");
@@ -1575,7 +1584,7 @@ fn amend_of_an_unpushed_commit_goes_straight_through() {
     app.set_in_repository(true);
     app.set_git(Box::new(git));
     press_with(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
-    press_with(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL);
+    press_with(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
 
     assert!(!app.form.confirm_amend, "no question for local work");
     assert!(app.should_quit);
@@ -1618,7 +1627,7 @@ fn the_history_preview_loads_files_lazily_and_once() {
         past("bbbb222", "fix", None, "second", ""),
     ]);
 
-    press_with(&mut app, KeyCode::Char('r'), KeyModifiers::CONTROL);
+    palette(&mut app, "reuse");
     let reads = || -> Vec<String> {
         log.borrow()
             .iter()
@@ -1650,7 +1659,7 @@ fn a_commit_without_files_still_previews() {
     app.set_in_repository(true);
     app.set_git(Box::new(git));
     app.set_history(vec![past("cccc333", "docs", None, "no files", "")]);
-    app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+    palette(&mut app, "reuse");
     let preview = app.picker.as_ref().unwrap().preview().unwrap();
     assert!(preview.contains("docs: no files"), "{preview}");
 }
@@ -1926,31 +1935,31 @@ fn ctrl_enter_writes_the_message_like_ctrl_s() {
 }
 
 #[test]
-fn ctrl_space_opens_the_suggestions_for_the_field() {
+fn the_palette_opens_the_suggestions_for_the_field() {
     let (mut app, _) = staging_app();
     app.set_scopes(ScopeInfo {
         history: vec!["ui".into(), "api".into()],
         configured: Vec::new(),
     });
     press(&mut app, KeyCode::Tab); // scope is the field with a list
-    press_with(&mut app, KeyCode::Char(' '), KeyModifiers::CONTROL);
+    palette(&mut app, "suggest");
     assert!(
         app.picker.is_some(),
-        "Ctrl+Space opens the list: {}",
+        "the palette opens the list: {}",
         app.status
     );
-
+    // Ctrl+Space is gone (it is autocompletion in IDEs and swallowed by some
+    // terminals), so a bare NUL must do nothing at all any more.
     let (mut app, _) = staging_app();
     app.set_scopes(ScopeInfo {
         history: vec!["ui".into()],
         configured: Vec::new(),
     });
     press(&mut app, KeyCode::Tab);
-    // A terminal that sends NUL: crossterm may report it either way.
     press_with(&mut app, KeyCode::Null, KeyModifiers::NONE);
     assert!(
-        app.picker.is_some(),
-        "a bare NUL means the same: {}",
+        app.picker.is_none(),
+        "a stray NUL opens nothing: {}",
         app.status
     );
 }

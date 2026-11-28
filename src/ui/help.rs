@@ -11,7 +11,7 @@ use super::{HINT, MUTED, theme};
 pub(crate) fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     // Only what this tab can do, then the keys that work everywhere. A shortcut
     // that does nothing here would be worse than no help at all.
-    let mut rows = app.tab.help(app.commit_mode);
+    let mut rows = app.tab.help();
     rows.push(("", ""));
     rows.extend(Tab::global_help());
 

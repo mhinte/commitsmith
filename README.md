@@ -108,14 +108,14 @@ commitsmith --commit         # compose, then run `git commit -m <message>`
 git commit -m "$(commitsmith)"
 ```
 
-`Ctrl+S` finishes, but only when the message has no errors: the composer stays
+`Ctrl+Enter` finishes, but only when the message has no errors: the composer stays
 open and names the first problem otherwise. Without `--commit` the message goes
-to stdout and the footer says `C-s message`; with `--commit` git runs directly,
-the footer says `C-s commit`, and git's output (hooks, passphrase prompts,
+to stdout and the footer says `Ctrl+Enter message`; with `--commit` git runs directly,
+the footer says `Ctrl+Enter message`, and git's output (hooks, passphrase prompts,
 errors) is what you see. If git refuses, the message is printed again so it can
 be retried.
 
-`Ctrl+K` clears the field under the cursor — one field, nothing else. The type is
+`Ctrl+U` clears the field under the cursor — one field, nothing else. The type is
 a choice from the picker rather than text, so it stays.
 
 ### Lint an existing message
@@ -325,12 +325,12 @@ profile does not offer, leaves the current type alone.
 | `Space`, `Ctrl+T` | type picker: type to filter, `1`–`9` jump, `0` last |
 | `Ctrl+N` | scope suggestions: config entries, then scopes from commit history |
 | `Ctrl+P` | switch the type profile |
-| `Ctrl+K` | clear the field under the cursor (the type stays) |
+| `Ctrl+U` | clear the field under the cursor (the type stays) |
 | `Ctrl+R` | reuse type, scope and body of a recent commit, with preview |
 | `←` `→`, `h` `l` | previous/next type on the type field, cursor movement elsewhere |
-| `Ctrl+Space` | suggestions for the field: type, scope, recent subjects |
-| `Ctrl+Enter`, `Ctrl+S` | finish: print the message, or commit with `--commit` |
-| `Esc`, `Ctrl+Q` | quit without output |
+| `Ctrl+P` | commands: suggestions, reuse, type, profile, amend, quit — everything without a key |
+| `Ctrl+Enter` | finish: print the message, or commit with `--commit` |
+| `Ctrl+C` | quit without output |
 | `?` | key help overlay, only what the current tab and pane can do |
 
 On the file list (tab 2):
@@ -349,10 +349,9 @@ exports the section as `RELEASE-NOTES-<version>.md`.
 
 ## Editors and terminals
 
-`keymap = "ide"` in `config.toml` leads the footer with `Ctrl+Enter` and
-`Ctrl+Space`; `default` leads with `Ctrl+S` and `Ctrl+N`. Every key works in both
-profiles — the profile only decides what is advertised first, so a hand that
-knows one editor is not surprised.
+There is one key set, no keymap profiles: `Ctrl+K`, `Ctrl+S`, `Ctrl+Space` and `Ctrl+Q`
+are claimed by terminals and IDEs (XOFF, autocompletion, clear-screen), so the program
+uses `Ctrl+U`, `Ctrl+Enter` and a palette on `Ctrl+P` instead.
 
 **Visual Studio** (2022): `View > Terminal` or ``Ctrl+` `` opens a real terminal
 window; type `commitsmith` there and every key above works, because the window is
