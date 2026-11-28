@@ -2,7 +2,7 @@
 """Drive the composer through a pty and read the rendered screen back.
 
 Used as a smoke test: it starts the binary in a temporary repository, types a
-name into the first-start dialog, fills the subject and submits with Ctrl+S,
+name into the first-start dialog, fills the subject and submits with Ctrl+D,
 then reports what the terminal actually showed.
 """
 
@@ -99,19 +99,20 @@ def run_session(script, commit=False):
 
 def main():
     # --commit: the same path a user takes when the message goes straight to git.
-    # The scope is typed, cleared with Ctrl+K and typed again, so the clear key
-    # is exercised on the way to the commit.
+    # The scope is typed, cleared with Ctrl+U and typed again, so the clear key
+    # is exercised on the way to the commit. (Ctrl+K is gone: VS Code's terminal
+    # clears itself with it.)
     screen, head, config, repo = run_session(
         [
             "Marc Hinte",
             "\r",
             "\t",
             "wrongscope",
-            "\x0b",          # Ctrl+K clears the scope
+            "\x15",          # Ctrl+U clears the scope
             "api",
             "\t",
             "add greeting file",
-            "\x13",
+            "\x04",          # Ctrl+D writes the message
         ],
         commit=True,
     )

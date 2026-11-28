@@ -108,10 +108,10 @@ commitsmith --commit         # compose, then run `git commit -m <message>`
 git commit -m "$(commitsmith)"
 ```
 
-`Ctrl+Enter` finishes, but only when the message has no errors: the composer stays
+`Ctrl+D` finishes, but only when the message has no errors: the composer stays
 open and names the first problem otherwise. Without `--commit` the message goes
-to stdout and the footer says `Ctrl+Enter message`; with `--commit` git runs directly,
-the footer says `Ctrl+Enter message`, and git's output (hooks, passphrase prompts,
+to stdout and the footer says `Ctrl+D message`; with `--commit` git runs directly,
+the footer says `Ctrl+D message`, and git's output (hooks, passphrase prompts,
 errors) is what you see. If git refuses, the message is printed again so it can
 be retried.
 
@@ -329,7 +329,7 @@ profile does not offer, leaves the current type alone.
 | `Ctrl+R` | reuse type, scope and body of a recent commit, with preview |
 | `←` `→`, `h` `l` | previous/next type on the type field, cursor movement elsewhere |
 | `Ctrl+P` | commands: suggestions, reuse, type, profile, amend, quit — everything without a key |
-| `Ctrl+Enter` | finish: print the message, or commit with `--commit` |
+| `Ctrl+D` | finish: print the message, or commit with `--commit` |
 | `Ctrl+C` | quit without output |
 | `?` | key help overlay, only what the current tab and pane can do |
 
@@ -351,7 +351,8 @@ exports the section as `RELEASE-NOTES-<version>.md`.
 
 There is one key set, no keymap profiles: `Ctrl+K`, `Ctrl+S`, `Ctrl+Space` and `Ctrl+Q`
 are claimed by terminals and IDEs (XOFF, autocompletion, clear-screen), so the program
-uses `Ctrl+U`, `Ctrl+Enter` and a palette on `Ctrl+P` instead.
+uses `Ctrl+U`, `Ctrl+D` and a palette on `Ctrl+P` instead — `Ctrl+Enter` also
+works, but most terminals cannot tell it from a plain Enter.
 
 **Visual Studio** (2022): `View > Terminal` or ``Ctrl+` `` opens a real terminal
 window; type `commitsmith` there and every key above works, because the window is

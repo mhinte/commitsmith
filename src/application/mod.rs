@@ -1456,6 +1456,10 @@ impl App {
             // Only Ctrl+C: Ctrl+Q is XON and would resume output the terminal
             // stopped with Ctrl+S, and Ctrl+S itself is gone (see `keys.rs`).
             KeyCode::Char('c') if ctrl => self.should_quit = true,
+            // Ctrl+D is a plain control character: every terminal sends it. Ctrl+Enter
+            // is nicer to type but most terminals cannot tell it from Enter, so it is
+            // an extra, not the advertised key (see `keys.rs`).
+            KeyCode::Char('d') if ctrl => self.finish(),
             KeyCode::Enter if ctrl => self.finish(),
             KeyCode::Char('u') if ctrl => self.clear_field(),
             KeyCode::Char('n') if ctrl => self.start_new_commit(),
