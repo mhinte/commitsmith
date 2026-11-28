@@ -179,3 +179,21 @@ fn git_is_started_in_one_place_only() {
         "git is started outside infrastructure/process.rs: {offenders:?}"
     );
 }
+
+#[test]
+fn main_stays_a_dispatch_layer() {
+    // 1009 lines with twenty `run_*` functions, and every new hook command made it
+    // longer. The commands live in `src/cli/` now; `main.rs` parses and dispatches.
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs");
+    let text = fs::read_to_string(&path).unwrap_or_default();
+    let lines = text.lines().count();
+    assert!(
+        lines < 300,
+        "src/main.rs has {lines} lines; commands belong in src/cli/"
+    );
+    let commands = text.matches("pub(crate) fn run_").count();
+    assert_eq!(
+        commands, 0,
+        "a `run_*` command belongs in src/cli/, not in main.rs"
+    );
+}
