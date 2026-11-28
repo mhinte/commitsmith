@@ -3,6 +3,9 @@
 //! Nothing here touches `gix` or spawns a process; the state comes from
 //! [`crate::application`] and is only read.
 
+pub mod compact;
+pub mod footer;
+pub mod help;
 pub mod hooks_wizard;
 pub mod init;
 pub mod picker;
@@ -26,30 +29,28 @@ use crate::app::{App, FIELDS, Field, Picker, PickerKind};
 use crate::application::tabs::Tab;
 use crate::validate::{self, Severity};
 
-use commitsmith::domain::text::{fit, fit_left};
-
 use self::form::{draw_form, wrap_field};
 use self::picker::draw_picker;
 
-const LABEL_WIDTH: usize = 10;
+pub(crate) const LABEL_WIDTH: usize = 10;
 /// Columns from the inner edge to the first character of a value: one leading
 /// space, the padded label, then the `▌ ` marker. The caret is placed with this
 /// offset, so a change to the label layout cannot shift it by a column again.
-const VALUE_OFFSET: u16 = LABEL_WIDTH as u16 + 3;
+pub(crate) const VALUE_OFFSET: u16 = LABEL_WIDTH as u16 + 3;
 /// Rows a multiline field may occupy in the form.
-const MULTILINE_ROWS: u16 = 3;
+pub(crate) const MULTILINE_ROWS: u16 = 3;
 /// Below this height the full form does not fit, so one field is shown at a time.
-const COMPACT_HEIGHT: u16 = 24;
-const COMPACT_WIDTH: u16 = 62;
+pub(crate) const COMPACT_HEIGHT: u16 = 24;
+pub(crate) const COMPACT_WIDTH: u16 = 62;
 
-const KEY: Style = Style::new().fg(Color::Black).bg(Color::DarkGray);
+pub(crate) const KEY: Style = Style::new().fg(Color::Black).bg(Color::DarkGray);
 
 /// "1 error", "2 errors" — the counts sit in titles the user reads constantly.
 fn plural(count: usize, word: &str) -> String {
     commitsmith::domain::text::plural(count, word)
 }
-const HINT: Style = theme::hint();
-const MUTED: Style = theme::muted();
+pub(crate) const HINT: Style = theme::hint();
+pub(crate) const MUTED: Style = theme::muted();
 
 pub mod branch_wizard;
 pub mod branches;
@@ -62,7 +63,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
     if area.height < COMPACT_HEIGHT || area.width < COMPACT_WIDTH {
-        draw_compact(frame, app, area);
+        compact::draw_compact(frame, app, area);
     } else {
         draw_full(frame, app, area);
     }
@@ -71,7 +72,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         draw_picker(frame, picker, area);
     }
     if app.show_help {
-        draw_help(frame, app, area);
+        help::draw_help(frame, app, area);
     }
 }
 
@@ -146,7 +147,7 @@ fn draw_full(frame: &mut Frame, app: &App, area: Rect) {
             None
         }
     };
-    draw_footer(frame, app, footer);
+    footer::draw_footer(frame, app, footer);
 
     if let Some((x, y)) = cursor {
         frame.set_cursor_position(Position::new(x, y));
@@ -287,340 +288,6 @@ fn draw_content(frame: &mut Frame, app: &App, area: Rect) {
             .wrap(Wrap { trim: true }),
         area,
     );
-}
-
-/// Narrow or short terminal: only the active field, everything else in one line.
-fn draw_compact(frame: &mut Frame, app: &App, area: Rect) {
-    let [header, body, footer] = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Min(3),
-        Constraint::Length(1),
-    ])
-    .areas(area);
-
-    let (errors, warnings) = validate::count(&app.issues);
-    // Count only the fields this mode can reach: the optional ones are hidden,
-    // and "2/6" while three fields are on screen was a lie. An amend has to be
-    // visible here too — Ctrl+S replaces a commit instead of creating one.
-    let visible: Vec<Field> = FIELDS
-        .iter()
-        .copied()
-        .filter(|field| app.field_visible(*field))
-        .collect();
-    let position = visible
-        .iter()
-        .position(|field| *field == app.active_field())
-        .map_or(0, |index| index + 1);
-    let step = match app.form.amend {
-        true => format!("{position}/{} · amend", visible.len()),
-        false => format!("{position}/{}", visible.len()),
-    };
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(MUTED)
-        // No program name here any more: it lives in the corner.
-        .title(Line::from(Span::styled(
-            format!(" {step} "),
-            theme::accent(),
-        )))
-        .title_top(
-            Line::from(Span::styled(format!(" {errors}✗ {warnings}! "), MUTED)).right_aligned(),
-        );
-
-    let header_line = Line::from(vec![
-        Span::styled(format!(" {} ", app.form.commit.kind), theme::accent()),
-        Span::styled(
-            format!(
-                "{} chars · {}",
-                app.form.commit.subject.chars().count(),
-                app.active_field().label()
-            ),
-            MUTED,
-        ),
-    ]);
-    frame.render_widget(Paragraph::new(header_line).block(block), header);
-
-    let inner_width = body.width.saturating_sub(4) as usize;
-    let value = app.value(app.active_field());
-    let mut lines = vec![Line::styled(
-        format!("{}  {}", app.active_field().label(), app.field_hint()),
-        MUTED,
-    )];
-    if app.active_field() == Field::Type {
-        lines.push(Line::styled(
-            format!("[ {} ]", value),
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ));
-    } else if value.is_empty() {
-        lines.push(Line::styled("(empty)", MUTED));
-    } else {
-        for row in wrap_field(value, inner_width.max(8)) {
-            lines.push(Line::raw(row));
-        }
-    }
-    lines.push(Line::styled(
-        format!(
-            "→ {}",
-            app.form.commit.render().lines().next().unwrap_or_default()
-        ),
-        MUTED,
-    ));
-
-    frame.render_widget(
-        Paragraph::new(Text::from(lines))
-            .block(
-                Block::bordered()
-                    .border_type(BorderType::Rounded)
-                    .border_style(theme::accent()),
-            )
-            .wrap(Wrap { trim: false }),
-        body,
-    );
-
-    // The name and version belong in the corner here too, but the narrow form
-    // has to fit beside the keys.
-    let version = match app.status.is_empty() {
-        // A note or a problem is worth more than the version number, and this
-        // row is the only place the compact form can show one.
-        false => format!("{} ", app.status),
-        true => format!("v{} ", env!("CARGO_PKG_VERSION")),
-    };
-    let version_width = if footer.width >= 54 {
-        version.chars().count() as u16
-    } else {
-        0
-    };
-    let [keys_area, version_area] =
-        Layout::horizontal([Constraint::Min(10), Constraint::Length(version_width)]).areas(footer);
-
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(" Tab ", KEY),
-            Span::styled("next ", HINT),
-            Span::styled(" Enter ", KEY),
-            Span::styled("ok ", HINT),
-            Span::styled(" C-k ", KEY),
-            Span::styled("clear ", HINT),
-            Span::styled(" C-s ", KEY),
-            Span::styled(
-                if app.commit_mode {
-                    "commit "
-                } else {
-                    "message "
-                },
-                HINT,
-            ),
-            Span::styled(" ? ", KEY),
-            Span::styled("help", HINT),
-        ])),
-        keys_area,
-    );
-    if version_width > 0 {
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(version, MUTED))).right_aligned(),
-            version_area,
-        );
-    }
-}
-
-fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
-    // Only what this tab can do, then the keys that work everywhere. A shortcut
-    // that does nothing here would be worse than no help at all.
-    let mut rows = app.tab.help(app.commit_mode);
-    rows.push(("", ""));
-    rows.extend(Tab::global_help());
-
-    let height = rows.len() as u16 + 2;
-    let width = area.width.saturating_sub(4).clamp(30, 72);
-    let popup = Rect {
-        x: area.x + (area.width.saturating_sub(width)) / 2,
-        y: area.y + (area.height.saturating_sub(height)) / 2,
-        width,
-        height,
-    };
-    frame.render_widget(Clear, popup);
-
-    let lines: Vec<Line> = rows
-        .iter()
-        .map(|(key, text)| {
-            if key.is_empty() && text.is_empty() {
-                return Line::raw("");
-            }
-            if key.is_empty() {
-                // A note about the tab, not a shortcut.
-                return Line::styled(format!(" {text}"), MUTED);
-            }
-            Line::from(vec![
-                Span::styled(format!(" {key:<16}"), theme::accent()),
-                Span::styled(*text, HINT),
-            ])
-        })
-        .collect();
-
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(theme::accent())
-        .title(Span::styled(
-            format!(" keys · {} ", app.tab.label()),
-            theme::accent(),
-        ));
-
-    frame.render_widget(Paragraph::new(Text::from(lines)).block(block), popup);
-}
-
-fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
-    // The active tab decides which keys are advertised: a shortcut that does
-    // nothing here would be a lie in the footer. The last two entries are the
-    // global ones (`1-3`, `?`) and stay, the middle ones are dropped when the
-    // line gets too narrow.
-    let keys = app
-        .tab
-        .pane_keys(app.branches.panel, app.commit_mode, app.config.keymap);
-    let globals = keys.len().saturating_sub(2);
-    let primary = &keys[..4.min(globals)];
-    let secondary = &keys[4.min(globals)..globals];
-    let essential_count = primary.len() + (keys.len() - globals);
-    let essentials: Vec<(&str, &str)> = primary
-        .iter()
-        .copied()
-        .chain(keys[globals..].iter().copied())
-        .collect();
-    let optional: Vec<(&str, &str)> = secondary.to_vec();
-    let _ = essential_count;
-
-    let measure = |entries: &[(&str, &str)]| -> usize {
-        entries
-            .iter()
-            .enumerate()
-            .map(|(index, (key, label))| {
-                let own = key.chars().count() + label.chars().count() + 3;
-                if index == 0 { own } else { own + 1 }
-            })
-            .sum()
-    };
-
-    // Insert the optional hints after "Tab" while they fit, most useful first.
-    let select = |budget: usize| -> Vec<(&str, &str)> {
-        let mut entries: Vec<(&str, &str)> = essentials.to_vec();
-        for take in 1..=optional.len() {
-            let mut candidate = essentials.to_vec();
-            for (index, extra) in optional.iter().take(take).enumerate() {
-                candidate.insert(1 + index, *extra);
-            }
-            if measure(&candidate) <= budget {
-                entries = candidate;
-            } else {
-                break;
-            }
-        }
-        entries
-    };
-
-    // The corner shows the name and the version. If the essentials cannot fit
-    // beside the name, the number alone has to do — but the hints win.
-    // The context takes the right end of this row; the keys only get what is left.
-    let context = branch_context(app, area.width);
-    let context_width = unicode_width::UnicodeWidthStr::width(context.as_str()) as u16;
-    let entries = select(area.width.saturating_sub(context_width + 1) as usize);
-
-    let mut spans = Vec::new();
-    for (index, (key, label)) in entries.iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::raw(" "));
-        }
-        spans.push(Span::styled(format!(" {key} "), KEY));
-        spans.push(Span::styled(format!(" {label}"), HINT));
-    }
-    // The branch context moved up here, where the version used to sit: the same
-    // row as the keys, the same place the eye looks for it.
-    let [keys_area, context_area] =
-        Layout::horizontal([Constraint::Min(10), Constraint::Length(context_width)])
-            .areas(Rect { height: 1, ..area });
-
-    frame.render_widget(Paragraph::new(Line::from(spans)), keys_area);
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            context,
-            if app.repo.in_repository {
-                MUTED
-            } else {
-                theme::warn()
-            },
-        )))
-        .right_aligned(),
-        context_area,
-    );
-
-    let second_row = Rect {
-        y: area.y + 1,
-        height: 1,
-        ..area
-    };
-
-    // Branch and profile are context, not decisions: they sit at the far right
-    // of the second row, out of the way of the message.
-    // Branch, sync state and profile: context, not decisions. The short `↑n ↓n`
-    // form keeps its room even when the footer is busy.
-    // The staging list is narrow, so the footer names the file under the cursor in
-    // full. The status keeps its place: the path is shortened first.
-    let room = second_row.width.saturating_sub(2) as usize;
-    let mut left = Vec::new();
-    let mut used = 0;
-    if let Some(path) = highlighted_file(app) {
-        let status_width = if app.status.is_empty() {
-            0
-        } else {
-            unicode_width::UnicodeWidthStr::width(app.status.as_str()) + 2
-        };
-        let shown = fit_left(&path, room.saturating_sub(status_width).max(12));
-        used = unicode_width::UnicodeWidthStr::width(shown.as_str()) + 2;
-        left.push(Span::styled(format!(" {shown}  "), HINT));
-    }
-    if !app.status.is_empty() {
-        // The status must not run under the context: it is cut, not overwritten.
-        let status = fit(&app.status, room.saturating_sub(used));
-        left.push(Span::styled(status, theme::accent()));
-    }
-    if !left.is_empty() {
-        frame.render_widget(
-            Paragraph::new(Line::from(left)),
-            Rect {
-                width: (room as u16).saturating_add(1),
-                ..second_row
-            },
-        );
-    }
-}
-
-/// Branch, sync state and profile: context, not decisions.
-fn branch_context(app: &App, width: u16) -> String {
-    // A narrow footer cannot carry branch, sync state and profile without eating
-    // the keys; the profile is the part that stays.
-    if width < 100 {
-        return format!("{} ", app.config.profile);
-    }
-    if !app.repo.in_repository {
-        return format!("no git repository · {} ", app.config.profile);
-    }
-    let mut parts: Vec<String> = Vec::new();
-    if !app.repo.line.is_empty() {
-        parts.push(app.repo.line.clone());
-    }
-    if let Some(sync) = app.sync_label() {
-        parts.push(sync);
-    }
-    parts.push(app.config.profile.clone());
-    format!("{} ", parts.join(" · "))
-}
-
-/// The file the staging cursor sits on, if this tab shows one.
-fn highlighted_file(app: &App) -> Option<String> {
-    // Tab 1 has no file list; there the footer is free for the status.
-    (app.tab == crate::application::tabs::Tab::Branches)
-        .then(|| app.branches.files.selected_path())
-        .flatten()
 }
 
 /// How long a tick waits for a key before the loop looks at its state again.
