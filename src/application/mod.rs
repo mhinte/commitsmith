@@ -11,6 +11,7 @@ pub mod branches_view;
 pub mod composer;
 pub mod form;
 pub mod history_view;
+pub mod keys;
 pub mod log;
 pub mod navigation;
 pub mod picker;
@@ -122,6 +123,8 @@ pub enum PickerKind {
     Profile,
     /// Recent commits, reuseable as a template.
     History,
+    /// Every action that does not need its own key.
+    Palette,
 }
 
 impl Picker {
@@ -1026,6 +1029,41 @@ impl App {
     /// Ctrl+Space asks the field that has the keyboard what it has to offer:
     /// types in the type field, scopes in the scope field, earlier commits in
     /// the subject. Anywhere else it says so instead of opening the wrong list.
+    /// `Ctrl+P`: every action that has no collision-free key of its own.
+    ///
+    /// It is the same list the table advertises, so a key that disappears from the
+    /// footer is still reachable — with a character every terminal sends.
+    pub(crate) fn open_palette(&mut self) {
+        let entries = crate::application::keys::palette_entries();
+        let items: Vec<String> = entries.iter().map(|(label, _)| label.clone()).collect();
+        let values: Vec<String> = entries.iter().map(|(_, key)| key.clone()).collect();
+        self.open_picker(PickerKind::Palette, items, values);
+    }
+
+    /// Run the action behind a palette entry.
+    fn run_action(&mut self, key: &str) {
+        use crate::application::keys::Action;
+        match Action::from_key(key) {
+            Some(Action::Suggest) => self.open_suggestions(),
+            Some(Action::Reuse) => self.open_history_picker(true),
+            Some(Action::TypePicker) => self.open_type_picker(),
+            Some(Action::ProfilePicker) => self.open_profile_picker(),
+            Some(Action::ClearField) => self.clear_field(),
+            Some(Action::NewCommit) => self.start_new_commit(),
+            Some(Action::Amend) => self.begin_amend(),
+            Some(Action::ToggleCompact) => self.toggle_compact_form(),
+            Some(Action::Setup) => {
+                self.setup_request = true;
+                self.should_quit = true;
+            }
+            Some(Action::Help) => self.show_help = true,
+            Some(Action::Quit) => self.should_quit = true,
+            // `Finish` and `Palette` itself have their own keys; running them from
+            // the palette would only bounce the user back here.
+            Some(Action::Finish | Action::Palette) | None => {}
+        }
+    }
+
     fn open_suggestions(&mut self) {
         match self.active_field() {
             Field::Type => {
@@ -1415,20 +1453,19 @@ impl App {
                 self.setup_request = true;
                 self.should_quit = true;
             }
-            KeyCode::Char('c' | 'q') if ctrl => self.should_quit = true,
-            KeyCode::Char('s') if ctrl => self.finish(),
-            // The IDE pair: what Ctrl+Space and Ctrl+Enter do in an editor.
-            // Terminals send Ctrl+Space as NUL, which some of them report as
-            // `Null` and others as `Char('\0')` — both mean "suggestions".
-            KeyCode::Null | KeyCode::Char('\0') => self.open_suggestions(),
-            KeyCode::Char(' ') if ctrl => self.open_suggestions(),
+            // Only Ctrl+C: Ctrl+Q is XON and would resume output the terminal
+            // stopped with Ctrl+S, and Ctrl+S itself is gone (see `keys.rs`).
+            KeyCode::Char('c') if ctrl => self.should_quit = true,
+            // Ctrl+D is a plain control character: every terminal sends it. Ctrl+Enter
+            // is nicer to type but most terminals cannot tell it from Enter, so it is
+            // an extra, not the advertised key (see `keys.rs`).
+            KeyCode::Char('d') if ctrl => self.finish(),
             KeyCode::Enter if ctrl => self.finish(),
-            KeyCode::Char('k') if ctrl => self.clear_field(),
+            KeyCode::Char('u') if ctrl => self.clear_field(),
             KeyCode::Char('n') if ctrl => self.start_new_commit(),
             KeyCode::Char('t') if ctrl => self.open_type_picker(),
-            KeyCode::Char('p') if ctrl => self.open_profile_picker(),
-            KeyCode::Char('r') if ctrl => self.open_history_picker(true),
-            KeyCode::Char('q') if self.active_field() == Field::Type => self.should_quit = true,
+            // Everything that cannot have a collision-free key lives in the palette.
+            KeyCode::Char('p') if ctrl => self.open_palette(),
             KeyCode::Tab => self.next_field(),
             KeyCode::BackTab => self.previous_field(),
             // The type list: Enter (and Space) open it, Ctrl+N is for the

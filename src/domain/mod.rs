@@ -10,7 +10,6 @@ pub mod commit;
 pub mod errors;
 pub mod hints;
 pub mod history;
-pub mod keymap;
 pub mod log;
 pub mod ports;
 pub mod prefill;

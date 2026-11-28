@@ -305,8 +305,8 @@ fn the_help_shows_the_keys_of_the_active_tab() {
     terminal.draw(|frame| draw(frame, &app)).unwrap();
     let screen = rows(&terminal).join("\n");
     assert!(screen.contains("keys · Commit"), "{screen}");
-    assert!(screen.contains("type picker"), "{screen}");
-    assert!(!screen.contains("check out"), "{screen}");
+    assert!(screen.contains("open the type list"), "{screen}");
+    assert!(!screen.contains("checkout"), "{screen}");
 
     // Tab 2: the explorer's keys, and no commit shortcut.
     let mut app = branch_app();
@@ -314,9 +314,9 @@ fn the_help_shows_the_keys_of_the_active_tab() {
     terminal.draw(|frame| draw(frame, &app)).unwrap();
     let screen = rows(&terminal).join("\n");
     assert!(screen.contains("keys · Branches"), "{screen}");
-    assert!(screen.contains("check out the selected branch"), "{screen}");
-    assert!(screen.contains("merge the selected branch"), "{screen}");
-    assert!(!screen.contains("type picker"), "{screen}");
+    assert!(screen.contains("checkout"), "{screen}");
+    assert!(screen.contains("merge"), "{screen}");
+    assert!(!screen.contains("the type list"), "{screen}");
     assert!(!screen.contains("Ctrl+S"), "{screen}");
 }
 
@@ -688,11 +688,19 @@ fn the_footer_fits_eighty_columns() {
             .collect();
         let footer = rows
             .iter()
-            .find(|row| row.contains("C-k"))
+            .find(|row| row.contains("Ctrl+U"))
             .unwrap_or_else(|| panic!("no footer at width {width}: {rows:?}"));
         // The essentials have to be readable at every width, including the
         // last entry, which used to be cut off at 80 columns.
-        for needed in ["Tab", "next", "C-k", "clear", "C-s", "?", "help"] {
+        for needed in [
+            "Tab",
+            "next",
+            "Ctrl+U",
+            "clear",
+            "Ctrl+Enter",
+            "message",
+            "?",
+        ] {
             assert!(
                 footer.contains(needed),
                 "{needed:?} missing at {width}: {footer:?}"

@@ -148,9 +148,10 @@ fn counter(app: &App, field: Field) -> String {
 }
 
 /// The keys, and the status or the version in the corner.
+///
+/// The row comes from the one table (`application::keys`), so the miniature view
+/// cannot advertise a key the full form has already dropped.
 fn draw_keys(frame: &mut Frame, app: &App, footer: Rect) {
-    // The name and version belong in the corner here too, but the narrow form
-    // has to fit beside the keys.
     let corner = match app.status.is_empty() {
         // A note or a problem is worth more than the version number, and this
         // row is the only place the compact form can show one.
@@ -165,28 +166,19 @@ fn draw_keys(frame: &mut Frame, app: &App, footer: Rect) {
     let [keys_area, corner_area] =
         Layout::horizontal([Constraint::Min(10), Constraint::Length(corner_width)]).areas(footer);
 
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(" Tab ", KEY),
-            Span::styled("next ", HINT),
-            Span::styled(" Enter ", KEY),
-            Span::styled("ok ", HINT),
-            Span::styled(" C-k ", KEY),
-            Span::styled("clear ", HINT),
-            Span::styled(" C-s ", KEY),
-            Span::styled(
-                if app.commit_mode {
-                    "commit "
-                } else {
-                    "message "
-                },
-                HINT,
-            ),
-            Span::styled(" ? ", KEY),
-            Span::styled("help", HINT),
-        ])),
-        keys_area,
-    );
+    // Only what fits: the same rule as the footer under the full form.
+    let mut spans = Vec::new();
+    let mut used = 0;
+    for (key, label) in crate::application::keys::footer(crate::application::tabs::Tab::Commit) {
+        let width = key.chars().count() + label.chars().count() + 3;
+        if used + width > keys_area.width as usize {
+            break;
+        }
+        used += width;
+        spans.push(Span::styled(format!(" {key} "), KEY));
+        spans.push(Span::styled(format!(" {label}"), HINT));
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), keys_area);
     if corner_width > 0 {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(corner, MUTED))).right_aligned(),

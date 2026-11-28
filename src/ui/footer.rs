@@ -14,9 +14,7 @@ pub(crate) fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     // nothing here would be a lie in the footer. The last two entries are the
     // global ones (`1-3`, `?`) and stay, the middle ones are dropped when the
     // line gets too narrow.
-    let keys = app
-        .tab
-        .pane_keys(app.branches.panel, app.commit_mode, app.config.keymap);
+    let keys = app.tab.pane_keys(app.branches.panel);
     let globals = keys.len().saturating_sub(2);
     let primary = &keys[..4.min(globals)];
     let secondary = &keys[4.min(globals)..globals];
