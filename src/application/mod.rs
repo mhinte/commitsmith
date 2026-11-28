@@ -958,38 +958,6 @@ impl App {
         self.commit_mode = commit;
     }
 
-    pub fn active_field(&self) -> Field {
-        FIELDS[self.form.field.min(FIELDS.len() - 1)]
-    }
-
-    /// Cursor of the active field.
-    pub fn cursor(&self) -> usize {
-        self.form.cursors[self.form.field]
-    }
-
-    /// Value of a field, for rendering.
-    pub fn value(&self, field: Field) -> &str {
-        match field {
-            Field::Type => &self.form.commit.kind,
-            Field::Scope => &self.form.commit.scope,
-            Field::Subject => &self.form.commit.subject,
-            Field::Body => &self.form.commit.body,
-            Field::Breaking => &self.form.commit.breaking,
-            Field::Footer => &self.form.commit.footer,
-        }
-    }
-
-    fn value_mut(&mut self, field: Field) -> &mut String {
-        match field {
-            Field::Type => &mut self.form.commit.kind,
-            Field::Scope => &mut self.form.commit.scope,
-            Field::Subject => &mut self.form.commit.subject,
-            Field::Body => &mut self.form.commit.body,
-            Field::Breaking => &mut self.form.commit.breaking,
-            Field::Footer => &mut self.form.commit.footer,
-        }
-    }
-
     pub fn revalidate(&mut self) {
         self.issues = validate::validate_with(&self.form.commit, &self.rules);
     }
@@ -1217,82 +1185,6 @@ impl App {
         self.output = Some(self.form.commit.render());
         self.should_quit = true;
         self.status = "handing the message over".to_string();
-    }
-
-    fn insert(&mut self, c: char) {
-        let field = self.active_field();
-        if field == Field::Type {
-            return;
-        }
-        let cursor = self.form.cursors[self.form.field];
-        let value = self.value_mut(field);
-        let mut chars: Vec<char> = value.chars().collect();
-        chars.insert(cursor.min(chars.len()), c);
-        *value = chars.into_iter().collect();
-        self.form.cursors[self.form.field] = (cursor + 1).min(value.chars().count());
-        self.revalidate();
-    }
-
-    fn move_cursor(&mut self, delta: isize) {
-        let len = self.value(self.active_field()).chars().count();
-        let cursor = self.form.cursors[self.form.field];
-        let next = if delta < 0 {
-            cursor.saturating_sub(delta.unsigned_abs())
-        } else {
-            (cursor + delta as usize).min(len)
-        };
-        self.form.cursors[self.form.field] = next;
-    }
-
-    /// `↑`/`↓` inside a multiline field stay on the line where possible, and
-    /// move to the neighbouring field at the first or last line.
-    fn line_move(&mut self, delta: isize) {
-        let field = self.active_field();
-        if !field.multiline() {
-            if delta < 0 {
-                self.previous_field();
-            } else {
-                self.next_field();
-            }
-            return;
-        }
-        let value = self.value(field).to_string();
-        let cursor = self.form.cursors[self.form.field];
-        let chars: Vec<char> = value.chars().collect();
-        let line_start = chars[..cursor.min(chars.len())]
-            .iter()
-            .rposition(|c| *c == '\n')
-            .map(|idx| idx + 1)
-            .unwrap_or(0);
-        let column = cursor - line_start;
-
-        if delta < 0 {
-            if line_start == 0 {
-                self.previous_field();
-                return;
-            }
-            let prev_start = chars[..line_start - 1]
-                .iter()
-                .rposition(|c| *c == '\n')
-                .map(|idx| idx + 1)
-                .unwrap_or(0);
-            let prev_len = line_start - 1 - prev_start;
-            self.form.cursors[self.form.field] = prev_start + column.min(prev_len);
-        } else {
-            let rest: Vec<char> = chars[cursor.min(chars.len())..].to_vec();
-            match rest.iter().position(|c| *c == '\n') {
-                Some(offset) => {
-                    let line_end = cursor + offset;
-                    let next_start = line_end + 1;
-                    let next_len = chars[next_start..]
-                        .iter()
-                        .position(|c| *c == '\n')
-                        .unwrap_or(chars.len() - next_start);
-                    self.form.cursors[self.form.field] = next_start + column.min(next_len);
-                }
-                None => self.next_field(),
-            }
-        }
     }
 
     /// One Esc, one layer. Closes whatever is on top and says whether it handled
