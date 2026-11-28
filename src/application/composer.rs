@@ -1,8 +1,11 @@
-//! Typing into the commit: cursor, fields, focus and the keys that edit them.
+//! The keys that edit the commit, and what the form change means for the screen.
 //!
-//! The value accessors stay on `App` next to the state they read; everything
-//! that moves a cursor or a value lives here.
+//! The editing itself lives on [`Form`] (`application/form.rs`) and answers
+//! whether it changed something; this file only adds what needs the rest of the
+//! program — revalidating the message, seeding the footer from the branch, and
+//! writing the status line.
 
+use super::form::Cleared;
 use super::*;
 
 impl App {
@@ -10,7 +13,7 @@ impl App {
     ///
     /// `seed_footer` only writes while the footer is empty or still holds an
     /// earlier suggestion, so typed text is never overwritten — this only brings
-    /// the suggestion back after Ctrl+K or after deleting the last character.
+    /// the suggestion back after Ctrl+U or after deleting the last character.
     fn reseed_empty_footer(&mut self) {
         if self.form.commit.footer.trim().is_empty() {
             self.form.footer_seed = None;
@@ -20,10 +23,9 @@ impl App {
 
     /// Ctrl+N: start over with an empty message.
     ///
-    /// Ctrl+N used to open the suggestions, which is what Ctrl+Space is for. The
-    /// type follows the branch again (as it does on a fresh start) and the footer
-    /// is seeded from the branch, so a new commit starts in the state the branch
-    /// implies instead of in the state of the last one.
+    /// The type follows the branch again (as it does on a fresh start) and the
+    /// footer is seeded from the branch, so a new commit starts in the state the
+    /// branch implies instead of in the state of the last one.
     pub(crate) fn start_new_commit(&mut self) {
         let kind = self
             .config
@@ -43,7 +45,7 @@ impl App {
         self.note("new commit · everything cleared");
     }
 
-    /// Ctrl+A: load the message of `HEAD`, so Ctrl+S can replace it.
+    /// Ctrl+A: load the message of `HEAD`, so Ctrl+D can replace it.
     ///
     /// The raw message goes through the same parser the check uses, so type,
     /// scope, subject, body and footers come back unchanged — including a
@@ -87,52 +89,57 @@ impl App {
     }
 
     pub(crate) fn focus(&mut self, index: usize) {
-        self.form.field = index % FIELDS.len();
-        let len = self.value(self.active_field()).chars().count();
-        self.form.cursors[self.form.field] = self.form.cursors[self.form.field].min(len);
+        self.form.focus(index);
     }
 
-    /// Move to the next field that is actually on screen. Hidden fields keep
-    /// their content, so walking past them must not clear or skip anything else.
-    pub(crate) fn step_field(&mut self, delta: isize) {
-        let len = FIELDS.len() as isize;
-        let mut index = self.form.field as isize;
-        for _ in 0..len {
-            index = (index + delta).rem_euclid(len);
-            if self.field_visible(FIELDS[index as usize]) {
-                self.focus(index as usize);
-                return;
-            }
+    pub fn active_field(&self) -> Field {
+        self.form.active_field()
+    }
+
+    /// Cursor of the active field.
+    pub fn cursor(&self) -> usize {
+        self.form.cursor()
+    }
+
+    /// Value of a field, for rendering.
+    pub fn value(&self, field: Field) -> &str {
+        self.form.value(field)
+    }
+
+    pub(crate) fn move_cursor(&mut self, delta: isize) {
+        self.form.move_cursor(delta);
+    }
+
+    /// `↑`/`↓`: inside a multiline field the text decides; at its edge the
+    /// walk to the neighbouring field does.
+    fn line_move(&mut self, delta: isize) {
+        if self.form.line_move(delta) {
+            return;
+        }
+        if delta < 0 {
+            self.previous_field();
+        } else {
+            self.next_field();
         }
     }
 
     pub(crate) fn next_field(&mut self) {
-        self.step_field(1);
+        self.form.next_field();
     }
 
     pub(crate) fn previous_field(&mut self) {
-        self.step_field(-1);
+        self.form.previous_field();
     }
 
-    /// A field is on screen unless it is optional and the form is compact.
     pub(crate) fn field_visible(&self, field: Field) -> bool {
-        !self.form.compact || !field.optional()
+        self.form.field_visible(field)
     }
 
     pub(crate) fn cycle_type(&mut self, forward: bool) {
         let types = self.config.type_names();
-        if types.is_empty() {
-            return;
+        if self.form.cycle_type(&types, forward) {
+            self.revalidate();
         }
-        let current = types.iter().position(|kind| *kind == self.form.commit.kind);
-        let idx = match current {
-            Some(idx) if forward => (idx + 1) % types.len(),
-            Some(idx) => (idx + types.len() - 1) % types.len(),
-            None => 0,
-        };
-        self.form.commit.kind.clone_from(&types[idx]);
-        self.form.type_touched = true;
-        self.revalidate();
     }
 
     /// `←`/`→`: always the text, on every tab.
@@ -161,84 +168,48 @@ impl App {
     }
 
     pub(crate) fn home(&mut self) {
-        let value = self.value(self.active_field()).to_string();
-        let cursor = self.form.cursors[self.form.field].min(value.chars().count());
-        let chars: Vec<char> = value.chars().collect();
-        self.form.cursors[self.form.field] = chars[..cursor]
-            .iter()
-            .rposition(|c| *c == '\n')
-            .map(|idx| idx + 1)
-            .unwrap_or(0);
+        self.form.home();
     }
 
     pub(crate) fn end(&mut self) {
-        let value = self.value(self.active_field()).to_string();
-        let cursor = self.form.cursors[self.form.field].min(value.chars().count());
-        let chars: Vec<char> = value.chars().collect();
-        self.form.cursors[self.form.field] = chars[cursor..]
-            .iter()
-            .position(|c| *c == '\n')
-            .map(|offset| cursor + offset)
-            .unwrap_or(chars.len());
+        self.form.end();
     }
 
     pub(crate) fn backspace(&mut self) {
-        let field = self.active_field();
-        if field == Field::Type {
-            return;
-        }
-        let cursor = self.form.cursors[self.form.field];
-        if cursor == 0 {
-            return;
-        }
-        let value = self.value_mut(field);
-        let mut chars: Vec<char> = value.chars().collect();
-        chars.remove(cursor - 1);
-        *value = chars.into_iter().collect();
-        self.form.cursors[self.form.field] = cursor - 1;
-        if field == Field::Footer {
-            self.reseed_empty_footer();
-        }
-        self.revalidate();
-    }
-
-    pub(crate) fn delete(&mut self) {
-        let field = self.active_field();
-        if field == Field::Type {
-            return;
-        }
-        let cursor = self.form.cursors[self.form.field];
-        let value = self.value_mut(field);
-        let mut chars: Vec<char> = value.chars().collect();
-        if cursor < chars.len() {
-            chars.remove(cursor);
-            *value = chars.into_iter().collect();
-            if field == Field::Footer {
+        if self.form.backspace() {
+            if self.active_field() == Field::Footer {
                 self.reseed_empty_footer();
             }
             self.revalidate();
         }
     }
 
-    /// Ctrl+K: empty the field under the cursor. The type is a choice from the
-    /// picker, not text, so it stays.
+    pub(crate) fn delete(&mut self) {
+        if self.form.delete() {
+            if self.active_field() == Field::Footer {
+                self.reseed_empty_footer();
+            }
+            self.revalidate();
+        }
+    }
+
+    /// Ctrl+U: empty the field under the cursor, and say what happened.
     pub(crate) fn clear_field(&mut self) {
-        let field = self.active_field();
-        if field == Field::Type {
-            self.status = "the type stays · Space picks another one".to_string();
-            return;
+        match self.form.clear() {
+            Cleared::TypeStays => {
+                self.status = "the type stays · Space picks another one".to_string();
+            }
+            Cleared::AlreadyEmpty(field) => {
+                self.note(format!("{} is already empty", field.label()));
+            }
+            Cleared::Done(field) => {
+                if field == Field::Footer {
+                    self.reseed_empty_footer();
+                }
+                self.revalidate();
+                self.note(format!("cleared {}", field.label()));
+            }
         }
-        if self.value(field).trim().is_empty() {
-            self.note(format!("{} is already empty", field.label()));
-            return;
-        }
-        *self.value_mut(field) = String::new();
-        self.form.cursors[self.form.field] = 0;
-        if field == Field::Footer {
-            self.reseed_empty_footer();
-        }
-        self.revalidate();
-        self.note(format!("cleared {}", field.label()));
     }
 
     /// Enter inside a multiline field starts a new line, elsewhere it advances.
@@ -257,24 +228,19 @@ impl App {
         self.picker.is_none() && !self.show_help && self.active_field() != Field::Type
     }
 
-    /// Insert typed or pasted text at the cursor. Control characters are
-    /// dropped, except the line breaks that belong in multiline fields.
+    /// Insert typed or pasted text at the cursor.
     pub(crate) fn handle_paste(&mut self, text: &str) {
-        if self.active_field() == Field::Type {
-            return;
+        if self.form.paste(text) {
+            if self.active_field() == Field::Footer {
+                self.reseed_empty_footer();
+            }
+            self.revalidate();
         }
-        for c in text.chars() {
-            if c == '\r' {
-                continue;
-            }
-            if c == '\n' && !self.active_field().multiline() {
-                self.insert(' ');
-                continue;
-            }
-            if c.is_control() && c != '\n' {
-                continue;
-            }
-            self.insert(c);
+    }
+
+    pub(crate) fn insert(&mut self, c: char) {
+        if self.form.insert(c) {
+            self.revalidate();
         }
     }
 }
