@@ -692,15 +692,7 @@ fn the_footer_fits_eighty_columns() {
             .unwrap_or_else(|| panic!("no footer at width {width}: {rows:?}"));
         // The essentials have to be readable at every width, including the
         // last entry, which used to be cut off at 80 columns.
-        for needed in [
-            "Tab",
-            "next",
-            "Ctrl+U",
-            "clear",
-            "Ctrl+Enter",
-            "message",
-            "?",
-        ] {
+        for needed in ["Tab", "next", "Ctrl+U", "clear", "Ctrl+D", "message", "?"] {
             assert!(
                 footer.contains(needed),
                 "{needed:?} missing at {width}: {footer:?}"
