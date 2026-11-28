@@ -1405,3 +1405,52 @@ fn missing_hooks_are_named_in_the_footer_and_go_away_when_they_are_there() {
     let screen = rows(&terminal).join("\n");
     assert!(!screen.contains("hooks not installed"), "{screen}");
 }
+
+#[test]
+fn the_miniature_view_shows_the_whole_header_while_a_field_is_typed() {
+    // Variant C (E10-1): the header sits above the active field, so the scope you
+    // typed a moment ago stays visible while you type the subject.
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+    app.form.commit.kind = "feat".to_string();
+    app.form.commit.scope = "TICKET-12".to_string();
+    app.form.commit.subject = "add the thing".to_string();
+    app.form.field = 2; // subject
+    app.revalidate();
+
+    let mut terminal = Terminal::new(TestBackend::new(62, 23)).unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+    let screen = rows(&terminal).join("\n");
+
+    assert!(
+        screen.contains("feat(TICKET-12): add the thing"),
+        "the complete header is visible: {screen}"
+    );
+    // The active field repeats only its own value, and carries the caret.
+    assert!(screen.contains("▌"), "the caret is in the field: {screen}");
+    assert!(
+        screen.contains("13/72"),
+        "the counter sits with the field: {screen}"
+    );
+}
+
+#[test]
+fn the_miniature_view_puts_an_error_next_to_its_field() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut app = App::with_config(crate::config::Config::conventional(), Vec::new());
+    app.form.field = 2;
+    app.revalidate();
+    let mut terminal = Terminal::new(TestBackend::new(62, 23)).unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+    let screen = rows(&terminal).join("\n");
+    // "empty: say what changes, in one line" is the subject error; it belongs in the
+    // field box, not only in the count in the corner.
+    assert!(
+        screen.contains("say what changes"),
+        "the field's own error is shown beside it: {screen}"
+    );
+}
