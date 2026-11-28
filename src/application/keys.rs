@@ -199,7 +199,14 @@ pub const BINDINGS: &[Binding] = &[
         true,
         "clear this field, the type stays",
     ),
-    key("Ctrl+Enter", "message", Commit, true, "write the message"),
+    key("Ctrl+D", "message", Commit, true, "write the message"),
+    note(
+        "Ctrl+Enter",
+        "message",
+        Commit,
+        false,
+        "write the message too, where the terminal sends it",
+    ),
     key(
         "Ctrl+P",
         "commands",

@@ -240,9 +240,9 @@ fn draw_content(frame: &mut Frame, app: &App, area: Rect) {
             Line::styled("  start with a subject on the left", MUTED),
             Line::styled(
                 if app.commit_mode {
-                    "  Ctrl+S runs git commit with this message"
+                    "  Ctrl+D runs git commit with this message"
                 } else {
-                    "  Ctrl+S prints the message and exits (start with -c to commit)"
+                    "  Ctrl+D prints the message and exits (start with -c to commit)"
                 },
                 MUTED,
             ),

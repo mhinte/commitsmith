@@ -70,6 +70,36 @@ fn forbidden_hits(dir: &str, forbidden: &[&str]) -> Vec<String> {
     hits
 }
 
+/// The four keys the terminal or the IDE takes first must not be *named* anywhere
+/// the user reads them: a footer that advertises `Ctrl+S` is a promise the program
+/// cannot keep, and it is the failure a test table alone does not catch — the first
+/// release of the one-key-set change shipped with `Ctrl+Enter` in the footer while
+/// the handler answered `Ctrl+D`.
+///
+/// Comments are allowed to explain why the keys are gone, so the text is cut at the
+/// test module (its needles would match themselves) and stripped of comments.
+#[test]
+fn no_surface_names_a_key_the_terminal_claims() {
+    let marker = concat!("#[cfg", "(test)]");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut hits = Vec::new();
+    for file in sources(&root) {
+        // A test file may name a forbidden key to assert its absence.
+        if file.file_name().is_some_and(|name| name == "tests.rs") {
+            continue;
+        }
+        let raw = fs::read_to_string(&file).unwrap_or_default();
+        let production = &raw[..raw.find(marker).unwrap_or(raw.len())];
+        let text = code_only(production);
+        for needle in ["Ctrl+S", "Ctrl+K", "Ctrl+Space", "Ctrl+Q", "C-Space"] {
+            if text.contains(needle) {
+                hits.push(format!("{} names {needle}", file.display()));
+            }
+        }
+    }
+    assert!(hits.is_empty(), "{hits:#?}");
+}
+
 #[test]
 fn the_domain_layer_stays_free_of_ui_git_and_io() {
     // `std::process` and `std::fs` are the two ways a value object sneaks into

@@ -69,7 +69,7 @@ impl App {
                         .unwrap_or(0),
                 );
                 self.revalidate();
-                self.note("amend: HEAD message loaded · Ctrl+S replaces that commit");
+                self.note("amend: HEAD message loaded · Ctrl+D replaces that commit");
             }
             Ok(None) => self.problem("no commit to amend yet"),
             Err(error) => self.problem(error.to_string()),
